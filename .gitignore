@@ -1,0 +1,14 @@
+# ข้อมูลจริงของร้าน (มีรหัส QR, secret และยอดขาย) ห้ามขึ้น git
+data.json
+data.json.*
+sales/
+images/
+backups/
+start.bat
+.env
+
+qa/node_modules/
+qa/out/
+qa-*.log
+node_modules/
+.claude/
