@@ -10,11 +10,19 @@ const ROOT = path.join(__dirname, '..');
 const PIN = '246810';
 let portSeq = 5200 + Math.floor(Math.random() * 400);
 const BAD_PORTS = new Set([5060, 5061, 6000]);
+// สคริปต์ล้มกลางทางก็ต้องไม่ทิ้งเซิร์ฟเวอร์และโฟลเดอร์ชั่วคราวไว้ (บน Windows process ลูกไม่ตายตามแม่)
+const running = new Set(), temps = new Set();
+process.on('exit', () => {
+  running.forEach(p => { try { p.kill('SIGKILL'); } catch (e) { /* ignore */ } });
+  temps.forEach(d => { try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* ignore */ } });
+});
+['SIGINT', 'SIGTERM'].forEach(s => process.on(s, () => process.exit(130)));
 
 // สำเนาโค้ดระบบไปโฟลเดอร์ชั่วคราว (code) ส่วนข้อมูลแยกไว้อีกโฟลเดอร์ (data) ได้ เพื่อทดสอบ DATA_DIR
 function makeApp(opts) {
   opts = opts || {};
   const base = opts.base || fs.mkdtempSync(path.join(os.tmpdir(), 'ordervai-qa-'));
+  temps.add(base);
   const code = opts.codeDir || base;
   fs.mkdirSync(code, { recursive: true });
   const from = opts.from || process.env.QA_FROM || ROOT;   // QA_FROM=โฟลเดอร์โค้ดเดิม เพื่อพิสูจน์ว่าบั๊กมีอยู่จริงก่อนแก้
@@ -29,6 +37,7 @@ function start(code, env, nodeArgs) {
   while (BAD_PORTS.has(port)) port = portSeq++;
   const e = Object.assign({}, process.env, { PORT: String(port), STAFF_PIN: PIN, ORDER_LIMIT: '1000' }, env || {});
   const proc = spawn(process.execPath, (nodeArgs || []).concat(['server.js']), { cwd: code, env: e });
+  running.add(proc); proc.on('exit', () => running.delete(proc));
   let out = '';
   proc.stdout.on('data', d => { out += d; });
   proc.stderr.on('data', d => { out += d; });

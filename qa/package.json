@@ -3,6 +3,7 @@
   "private": true,
   "description": "สคริปต์ QA ที่ไม่อยู่ใน npm test ติดตั้งแยกด้วย npm install ในโฟลเดอร์นี้ ระบบหลักไม่ใช้ dependency เหล่านี้",
   "devDependencies": {
+    "axe-core": "4.10.3",
     "playwright-core": "1.64.0"
   }
 }

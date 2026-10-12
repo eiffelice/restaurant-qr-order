@@ -156,6 +156,40 @@ const cases = {
     return problems;
   },
 
+  /* race: กู้คืนสองคำขอพร้อมกัน และกดรับเงินโต๊ะเดียวกัน 50 คำขอพร้อมกัน (double spend) */
+  async 'race'() {
+    const app = makeApp(); const problems = [];
+    const s = start(app.code); await s.ready; await s.login();
+    const sd = path.join(app.code, 'sales'); fs.mkdirSync(sd, { recursive: true });
+    const line = JSON.stringify({ no: 1, at: Date.UTC(2024, 0, 5), table: 1, sub: 100, svc: 10, vat: 0, total: 110, method: 'cash', items: [{ name: 'ข้าว', qty: 1, price: 100 }] }) + '\n';
+    const months = ['2024-01', '2024-02', '2024-03', '2024-04', '2024-05', '2024-06'];
+    months.forEach(m => fs.writeFileSync(path.join(sd, m + '.jsonl'), line.repeat(9000)));
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const file = fs.readFileSync(path.join(app.code, 'backups', (await s.call('POST', '/api/backup', {})).json.backup.name));
+    for (let round = 1; round <= 3; round++) {
+      const rs = await Promise.all([1, 2].map(() => s.call('POST', '/api/backup/restore', file, { headers: { 'content-type': 'application/gzip' } })));
+      const okN = rs.filter(r => r.status === 200).length;
+      rs.forEach(r => { if (r.headers['set-cookie']) s.cookie = r.headers['set-cookie'][0].split(';')[0]; });
+      const files = fs.existsSync(sd) ? fs.readdirSync(sd).sort() : [];
+      const sizes = files.map(f => fs.statSync(path.join(sd, f)).size);
+      const st = await s.call('GET', '/api/state');
+      console.log('รอบ ' + round + ': ผล ' + JSON.stringify(rs.map(r => r.status)) + ', sales/ ' + files.length + ' ไฟล์, ' + (rs.find(r => r.status !== 200) || { json: {} }).json.error);
+      if (okN !== 1) problems.push('รอบ ' + round + ': กู้คืนพร้อมกันสำเร็จ ' + okN + ' คำขอ (ควรเป็น 1 อีกคำขอต้องถูกปฏิเสธ)');
+      if (files.join() !== months.map(m => m + '.jsonl').join() || sizes.some(z => z !== Buffer.byteLength(line) * 9000)) problems.push('รอบ ' + round + ': sales/ หลังกู้คืนไม่ครบ ' + JSON.stringify(files));
+      if (st.status !== 200 || st.json.health.saveError) problems.push('รอบ ' + round + ': ระบบผิดปกติหลังกู้คืน');
+    }
+    // double spend: 50 คำขอรับเงินโต๊ะเดียวกันพร้อมกัน
+    await s.call('POST', '/api/order', { table: 4, key: keys[4], items: [{ id: 1, qty: 2 }] });
+    const sub = (await s.call('GET', '/api/state')).json.bills[4].sub;
+    const pays = await Promise.all(Array.from({ length: 50 }, (_, i) => s.call('POST', '/api/pay', { table: 4, expectedSub: sub, method: i % 2 ? 'cash' : 'transfer' })));
+    const codes = {}; pays.forEach(p => { codes[p.status] = (codes[p.status] || 0) + 1; });
+    const recorded = salesLines(app.code).filter(l => l.table === 4).length;
+    console.log('รับเงินพร้อมกัน 50 คำขอ: ' + JSON.stringify(codes) + ', บันทึกใน sales/ ' + recorded + ' บิล');
+    if (codes[200] !== 1 || recorded !== 1) problems.push('รับเงินซ้ำได้ ' + codes[200] + ' ครั้ง');
+    await s.stop(); rmrf(app.base);
+    return problems;
+  },
+
   /* CSV injection: ค่าที่ขึ้นต้นด้วย -ตัวเลข แล้วตามด้วยสูตร (payload มาตรฐานของ OWASP) */
   async 'csv-injection'() {
     const app = makeApp();

@@ -818,6 +818,25 @@ describe('จาก QA: เงินและข้อมูลไม่หา�
     await s.stop();
   });
 
+  test('กดกู้คืนสองครั้งพร้อมกัน (สองเครื่อง): กู้คืนได้ครั้งเดียว อีกครั้งถูกปฏิเสธ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const file = (await getBackup(s, (await s.call('POST', '/api/backup', {})).json.backup.name)).buf;
+    // last-byte sync: ส่งไฟล์ทั้งสองคำขอจนเหลือไบต์สุดท้าย แล้วปล่อยพร้อมกัน ให้เซิร์ฟเวอร์อ่านเสร็จพร้อมกันแน่นอน
+    const finish = [];
+    const reqs = [0, 1].map(() => new Promise(resolve => {
+      const req = require('node:http').request(s.B + '/api/backup/restore', { method: 'POST', agent: false, headers: { cookie: s.cookie, 'content-type': 'application/gzip', 'content-length': file.length } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      req.on('error', () => resolve('err'));
+      req.write(file.subarray(0, file.length - 1));
+      finish.push(() => req.end(file.subarray(file.length - 1)));
+    }));
+    await new Promise(r => setTimeout(r, 200));
+    finish.forEach(f => f());
+    const codes = (await Promise.all(reqs)).sort();
+    assert.ok(codes[0] === 200 && [409, 503].includes(codes[1]), 'กู้คืนซ้อนกันได้ ' + JSON.stringify(codes));
+    assert.equal((await s.call('GET', '/api/state')).status, 200);
+    await s.stop();
+  });
+
   test('CSV: ค่าที่ขึ้นต้นด้วยตัวเลขติดลบแล้วตามด้วยสูตร (-2+3+cmd...) ไม่กลายเป็นสูตรใน Excel', async () => {
     const s = start(makeApp()); await s.ready; await s.login();
     const it = (await s.call('POST', '/api/menu/item', item({ name: "-2+3+cmd|' /C calc'!A0" }))).json.item;

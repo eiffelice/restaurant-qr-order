@@ -321,9 +321,15 @@ async function main() {
   if (which === 'all') {
     // แยก process ต่อเคส พร้อม timeout เคสใดค้างจะไม่ลากเคสอื่น
     let bad = 0;
+    const cp = require('node:child_process');
     for (const n of Object.keys(cases)) {
-      const r = require('node:child_process').spawnSync(process.execPath, [__filename, n], { stdio: 'inherit', timeout: 300000 });
-      if (r.status !== 0) { bad++; if (r.error) console.log('  ✖ ' + n + ': ' + r.error.message); }
+      const code = await new Promise(resolve => {
+        const c = cp.spawn(process.execPath, [__filename, n], { stdio: 'inherit' });
+        // หมดเวลา: ปิดทั้งต้นไม้ (เซิร์ฟเวอร์และ Edge ที่เคสเปิดไว้) ไม่ใช่แค่ process ลูก
+        const t = setTimeout(() => { console.log('  ✖ ' + n + ': เกิน 5 นาที'); if (process.platform === 'win32') cp.spawnSync('taskkill', ['/pid', String(c.pid), '/t', '/f']); else c.kill('SIGKILL'); }, 300000);
+        c.on('exit', s => { clearTimeout(t); resolve(s); });
+      });
+      if (code !== 0) bad++;
     }
     process.exitCode = bad ? 1 : 0;
     return;

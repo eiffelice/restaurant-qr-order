@@ -13,6 +13,7 @@ node qa/perf.js            # ข้อมูล 1 ปี: event loop lag, เว
 node qa/time.js            # ข้ามเที่ยงคืนและข้ามเดือน (นาฬิกาปลอมด้วย fake-time.js)                  ~15 วินาที
 node qa/windows.js         # Windows: path ภาษาไทย+ช่องว่าง, start.bat, ลบไฟล์สำรองเก่า, เปิดซ้อน         ~10 วินาที
 node qa/soak.js 30         # หน่วยความจำ 30 นาที (ผลใน qa/out/soak-heap.jsonl)
+node qa/a11y.js            # WCAG 2.2 AA ด้วย axe-core ทุกแท็บ light/dark + ใช้คีย์บอร์ดอย่างเดียว         ~30 วินาที
 ```
 
 - รันกับโค้ดก่อนแก้เพื่อดูว่าบั๊กเกิดจริง: `QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/repro.js all`
