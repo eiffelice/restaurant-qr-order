@@ -108,6 +108,54 @@ const cases = {
     return ok.done();
   },
 
+  /* รับเงินสด: กรอกเงินที่รับมา เห็นเงินทอน เงินไม่พอกดยืนยันไม่ได้ ออเดอร์เข้าระหว่างพิมพ์ไม่ทำให้ช่องหาย
+     และหน้าสรุปยอดแสดงประวัติการแก้ไข (ยกเลิกออเดอร์) */
+  async cash(browser) {
+    const ok = checker('cash'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });   // 120 + ค่าบริการ 12 = 132
+    const v = await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 3, qty: 1 }] }, { staff: false });
+    await s.call('POST', '/api/ticket/void', { id: v.json.tickets[0] });
+    const page = await staffPage(browser, s, MOBILE, errors);
+    await tab(page, 'tables'); await page.click('[data-a="sel"][data-id="1"]');
+    const pay = page.locator('[data-a="pay"][data-m="cash"]');
+    await pay.click();
+    await page.waitForSelector('#cash-in');
+    ok(await page.evaluate(() => document.activeElement.id === 'cash-in'), 'กดรับเงินสดแล้วเคอร์เซอร์อยู่ที่ช่องรับเงินมา');
+    await page.keyboard.type('10');
+    await s.call('POST', '/api/order', { table: 5, key: keys[5], items: [{ id: 2, qty: 1 }] }, { staff: false });   // ออเดอร์เข้าระหว่างพิมพ์
+    await sleep(600);
+    await page.keyboard.type('0');
+    ok(await page.inputValue('#cash-in') === '100', 'ออเดอร์เข้าระหว่างพิมพ์ ตัวเลขที่พิมพ์ไม่หาย', await page.inputValue('#cash-in'));
+    ok(/ขาดอีก ฿32/.test(await page.textContent('#cash-change')) && await pay.isDisabled(), 'รับ 100 จากยอด 132: เตือนเงินไม่พอ และกดยืนยันไม่ได้', await page.textContent('#cash-change'));
+    await page.click('[data-a="cashq"][data-v="500"]');
+    ok(/ทอน ฿368/.test(await page.textContent('#cash-change')) && !(await pay.isDisabled()), 'กดปุ่มลัด 500: ทอน ฿368');
+    await page.screenshot({ path: path.join(__dirname, 'out', 'cash-armed.png'), fullPage: true });
+    await pay.click();
+    await page.waitForSelector('[data-a="donesale"]');
+    ok(/รับมา ฿500 · ทอน ฿368/.test(await page.textContent('#v-tables')) && /เงินทอน/.test(await page.textContent('.receipt')), 'หลังรับเงิน: แสดงรับมา/ทอน และใบเสร็จมีบรรทัดเงินทอน');
+    await page.screenshot({ path: path.join(__dirname, 'out', 'cash-done.png'), fullPage: true });
+    const paid = (await s.call('GET', '/api/audit')).json.events.find(e => e.action === 'bill.paid');
+    ok(paid && paid.received === 500 && paid.change === 368, 'audit log บันทึกรับมา 500 ทอน 368', paid && [paid.received, paid.change]);
+    // กด Enter ในช่องรับเงินเพื่อยืนยัน
+    await page.click('[data-a="donesale"]'); await page.click('[data-a="sel"][data-id="5"]');
+    await pay.click(); await page.waitForSelector('#cash-in');
+    await page.keyboard.type('1000'); await page.keyboard.press('Enter');
+    await page.waitForSelector('[data-a="donesale"]');
+    ok(true, 'พิมพ์จำนวนแล้วกด Enter ยืนยันรับเงินได้');
+    // ประวัติการแก้ไขในหน้าสรุปยอด
+    await tab(page, 'report'); await page.waitForSelector('.audit-row');
+    const rep = await page.textContent('#v-report');
+    ok(/ประวัติการแก้ไขวันนี้/.test(rep) && /ยกเลิกออเดอร์ 1 ใบ/.test(rep) && /log ครบถ้วน/.test(rep), 'สรุปยอดแสดงประวัติการแก้ไข ยอดที่ถูกยกเลิก และสถานะ log', rep.match(/ยกเลิกออเดอร์[^฿]*฿[\d.,]+/));
+    await page.screenshot({ path: path.join(__dirname, 'out', 'audit-report.png'), fullPage: true });
+    const o = await overflow(page);
+    ok(!o, 'หน้าสรุปยอดที่มีประวัติการแก้ไข 390px ไม่เลื่อนแนวนอน', o || undefined);
+    ok(errors.length === 0, 'ไม่มี error ในหน้าเว็บ', errors);
+    await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
   /* ระหว่างพนักงานเลือกไฟล์ (หน้าต่างเลือกไฟล์เปิดอยู่) มีออเดอร์เข้า หน้าจอ re-render: ไฟล์ที่เลือกต้องไม่หาย */
   async 'file-picker'(browser) {
     const ok = checker('file-picker'); const errors = [];
@@ -130,8 +178,10 @@ const cases = {
     await tab(page, 'menu'); await page.click('[data-a="eopen"][data-id="1"]'); await page.waitForSelector('label[for="e-file"]');
     const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('label[for="e-file"]')]);
     await orderAndWait();
-    await fc2.setFiles(pngFile); await sleep(800);
-    ok(await page.$('#editor img.thumb') !== null, 'เลือกรูปเมนูระหว่างมีออเดอร์เข้า: รูปไม่หาย ขึ้นตัวอย่างรูป');
+    await fc2.setFiles(pngFile);
+    // ย่อรูปในเบราว์เซอร์ใช้เวลาไม่แน่นอน รอผลแทนการรอเวลาตายตัว
+    const shown = await page.waitForSelector('#editor img.thumb', { timeout: 5000 }).then(() => true, () => false);
+    ok(shown, 'เลือกรูปเมนูระหว่างมีออเดอร์เข้า: รูปไม่หาย ขึ้นตัวอย่างรูป');
     ok(errors.length === 0, 'ไม่มี error ในหน้าเว็บ', errors);
     await s.stop(); rmrf(app.base);
     return ok.done();

@@ -100,6 +100,7 @@ server.js          เปิด HTTP server, ไฟล์ static, /img/*, /api/e
 lib/config.js      ค่าคงที่และ env ทั้งหมด
 lib/util.js        วันที่, writeAtomic, retryAsync/retry (ลองซ้ำเมื่อไฟล์ถูกล็อก), readRaw/readBody (มีจำกัดขนาด), sniffImage, safeEq, send
 lib/store.js       state ในหน่วยความจำ, normalize (ตรวจซ่อมข้อมูล), load, save/writeNow (ลองใหม่ด้วย timer), คิวยอดขาย, billOf, totals
+lib/log.js         log 3 ชนิด (audit/security/app) แยกไฟล์รายเดือน, hash chain ของ audit, ตัดค่าลับ, ระยะเก็บ
 lib/backup.js      สร้างไฟล์สำรอง .json.gz แบบ stream, สำรองอัตโนมัติ, กู้คืนแบบ stage-then-swap
 lib/routes.js      API ทั้งหมด (object `api` key = "METHOD /path"), สิทธิ์, rate limit, SSE broadcast
 public/staff.html  หน้าพนักงาน (vanilla JS ไฟล์เดียว)
@@ -156,6 +157,9 @@ D = {
 | `sales/YYYY-MM.jsonl` | ยอดขายถาวร append-only หนึ่งบรรทัดต่อบิล ถ้าเขียนไม่ได้ บิลค้างในคิวและลองใหม่เรื่อยๆ ตอนเปิดระบบและหลังกู้คืน `reconcileSales()` เทียบ `D.sales` กับไฟล์ (ตาม `no`) แล้วเติมบิลที่ขาด |
 | `images/m<id>-<hex8>.<jpg\|png\|webp>` | รูปอาหาร ชื่อไฟล์ใหม่ทุกครั้งที่เปลี่ยนรูป (cache ได้ตลอด) |
 | `backups/backup-YYYYMMDD-HHMMSS-<reason>.json.gz` | reason = auto, manual, before-restore |
+| `logs/audit-YYYY-MM.jsonl` | ใครทำอะไรกับเงิน/ออเดอร์/เมนู/ตั้งค่า มี before/after, ip, dev, req และ hash chain (prev/hash) เก็บ 25 เดือน กู้คืนข้อมูลไม่ย้อน log |
+| `logs/security-YYYY-MM.jsonl` | เข้าสู่ระบบ รหัสผิด ถูกจำกัด 401 รหัส QR ผิด (ซ้ำจากที่เดิมบันทึกครั้งเดียวต่อ 10 นาที) เก็บ 6 เดือน |
+| `logs/app-YYYY-MM.jsonl` | error 500 พร้อม stack, บันทึกไฟล์ไม่สำเร็จ, เปิด/ปิดโปรแกรม เก็บ 3 เดือน |
 
 **ตัวเงิน:** `svc = round(sub × 10%)`, `vat = round((sub + svc) × 7%)` (VAT คิดเพิ่มจากราคา ไม่ใช่รวมในราคา) สูตรนี้มีสองที่ คือ `store.totals()` และ `calc()` ใน staff.html ถ้าแก้ต้องแก้ทั้งสองที่
 
@@ -179,7 +183,7 @@ D = {
 | POST /api/ticket `{id,from,status}` | staff | เปลี่ยนสถานะ ถ้า `from` ไม่ตรงได้ 409 |
 | POST /api/ticket/void `{id}` | staff | ยกเลิกตั๋วทั้งใบ |
 | POST /api/call/clear `{table}` | staff | รับทราบการเรียก |
-| POST /api/pay `{table,expectedSub,svc,vat,method}` | staff | ปิดบิล ถ้ายอดเปลี่ยนได้ 409 |
+| POST /api/pay `{table,expectedSub,svc,vat,method,received?}` | staff | ปิดบิล ถ้ายอดเปลี่ยนได้ 409, `received` (เงินสดที่รับมา) ต้อง ≥ ยอด ตอบ `change` กลับ |
 | POST /api/settings `{...}` | staff | แก้ตั้งค่าร้าน (ส่งเฉพาะ field ที่จะแก้) |
 | POST /api/soldout `{id,soldOut}` | staff | ตั้ง/ยกเลิกเมนูหมด |
 | POST /api/menu/item `{id?,name,price,cat,station,desc,hidden}` | staff | เพิ่ม (ไม่มี id) หรือแก้เมนู |
@@ -192,13 +196,15 @@ D = {
 | POST /api/menu/notes `{notes:[]}` | staff | แก้ตัวเลือกหมายเหตุ |
 | GET /api/report | staff | ยอดวันนี้ เงินสด/โอน เมนูขายดี 7 วัน บิลวันนี้ |
 | GET /api/export.csv?month=YYYY-MM | staff | CSV (มี BOM สำหรับ Excel) |
+| GET /api/audit?date=YYYY-MM-DD&kind=audit\|security | staff | เหตุการณ์ของวัน + ผลตรวจ hash chain ของเดือน |
+| GET /api/logs/download?name= | staff | ดาวน์โหลดไฟล์ log (ชื่อตรวจด้วย `LOG_RE`) |
 | GET /api/backups | staff | รายการไฟล์สำรอง |
 | POST /api/backup | staff | สำรองตอนนี้ |
 | GET /api/backup/download?name= | staff | ดาวน์โหลดไฟล์สำรอง |
 | POST /api/backup/restore (body = ไฟล์ .json.gz หรือ .json) | staff | กู้คืน ได้ cookie ใหม่กลับมา |
 
 หน้าเว็บ: `GET /staff`, `GET /order`, `GET /qrcode.js`, `GET /img/<ชื่อไฟล์>` (`GET /` redirect ไป `/staff`)
-Error ทุกตัวเป็น `{ "error": "ข้อความภาษาไทยที่แสดงให้ผู้ใช้ได้เลย" }`
+Error ทุกตัวเป็น `{ "error": "ข้อความภาษาไทยที่แสดงให้ผู้ใช้ได้เลย", "requestId": "..." }` ทุกคำตอบมี header `X-Request-Id` ตรงกับ `req` ใน log
 
 ---
 
@@ -234,6 +240,10 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 26. **`<input type=file>` ในหน้าพนักงานต้องอยู่นอกส่วนที่ re-render** (`#e-file`, `#rs-file` อยู่ท้าย body, label อ้างด้วย `for`) ไม่อย่างนั้นมีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ ไฟล์ที่เลือกหายเงียบๆ
 27. **ธงกันทำซ้อน (`state.restoring`) ต้องตั้งก่อน `await` ตัวแรก** ใน `backup.restore()` (เคยตั้งหลังแตก gzip สองเครื่องกดกู้คืนพร้อมกันจึงกู้คืนซ้อนกันได้ทั้งคู่)
 28. **ลิมิตเดารหัสต้องมีเพดานรวมทุก IP ด้วย** ไม่ใช่แค่ต่อ IP (เคยเดา PIN ได้ 300 ครั้ง/นาทีจาก 50 IP คนใน WiFi ตั้ง IP เองได้ทั้งวง) เครื่องร้านเอง (loopback ที่ไม่ใช่ tunnel) ไม่โดนเพดานรวม กันผู้โจมตีล็อกพนักงานออก
+29. **ทุกการแก้ข้อมูลที่เกี่ยวกับเงิน ออเดอร์ เมนู ตั้งค่า สิทธิ์ ต้องมี audit log** ผ่าน `audit(req, action, {before, after})` ใน routes.js (endpoint ใหม่ต้องเพิ่มด้วย) ห้ามใช้ log คำนวณยอด ยอดจริงอยู่ใน sales/
+30. **ห้ามบันทึก PIN, cookie, รหัส QR (`keys`), secret ลง log** `log.clean()` ตัด key ชื่อ pin/key/keys/secret/cookie/token ทิ้ง อย่าตั้งชื่อ field อื่นซ้ำกับชื่อเหล่านี้ และมีเทสต์สแกนไฟล์ log ทั้งหมด
+31. **ห้ามเพิ่ม API ลบหรือแก้ log** และห้ามให้กู้คืนข้อมูลแตะโฟลเดอร์ logs/ ถ้า audit chain ไม่ผ่าน ห้ามคัดลอกทับสำเนาใน BACKUP_DIR/logs
+32. **ช่องที่ผู้ใช้กำลังพิมพ์ ถ้าหน้าจอต้องวาดใหม่ ให้คืนโฟกัสและเคอร์เซอร์** (ดู `cashTyping()`) ห้ามบล็อกการวาดใหม่ทั้งหน้า ไม่อย่างนั้นพนักงานไม่เห็นยอดใหม่
 ---
 
 ## 7. วิธีแก้โค้ดที่ทำบ่อย
@@ -302,7 +312,8 @@ node --test --test-reporter=spec                 # ดูชื่อเคส�
 - ยกเลิกทีละรายการในตั๋ว, ย้าย/รวมโต๊ะ, ส่วนลด, ยกเลิกบิลที่ปิดแล้ว
 - ตัวเลือกเสริมที่มีราคา (เพิ่มไข่ +10) และขนาด (ธรรมดา/พิเศษ)
 - โหมดราคารวม VAT และใบกำกับภาษีเต็มรูป
-- แยกสิทธิ์ครัว/แคชเชียร์/เจ้าของ (ตอนนี้ PIN เดียว)
+- แยกสิทธิ์ครัว/แคชเชียร์/เจ้าของ (ตอนนี้ PIN เดียว log จึงระบุได้แค่เครื่อง/IP ไม่ใช่ตัวคน)
+- ไม่มีระบบสต็อกวัตถุดิบ (มีแค่ตั้งเมนูหมด ซึ่งอยู่ใน audit log)
 - โหมดพนักงานยืนยันออเดอร์ก่อนเข้าครัว (ควรมีก่อนเปิดออกอินเทอร์เน็ต)
 - เครื่องพิมพ์ใบสั่งในครัว (ตอนนี้พิมพ์ใบเสร็จผ่าน `window.print()` ขนาด 80 mm ได้)
 - ชุดทดสอบผ่านบน Windows 11 (Node 24) แล้ว แต่ยังไม่ได้ลองกับแอนตี้ไวรัสหรือโปรแกรม sync ที่ล็อกไฟล์จริง ยังไม่ได้รันบน Linux/macOS (ล็อกโฟลเดอร์ข้อมูลบน macOS ใช้ไฟล์ socket ใน tmp)

@@ -4,6 +4,7 @@ data.json.*
 sales/
 images/
 backups/
+logs/
 start.bat
 .env
 

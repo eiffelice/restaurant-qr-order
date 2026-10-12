@@ -7,7 +7,7 @@
 cd qa && npm install && cd ..        # ครั้งแรก เฉพาะ browser.js (playwright-core ใช้ Microsoft Edge ที่มีในเครื่อง)
 
 node qa/repro.js all       # kill -9 20 รอบ, เลขบิลซ้ำ, ออเดอร์ระหว่างกู้คืน, CSV injection, เดารหัส QR, เปิดซ้อน   ~20 วินาที
-node qa/browser.js all     # เบราว์เซอร์จริง: ปิดบิลตอนยอดเปลี่ยน, reqId หลังรีเฟรช, XSS, จำลองหนึ่งวัน 390px light/dark รีสตาร์ท   ~2 นาที
+node qa/browser.js all     # เบราว์เซอร์จริง: ปิดบิลตอนยอดเปลี่ยน, เงินทอน+ประวัติการแก้ไข, reqId หลังรีเฟรช, เลือกไฟล์, XSS, จำลองหนึ่งวัน 390px light/dark รีสตาร์ท   ~2 นาที
 node qa/money.js           # เงินทุกกรณี + PromptPay QR                                               ~5 วินาที
 node qa/perf.js            # ข้อมูล 1 ปี: event loop lag, เวลาตอบ, ขนาดไฟล์สำรอง, 200 ออเดอร์จาก 40 IP   ~30 วินาที
 node qa/time.js            # ข้ามเที่ยงคืนและข้ามเดือน (นาฬิกาปลอมด้วย fake-time.js)                  ~15 วินาที

@@ -910,3 +910,142 @@ describe('จาก QA: สิทธิ์และการเดารหั�
     await c.stop();
   });
 });
+
+/* ---------- Log: audit / security / app และเงินทอน ---------- */
+const monthNow = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+const readLog = (dir, kind) => { try { return fs.readFileSync(path.join(dir, 'logs', kind + '-' + monthNow() + '.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch (e) { return []; } };
+const allLogText = dir => { try { return fs.readdirSync(path.join(dir, 'logs')).map(f => fs.readFileSync(path.join(dir, 'logs', f), 'utf8')).join('\n'); } catch (e) { return ''; } };
+
+describe('Log และเงินทอน', () => {
+  test('เงินทอน: รับเงินน้อยกว่ายอดถูกปฏิเสธโดยบิลไม่ถูกปิด รับมากกว่าได้เงินทอนถูกต้อง', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] });
+    const sub = (await s.call('GET', '/api/state')).json.bills[1].sub;   // 120 → ค่าบริการ 12 = 132
+    const short = await s.call('POST', '/api/pay', { table: 1, expectedSub: sub, svc: true, method: 'cash', received: 100 });
+    assert.equal(short.status, 400);
+    assert.ok((await s.call('GET', '/api/state')).json.bills[1], 'บิลยังเปิดอยู่');
+    assert.equal((await s.call('POST', '/api/pay', { table: 1, expectedSub: sub, svc: true, method: 'cash', received: '500' })).status, 400, 'ต้องเป็นตัวเลข');
+    const ok = await s.call('POST', '/api/pay', { table: 1, expectedSub: sub, svc: true, method: 'cash', received: 500 });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.json.sale.total, 132);
+    assert.deepEqual([ok.json.received, ok.json.change], [500, 368]);
+    const paid = readLog(s.dir, 'audit').find(e => e.action === 'bill.paid');
+    assert.deepEqual([paid.total, paid.received, paid.change, paid.method], [132, 500, 368, 'cash']);
+    await s.stop();
+  });
+
+  test('audit: ยกเลิกออเดอร์ แก้ราคา เปลี่ยน PromptPay กู้คืน ถูกบันทึกพร้อมค่าเดิม ค่าใหม่ เครื่อง และรหัสคำขอ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/settings', { promptpay: '0811111111' });
+    const file = (await getBackup(s, (await s.call('POST', '/api/backup', {})).json.backup.name)).buf;
+    const o = await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 3 }], memo: 'เผ็ดน้อย' });
+    const r = await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    assert.ok(r.headers.get('x-request-id'), 'ทุกคำขอมีรหัสอ้างอิง');
+    await s.call('POST', '/api/menu/item', item({ id: 1, name: 'ผัดกะเพราหมูสับ', price: 75, cat: 1, station: 'hot' }));
+    await s.call('POST', '/api/settings', { promptpay: '0899999999' });
+    assert.equal((await restoreRaw(s, file)).status, 200);
+    const ev = readLog(s.dir, 'audit'), by = a => ev.filter(e => e.action === a);
+    const v = by('ticket.voided')[0];
+    assert.deepEqual([v.table, v.value, v.items[0].qty, v.by], [2, 180, 3, 'staff']);
+    assert.equal(v.req, r.headers.get('x-request-id'), 'log เชื่อมกับคำขอได้');
+    assert.ok(v.ip && v.dev, 'บอกว่าทำจากเครื่องไหน');
+    const p = by('menu.item.updated')[0];
+    assert.deepEqual([p.before.price, p.after.price], [60, 75]);
+    const pp = by('settings.changed').map(e => [e.before.promptpay, e.after.promptpay]);
+    assert.deepEqual(pp, [['', '0811111111'], ['0811111111', '0899999999']]);
+    assert.equal(by('order.created')[0].by, 'guest');
+    assert.equal(by('backup.restored').length, 1, 'บันทึกการกู้คืน');
+    assert.ok(by('settings.changed').length === 2 && by('ticket.voided').length === 1, 'กู้คืนแล้ว log เดิมไม่ถูกย้อนตาม');
+    const day = (await s.call('GET', '/api/audit')).json;
+    assert.equal(day.chain.ok, true);
+    assert.ok(day.events.some(e => e.action === 'ticket.voided'));
+    await s.stop();
+  });
+
+  test('ไม่มี PIN, cookie, รหัส QR หรือ secret หลุดลง log ทุกชนิด', async () => {
+    const s = start(makeApp()); await s.ready;
+    await s.call('POST', '/api/login', { pin: '000000' });
+    await s.login();
+    const st = (await s.call('GET', '/api/state')).json;
+    await s.guest('GET', '/api/table?t=1&k=deadbeef');
+    await s.guest('POST', '/api/order', { table: 1, key: st.keys[1], items: [{ id: 1, qty: 1 }] });
+    await s.call('POST', '/api/settings', { shop: 'ร้านทดสอบ', tables: 14 });     // ensureKeys สร้างรหัส QR ใหม่ให้โต๊ะ 13-14
+    await s.call('GET', '/api/export.csv');
+    const text = allLogText(s.dir), data = JSON.parse(fs.readFileSync(path.join(s.dir, 'data.json'), 'utf8'));
+    assert.ok(text.length > 0);
+    assert.ok(!text.includes(PIN), 'มี PIN');
+    assert.ok(!text.includes(s.cookie.slice(3)), 'มี cookie พนักงาน');
+    assert.ok(!text.includes(data.secret), 'มี secret');
+    Object.values(data.keys).forEach(k => assert.ok(!text.includes(k), 'มีรหัส QR ' + k));
+    await s.stop();
+  });
+
+  test('security: รหัสผิด เข้าหน้าพนักงานไม่ได้ และรหัส QR ผิด ถูกบันทึก โดยเหตุการณ์ซ้ำไม่ท่วม log', async () => {
+    const s = start(makeApp()); await s.ready;
+    await s.call('POST', '/api/login', { pin: '111111' });
+    for (let i = 0; i < 20; i++) await s.guest('GET', '/api/state');           // แท็บเล็ตที่หลุดระบบเรียกซ้ำ
+    for (let i = 0; i < 5; i++) await s.guest('GET', '/api/table?t=3&k=0000000' + i);
+    await s.login();
+    const ev = readLog(s.dir, 'security'), n = a => ev.filter(e => e.action === a).length;
+    assert.equal(n('auth.login_failed'), 1);
+    assert.equal(n('auth.login'), 1);
+    assert.equal(n('auth.denied'), 1, '401 ซ้ำจากที่เดิมบันทึกครั้งเดียว');
+    assert.equal(n('qr.denied'), 1);
+    const r = await s.guest('GET', '/api/state');
+    assert.ok(r.json.requestId && r.json.requestId === r.headers.get('x-request-id'), 'error บอกรหัสอ้างอิง');
+    assert.ok(readLog(s.dir, 'app').some(e => e.msg === 'start'), 'app log บันทึกตอนเปิดระบบ');
+    await s.stop();
+  });
+
+  test('แก้ไขไฟล์ audit นอกระบบ: ตรวจเจอ และไม่คัดลอกทับสำเนาเดิมใน BACKUP_DIR', async () => {
+    const dir = makeApp(), copy = fs.mkdtempSync(path.join(os.tmpdir(), 'qr-bkcopy-')); tempDirs.push(copy);
+    const s = start(dir, { BACKUP_DIR: copy }); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const o = await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] });
+    await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    await s.call('POST', '/api/backup', {});
+    const f = 'audit-' + monthNow() + '.jsonl', mirror = path.join(copy, 'logs', f);
+    const good = fs.readFileSync(mirror, 'utf8');
+    assert.ok(good.includes('ticket.voided'), 'สำเนา log ไปอยู่นอกเครื่อง');
+    // คนในร้านลบบรรทัดยกเลิกออเดอร์ทิ้งเพื่อปิดบังเงินที่หายไป
+    const lf = path.join(dir, 'logs', f);
+    fs.writeFileSync(lf, fs.readFileSync(lf, 'utf8').split('\n').filter(l => !l.includes('ticket.voided')).join('\n'));
+    const chain = (await s.call('GET', '/api/audit')).json.chain;
+    assert.equal(chain.ok, false, 'ต้องตรวจเจอว่า log ถูกแก้');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    assert.equal(bk.copied, false);
+    assert.match(bk.copyError, /ตรวจพบการแก้ไข log/);
+    assert.equal(fs.readFileSync(mirror, 'utf8'), good, 'สำเนาเดิมที่ยังดีไม่ถูกทับ');
+    await s.stop();
+  });
+
+  test('เขียน log ไม่ได้: ป้ายเตือนขึ้น ระบบยังรับออเดอร์ได้ และ log ที่ค้างถูกเขียนครบเมื่อกลับมาปกติ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const ld = path.join(s.dir, 'logs');
+    fs.rmSync(ld, { recursive: true, force: true }); fs.writeFileSync(ld, 'x');       // สร้างโฟลเดอร์ logs ไม่ได้
+    for (let i = 0; i < 3; i++) assert.equal((await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }], memo: 'ค้าง' + i })).status, 200);
+    await new Promise(r => setTimeout(r, 300));
+    assert.ok((await s.call('GET', '/api/state')).json.health.saveError, 'ต้องเตือน');
+    fs.rmSync(ld);
+    await until(async () => !(await s.call('GET', '/api/state')).json.health.saveError, 8000);
+    const memos = readLog(s.dir, 'audit').filter(e => e.action === 'order.created').map(e => e.memo);
+    assert.deepEqual(memos, ['ค้าง0', 'ค้าง1', 'ค้าง2'], 'ไม่หายและเรียงตามลำดับ');
+    assert.equal((await s.call('GET', '/api/audit')).json.chain.ok, true);
+    await s.stop();
+  });
+
+  test('ลบ log ที่เก่าเกินระยะเก็บตอนเปิดระบบ (audit 25 เดือน, security 6, app 3)', async () => {
+    const dir = makeApp(); fs.mkdirSync(path.join(dir, 'logs'));
+    const ago = n => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+    const files = { ['audit-' + ago(24)]: 1, ['audit-' + ago(25)]: 0, ['security-' + ago(5)]: 1, ['security-' + ago(6)]: 0, ['app-' + ago(2)]: 1, ['app-' + ago(3)]: 0 };
+    Object.keys(files).forEach(f => fs.writeFileSync(path.join(dir, 'logs', f + '.jsonl'), '{}\n'));
+    fs.writeFileSync(path.join(dir, 'logs', 'อื่นๆ.txt'), 'ไม่ใช่ log');
+    const s = start(dir); await s.ready;
+    Object.keys(files).forEach(f => assert.equal(fs.existsSync(path.join(dir, 'logs', f + '.jsonl')), !!files[f], f));
+    assert.ok(fs.existsSync(path.join(dir, 'logs', 'อื่นๆ.txt')), 'ไฟล์อื่นไม่ถูกลบ');
+    await s.stop();
+  });
+});

@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const C = require('./lib/config');
 const U = require('./lib/util');
+const log = require('./lib/log');
 
 if (C.TRUST_PROXY && (C.PIN === '1234' || C.PIN.length < 6)) {
   U.die('เปิดระบบออกอินเทอร์เน็ต (TRUST_PROXY=1) ต้องตั้งรหัสพนักงานอย่างน้อย 6 หลัก เช่น STAFF_PIN=839274 node server.js');
@@ -69,6 +70,9 @@ const ALWAYS_ALLOWED = new Set(['/api/login', '/api/logout', '/api/backup/restor
 const server = http.createServer(async (req, res) => {
   let url;
   try { url = new URL(req.url, 'http://x'); } catch (e) { res.writeHead(400); return res.end(); }
+  // ทุกคำขอมีรหัสอ้างอิง ใส่ใน log และใน error ที่หน้าจอแสดง ไล่จากหน้าร้านไปถึง log ได้
+  req.id = crypto.randomBytes(6).toString('hex');
+  res.setHeader('X-Request-Id', req.id);
   try {
     if (req.method === 'GET' && url.pathname === '/api/events') {
       requireStaff(req);
@@ -106,12 +110,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('ไม่พบหน้านี้');
   } catch (e) {
-    if (!e.status) console.error(e);
+    if (!e.status) log.app('error', 'request_failed', { req: req.id, method: req.method, path: url.pathname, error: String(e && e.stack || e) });
     if (!res.headersSent) {
       // ส่งข้อมูลเกินขนาด: ตอบแล้วตัดการเชื่อมต่อทันที ไม่อ่านส่วนที่เหลือต่อ
       const extra = e.closeConnection ? { Connection: 'close' } : {};
       if (e.closeConnection) res.on('finish', () => req.socket.destroy());
-      U.send(res, e.status || 500, { error: e.status ? e.message : 'เกิดข้อผิดพลาดในระบบ' }, extra);
+      U.send(res, e.status || 500, { error: e.status ? e.message : 'เกิดข้อผิดพลาดในระบบ (รหัสอ้างอิง ' + req.id + ')', requestId: req.id }, extra);
     } else res.end();
   }
 });
@@ -123,6 +127,7 @@ server.on('error', e => {
 
 lockDataDir(() => {
   store.load();
+  log.prune(); setInterval(log.prune, C.DAY).unref();
   ['SIGINT', 'SIGTERM'].forEach(s => process.on(s, () => { store.writeFinal(); process.exit(0); }));
   server.listen(C.PORT, '0.0.0.0', () => {
     const all = lanCandidates();
@@ -134,6 +139,7 @@ lockDataDir(() => {
     console.log('  ไฟล์สำรอง :  ' + C.BK_DIR + (C.BK_COPY ? '  และคัดลอกไป ' + C.BK_COPY : '  (ตั้ง BACKUP_DIR เพื่อคัดลอกไปเก็บอีกที่)'));
     if (C.PIN === '1234' || C.PIN.length < 6) console.log('\n  ! รหัสพนักงานสั้นหรือเป็นค่าเริ่มต้น ควรตั้งอย่างน้อย 6 หลัก:  STAFF_PIN=รหัสใหม่ node server.js');
     console.log('');
+    log.app('info', 'start', { port: C.PORT, trustProxy: C.TRUST_PROXY });
     backup.startAuto();
   });
 });
