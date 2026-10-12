@@ -223,7 +223,7 @@ select.in{appearance:auto}
 (function(){
 'use strict';
 var WARN=10, CRIT=15;
-var S={tab:'kitchen',kStation:'all',sel:null,split:1,bSvc:true,bVat:false,d:null,report:null,seen:null,seenCalls:null,
+var S={tab:'kitchen',kStation:'all',sel:null,bSvc:true,bVat:false,d:null,report:null,seen:null,seenCalls:null,
        skew:0,dirty:false,confirm:null,lastSale:null,viewSale:null,busy:false,
        mCat:null,q:'',edit:null,saving:false,catEdit:null,bk:null,rs:null,restoring:false};
 
@@ -303,9 +303,9 @@ function orderUrl(t){return baseUrl()+'/order?t='+t+'&k='+S.d.keys[t];}
 
 /* ---------- data ---------- */
 function tableTickets(t){return S.d.tickets.filter(function(k){return k.table===t;});}
-function calc(sub,svcOn,vatOn,split){
+function calc(sub,svcOn,vatOn){
   var svc=svcOn?Math.round(sub*.1):0,vat=vatOn?Math.round((sub+svc)*.07):0,total=Math.round((sub+svc+vat)*100)/100;
-  return {sub:sub,svc:svc,vat:vat,total:total,per:Math.ceil(total/(split||1))};
+  return {sub:sub,svc:svc,vat:vat,total:total};
 }
 function pad(n,w){return String(n).padStart(w,'0');}
 function billNo(no,at){var d=new Date(at);return 'R'+d.getFullYear()+pad(d.getMonth()+1,2)+pad(d.getDate(),2)+'-'+pad(no,4);}
@@ -427,10 +427,9 @@ function receiptHtml(o){
   h+='<tr class="grand"><td>รวมสุทธิ</td><td class="a">'+baht(o.total)+'</td></tr></table>';
   if(o.qr){
     var pay=o.total;
-    if(o.split>1){pay=o.per;h+='<hr><div class="meta" style="color:inherit;font-weight:600"><span>แยก '+o.split+' คน</span><span>คนละ '+baht(o.per)+'</span></div>';}
     h+='<hr><div class="qr">';
     var payload=ppPayload(s.promptpay,pay),svg=payload?qrSvg(payload,'PromptPay QR'):'';
-    if(svg)h+=svg+'<small>สแกนจ่ายผ่าน PromptPay'+(o.split>1?' (ยอดต่อคน)':'')+' '+baht(pay)+'</small>';
+    if(svg)h+=svg+'<small>สแกนจ่ายผ่าน PromptPay '+baht(pay)+'</small>';
     else h+='<small>ตั้งค่าเบอร์ PromptPay ในแท็บ "ตั้งค่า & QR" เพื่อแสดง QR รับเงิน</small>';
     h+='</div>';
   }
@@ -467,14 +466,13 @@ function renderTables(){
   h+='</div>';
   if(bill){
     h+='<div class="panel stack"><div class="row"><span>ค่าบริการ 10%</span><button class="sw" data-a="bsvc" aria-pressed="'+S.bSvc+'">'+(S.bSvc?'เปิด':'ปิด')+'</button></div>';
-    h+='<div class="row"><span>VAT 7%</span><button class="sw" data-a="bvat" aria-pressed="'+S.bVat+'">'+(S.bVat?'เปิด':'ปิด')+'</button></div>';
-    h+='<div class="row"><span>แยกจ่ายเท่ากัน (คน)</span><span class="step"><button data-a="split" data-d="-1" aria-label="ลด">−</button><span>'+S.split+'</span><button data-a="split" data-d="1" aria-label="เพิ่ม">+</button></span></div></div>';
+    h+='<div class="row"><span>VAT 7%</span><button class="sw" data-a="bvat" aria-pressed="'+S.bVat+'">'+(S.bVat?'เปิด':'ปิด')+'</button></div></div>';
   }
   h+='</div>';
   if(bill){
-    var c=calc(bill.sub,S.bSvc,S.bVat,S.split);
+    var c=calc(bill.sub,S.bSvc,S.bVat);
     var pending=tk2.filter(function(k){return k.status!=='served';}).reduce(function(n,k){return n+k.items.reduce(function(a,i){return a+i.qty;},0);},0);
-    h+='<div><div class="receipt-box"><div class="receipt">'+receiptHtml({title:'ใบแจ้งยอด',at:now(),table:t2,lines:bill.lines,sub:c.sub,svc:c.svc,vat:c.vat,total:c.total,per:c.per,split:S.split,qr:true})+'</div></div>';
+    h+='<div><div class="receipt-box"><div class="receipt">'+receiptHtml({title:'ใบแจ้งยอด',at:now(),table:t2,lines:bill.lines,sub:c.sub,svc:c.svc,vat:c.vat,total:c.total,qr:true})+'</div></div>';
     h+='<div class="pay-wrap np">';
     if(pending)h+='<div class="banner warn" style="margin:0">ยังมี '+pending+' รายการที่ยังไม่ได้เสิร์ฟ ถ้าปิดบิลตอนนี้ รายการเหล่านี้จะหายจากจอครัว</div>';
     h+='<button class="btn block" data-a="printr">พิมพ์ใบแจ้งยอด</button><div class="pay-two">';
@@ -797,11 +795,10 @@ document.addEventListener('click',function(e){
     if(!armed('void:'+id)){arm('void:'+id);return;}
     disarm();act('/api/ticket/void',{id:id},'ยกเลิกออเดอร์แล้ว');
   }
-  else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.split=1;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
+  else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}
   else if(a==='bsvc'){S.bSvc=!S.bSvc;render();}
   else if(a==='bvat'){S.bVat=!S.bVat;render();}
-  else if(a==='split'){S.split=Math.max(1,Math.min(20,S.split+(+b.dataset.d)));render();}
   else if(a==='printr'){printMode('receipt');}
   else if(a==='pay'){
     var key='pay:'+id+':'+b.dataset.m;

@@ -73,9 +73,6 @@ async function main() {
   await bk;
   during.forEach(r => sales.push(r.json.sale));
   ok(during.every(r => r.status === 200), 'ปิดบิลระหว่างสำรองได้ตามปกติ');
-  // แยกจ่าย: ปัดขึ้นทีละคน
-  const split = [[100, 3], [220.5, 2], [95.5, 4]].map(([tot, n]) => ({ total: tot, n, per: P.calc(tot, false, false, n).per }));
-  split.forEach(x => console.log('    แยกจ่าย ยอด ' + x.total + ' / ' + x.n + ' คน = คนละ ' + x.per + ' → เก็บรวม ' + x.per * x.n + ' (เกิน ' + r2(x.per * x.n - x.total) + ')'));
 
   // ทุกที่ต้องตรงกัน
   const nos = sales.map(x => x.no);
