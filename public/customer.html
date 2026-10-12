@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>สั่งอาหาร</title>
+<style>
+:root{
+  --bg:#f3f1ec; --surface:#ffffff; --surface2:#ebe8e1; --ink:#1d1a16; --muted:#6a645a; --line:#d9d4c9;
+  --accent:#c2410c; --accent-ink:#ffffff; --accent-soft:#fde6d8;
+  --ok:#166534; --ok-bg:#dcf3e2; --warn:#92400e; --warn-bg:#fef0c7; --crit:#b91c1c; --crit-bg:#fde2e2;
+  --font:'Noto Sans Thai','Sarabun','Leelawadee UI','Thonburi',system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#16130f; --surface:#211d18; --surface2:#2d2821; --ink:#f1ece3; --muted:#a89f90; --line:#3a342b;
+  --accent:#fb923c; --accent-ink:#1d1006; --accent-soft:#3b2412;
+  --ok:#4ade80; --ok-bg:#10301c; --warn:#fbbf24; --warn-bg:#3a2a0b; --crit:#f87171; --crit-bg:#3b1414}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 var(--font);padding-bottom:calc(6rem + env(safe-area-inset-bottom,0px));font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.wrap{max-width:38rem;margin:0 auto;padding-inline:16px}
+header{padding-block:calc(14px + env(safe-area-inset-top,0px)) 12px}
+.shop{font-size:.95rem;color:var(--muted);font-weight:500}
+.tno{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.tno h1{margin:0;font-size:2.4rem;line-height:1.2;font-weight:700;letter-spacing:-.01em}
+.pill{display:inline-block;border-radius:99px;padding:1px 10px;font-size:.8rem;font-weight:600;background:var(--surface2);color:var(--muted)}
+.pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.warn{background:var(--warn-bg);color:var(--warn)} .pill.acc{background:var(--accent-soft);color:var(--accent)}
+nav.cats{position:sticky;top:0;z-index:4;background:var(--bg);border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top,0px)}
+nav.cats .in{display:flex;gap:8px;overflow-x:auto;padding-block:10px;scrollbar-width:none}
+nav.cats .in::-webkit-scrollbar{display:none}
+.cat{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:7px 16px;font-weight:600}
+.cat[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.list{display:flex;flex-direction:column;gap:10px;padding-block:14px}
+.item{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.item .tx{flex:1;min-width:0}
+.item .nm{font-weight:600;font-size:1.05rem;line-height:1.3;overflow-wrap:anywhere}
+.item .pr{color:var(--muted);font-weight:600}
+.item.out{opacity:.55}
+.item .ph{flex:none;width:4.6rem;height:4.6rem;border-radius:10px;object-fit:cover;background:var(--surface2);border:0;padding:0;overflow:hidden}
+.item .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.item .ds{font-size:.85rem;color:var(--muted);line-height:1.35;overflow-wrap:anywhere}
+.zoom{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px}
+.zoom img{max-width:100%;max-height:75vh;border-radius:12px}
+.zoom p{color:#fff;margin:0;font-weight:600;text-align:center}
+.add{flex:none;width:2.9rem;height:2.9rem;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);font-size:1.6rem;line-height:1;font-weight:500}
+.step{flex:none;display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;overflow:hidden;background:var(--surface2)}
+.step button{border:0;background:none;width:2.7rem;height:2.7rem;font-size:1.4rem}
+.step b{min-width:1.8rem;text-align:center}
+.section{padding-block:6px 8px}
+.section h2{font-size:1.1rem;margin:14px 0 8px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.srow{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px dashed var(--line)}
+.srow:first-child{border-top:0}
+.srow .t{min-width:0;overflow-wrap:anywhere}
+.help{display:flex;gap:10px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 16px;font-weight:600;flex:1;min-width:9rem}
+.btn:disabled{opacity:.55;cursor:default}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:6;padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--bg);border-top:1px solid var(--line)}
+.bar .btn{width:100%;display:flex;justify-content:space-between;align-items:center;font-size:1.05rem;padding:14px 18px;max-width:38rem;margin:0 auto}
+.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:8;display:flex;align-items:flex-end;justify-content:center}
+.sheet-bg[hidden]{display:none}
+.sheet{background:var(--bg);width:100%;max-width:38rem;max-height:92%;overflow-y:auto;border-radius:20px 20px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.sheet h2{margin:0 0 10px;font-size:1.25rem;display:flex;justify-content:space-between;align-items:center}
+.x{border:0;background:var(--surface2);border-radius:50%;width:2.4rem;height:2.4rem;font-size:1.2rem}
+.cl{padding:12px 0;border-top:1px solid var(--line)}
+.cl:first-of-type{border-top:0}
+.cl-top{display:flex;justify-content:space-between;gap:10px;font-weight:600}
+.cl-ctl{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 12px;font-size:.9rem}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.link{border:0;background:none;color:var(--accent);text-decoration:underline;padding:6px 2px;font-weight:600}
+.memo{width:100%;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px}
+.total{display:flex;justify-content:space-between;font-size:1.25rem;font-weight:700;margin:14px 0 10px}
+.err{background:var(--crit-bg);color:var(--crit);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-weight:500}
+.center{text-align:center;padding:48px 8px}
+.muted{color:var(--muted)}
+.small{font-size:.85rem}
+#toast{position:fixed;left:50%;bottom:calc(6.5rem + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:99px;font-weight:600;z-index:20;opacity:0;pointer-events:none;transition:opacity .2s;max-width:calc(100% - 32px);text-align:center}
+#toast.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="sheet-bg" id="sheetbg" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="ตะกร้า"></div></div>
+<div class="zoom" id="zoom" hidden data-a="unzoom"><img id="zoomimg" alt=""><p id="zoomtxt"></p><button class="x" data-a="unzoom" aria-label="ปิดรูป">×</button></div>
+<div id="toast" role="status"></div>
+
+<script>
+(function(){
+'use strict';
+var P = new URLSearchParams(location.search);
+var T = Math.floor(+P.get('t')), K = P.get('k') || '';
+var M = null, STAT = null, cat = null, cart = {}, memo = '', sheetOpen = false, sendErr = '', sending = false, menuLoading = false;
+function ensureCat(){ if(!M.categories.some(function(c){return c.id===cat;})) cat = M.categories.length ? M.categories[0].id : null; }
+var STORE = 'cart-' + T;
+var reqId = null;     // same id is re-sent when a send is retried, so the kitchen never gets the order twice
+function newReqId(){
+  var a=new Uint8Array(12);
+  try{crypto.getRandomValues(a);}catch(e){for(var i=0;i<a.length;i++)a[i]=Math.floor(Math.random()*256);}
+  return Array.prototype.map.call(a,function(x){return ('0'+x.toString(16)).slice(-2);}).join('');
+}
+function cartChanged(){reqId=null;saveCart();}
+function closedForGuests(){return STAT&&!STAT.open&&!STAT.staff;}
+
+function $(s){return document.querySelector(s);}
+function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function baht(n){return '฿'+Number(n).toLocaleString('th-TH');}
+var tt;
+function toast(m){var e=$('#toast');e.textContent=m;e.classList.add('on');clearTimeout(tt);tt=setTimeout(function(){e.classList.remove('on');},2400);}
+function loadCart(){try{var s=JSON.parse(localStorage.getItem(STORE)||'null');if(s&&s.cart){cart=s.cart;memo=s.memo||'';}}catch(e){}}
+function saveCart(){try{localStorage.setItem(STORE,JSON.stringify({cart:cart,memo:memo}));}catch(e){}}
+function item(id){return M.items.filter(function(m){return m.id===id;})[0];}
+function cartCount(){var n=0;Object.keys(cart).forEach(function(k){n+=cart[k].qty;});return n;}
+function cartTotal(){var s=0;Object.keys(cart).forEach(function(k){var m=item(+k);if(m)s+=m.price*cart[k].qty;});return s;}
+
+function api(path, body){
+  return fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'})
+    .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});});
+}
+
+function renderAll(){
+  if(!M){return;}
+  var h='<header class="wrap"><div class="shop">'+esc(M.shop)+'</div><div class="tno"><h1>โต๊ะ '+T+'</h1>'+(STAT&&STAT.staff?'<span class="pill acc">โหมดพนักงาน</span>':'')+'</div>'+
+    (closedForGuests()?'<div class="err" style="margin:10px 0 0">ร้านปิดรับออเดอร์ผ่าน QR ชั่วคราว ดูเมนูได้ แต่สั่งไม่ได้ กรุณาเรียกพนักงาน</div>':'')+'</header>';
+  ensureCat();
+  h+='<nav class="cats"><div class="wrap"><div class="in">'+M.categories.map(function(c){return '<button class="cat" data-a="cat" data-id="'+c.id+'" aria-pressed="'+(cat===c.id)+'">'+esc(c.name)+'</button>';}).join('')+'</div></div></nav>';
+  h+='<main class="wrap"><div class="list">'+(M.items.length?'':'<div class="center muted">ร้านยังไม่ได้เพิ่มเมนู กรุณาเรียกพนักงาน</div>')+M.items.filter(function(m){return m.cat===cat;}).map(function(m){
+    var q=cart[m.id]?cart[m.id].qty:0, ctl;
+    if(m.soldOut) ctl='<span class="pill warn">หมด</span>';
+    else if(q) ctl='<span class="step"><button data-a="dec" data-id="'+m.id+'" aria-label="ลด '+esc(m.name)+'">−</button><b>'+q+'</b><button data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+'">+</button></span>';
+    else ctl='<button class="add" data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+'">+</button>';
+    var ph=m.image?'<button class="ph" data-a="zoom" data-id="'+m.id+'" aria-label="ดูรูป '+esc(m.name)+'"><img src="/img/'+esc(m.image)+'" alt="" loading="lazy"></button>':'';
+    return '<div class="item'+(m.soldOut?' out':'')+'">'+ph+'<div class="tx"><div class="nm">'+esc(m.name)+'</div>'+(m.desc?'<div class="ds">'+esc(m.desc)+'</div>':'')+'<div class="pr">'+baht(m.price)+'</div></div>'+ctl+'</div>';
+  }).join('')+'</div>';
+  h+='<div id="status"></div></main>';
+  var n=cartCount();
+  if(n) h+='<div class="bar"><button class="btn primary" data-a="open"><span>ดูตะกร้า · '+n+' รายการ</span><span>'+baht(cartTotal())+'</span></button></div>';
+  $('#app').innerHTML=h;
+  renderStatus();
+}
+
+function renderStatus(){
+  var el=$('#status');if(!el||!STAT)return;
+  var SL={new:['รอทำ','warn'],cooking:['กำลังทำ','acc'],ready:['พร้อมเสิร์ฟ','ok'],served:['เสิร์ฟแล้ว','']};
+  var h='<div class="section"><h2>ออเดอร์ของโต๊ะนี้</h2><div class="card">';
+  if(!STAT.tickets.length) h+='<div class="muted">ยังไม่มีออเดอร์ เลือกเมนูด้านบนแล้วกดสั่งได้เลย</div>';
+  STAT.tickets.forEach(function(k){
+    h+='<div class="srow"><div class="t">'+k.items.map(function(i){return esc(i.name)+' ×'+i.qty;}).join(', ')+'</div><span class="pill '+SL[k.status][1]+'" style="align-self:flex-start;white-space:nowrap">'+SL[k.status][0]+'</span></div>';
+  });
+  if(STAT.tickets.length){
+    var sub=STAT.sub,svc=M.svc?Math.round(sub*.1):0,vat=M.vat?Math.round((sub+svc)*.07):0;
+    h+='<div class="srow"><b>ยอดอาหารรวม</b><b>'+baht(sub)+'</b></div>';
+    if(svc||vat) h+='<div class="small muted">ประมาณการรวม'+(svc?' ค่าบริการ 10%':'')+(vat?' VAT 7%':'')+' = '+baht(sub+svc+vat)+' (ยอดจริงตอนชำระเงิน)</div>';
+  }
+  h+='</div><div class="help" style="margin-top:12px">';
+  var c=STAT.call;
+  h+='<button class="btn" data-a="call" data-k="staff"'+(c&&c.kind==='staff'?' disabled':'')+'>'+(c&&c.kind==='staff'?'แจ้งพนักงานแล้ว':'เรียกพนักงาน')+'</button>';
+  h+='<button class="btn" data-a="call" data-k="bill"'+(c&&c.kind==='bill'?' disabled':'')+'>'+(c&&c.kind==='bill'?'แจ้งขอบิลแล้ว':'ขอเช็คบิล')+'</button></div></div>';
+  el.innerHTML=h;
+}
+
+function renderSheet(){
+  var bg=$('#sheetbg');bg.hidden=!sheetOpen;
+  if(!sheetOpen)return;
+  var ids=Object.keys(cart).map(Number);
+  var h='<h2><span>ตะกร้า โต๊ะ '+T+'</span><button class="x" data-a="close" aria-label="ปิด">×</button></h2>';
+  if(sendErr)h+='<div class="err">'+esc(sendErr)+'</div>';
+  if(!ids.length)h+='<div class="center muted">ตะกร้าว่าง</div>';
+  ids.forEach(function(id){
+    var m=item(id),l=cart[id];if(!m)return;
+    h+='<div class="cl"><div class="cl-top"><span>'+esc(m.name)+'</span><span>'+baht(m.price*l.qty)+'</span></div>';
+    h+='<div class="cl-ctl"><span class="step"><button data-a="dec" data-id="'+id+'" aria-label="ลด">−</button><b>'+l.qty+'</b><button data-a="inc" data-id="'+id+'" aria-label="เพิ่ม">+</button></span>';
+    h+='<button class="link" data-a="notes" data-id="'+id+'">'+(l.note.length?'แก้หมายเหตุ':'เพิ่มหมายเหตุ')+'</button></div>';
+    if(l.note.length&&!l.open)h+='<div class="small" style="color:var(--accent);margin-top:4px">'+esc(l.note.join(' · '))+'</div>';
+    if(l.open)h+='<div class="chips">'+M.notes.map(function(n){return '<button class="chip" data-a="note" data-id="'+id+'" data-n="'+esc(n)+'" aria-pressed="'+(l.note.indexOf(n)>=0)+'">'+esc(n)+'</button>';}).join('')+'</div>';
+    h+='</div>';
+  });
+  if(ids.length){
+    h+='<label for="memo" class="small muted" style="display:block;margin-top:12px">ข้อความถึงครัว (ถ้ามี)</label><input id="memo" class="memo" maxlength="80" value="'+esc(memo)+'" placeholder="เช่น แพ้ถั่ว ขอจานเปล่า" autocomplete="off">';
+    h+='<div class="total"><span>รวม</span><span>'+baht(cartTotal())+'</span></div>';
+    var closed=closedForGuests();
+    h+='<button class="btn primary" style="width:100%;padding:15px;font-size:1.1rem" data-a="send"'+(sending||closed?' disabled':'')+'>'+(closed?'ร้านปิดรับออเดอร์ชั่วคราว':(sending?'กำลังส่ง…':'สั่งอาหาร'))+'</button>';
+    h+='<div class="small muted" style="text-align:center;margin-top:8px">ราคายังไม่รวมค่าบริการและภาษี (ถ้ามี)</div>';
+  }
+  $('#sheet').innerHTML=h;
+}
+
+/* keep sold-out flags and the open/closed state live, and drop sold-out dishes from the cart */
+function applyStat(s){
+  // the back office changed the menu (price, photo, new dish): fetch it again, then re-apply
+  if(s.menuVersion!==undefined&&s.menuVersion!==M.version){
+    if(!menuLoading){
+      menuLoading=true;
+      api('/api/menu').then(function(r){
+        menuLoading=false;
+        if(r.ok){M=r.j;s.menuVersion=M.version;STAT=null;applyStat(s);}   // adopt whatever version we got, so this never loops
+      },function(){menuLoading=false;});
+    }
+    return;
+  }
+  var before=STAT?(STAT.open+'|'+(STAT.soldOut||[]).join(',')):null;
+  STAT=s;
+  var out=s.soldOut||[],removed=[],gone=0;
+  M.items.forEach(function(m){m.soldOut=out.indexOf(m.id)>=0;});
+  M.svc=s.svc;M.vat=s.vat;
+  Object.keys(cart).forEach(function(k){var m=item(+k);if(!m||m.soldOut){if(m)removed.push(m.name);else gone++;delete cart[k];}});
+  if(removed.length||gone){
+    cartChanged();
+    toast((removed.length?removed.join(', ')+' หมดแล้ว ':'')+(gone?'มีเมนูที่ไม่มีขายแล้ว ':'')+'นำออกจากตะกร้าให้แล้ว');
+  }
+  var after=s.open+'|'+out.join(',');
+  if(before!==after||removed.length||gone){renderAll();renderSheet();}
+  else renderStatus();
+}
+function refreshStatus(){
+  api('/api/table?t='+T+'&k='+encodeURIComponent(K)).then(function(r){
+    if(r.ok)applyStat(r.j);
+  }).catch(function(){});
+}
+
+document.addEventListener('click',function(e){
+  var b=e.target.closest('[data-a]');
+  if(!b){ if(e.target.id==='sheetbg'){sheetOpen=false;renderSheet();} return; }
+  var a=b.dataset.a,id=+b.dataset.id;
+  if(a==='cat'){cat=id;renderAll();}
+  else if(a==='zoom'){var zm=item(id);if(zm&&zm.image){$('#zoomimg').src='/img/'+zm.image;$('#zoomtxt').textContent=zm.name+' · '+baht(zm.price);$('#zoom').hidden=false;}}
+  else if(a==='unzoom'){$('#zoom').hidden=true;}
+  else if(a==='inc'){var mi=item(id);if(!mi||mi.soldOut)return;if(!cart[id])cart[id]={qty:0,note:[],open:false};if(cart[id].qty<20)cart[id].qty++;cartChanged();renderAll();renderSheet();}
+  else if(a==='dec'){if(cart[id]){cart[id].qty--;if(cart[id].qty<=0)delete cart[id];}cartChanged();renderAll();renderSheet();}
+  else if(a==='open'){sheetOpen=true;sendErr='';renderSheet();}
+  else if(a==='close'){sheetOpen=false;renderSheet();}
+  else if(a==='notes'){cart[id].open=!cart[id].open;renderSheet();}
+  else if(a==='note'){var l=cart[id],n=b.dataset.n,x=l.note.indexOf(n);if(x>=0)l.note.splice(x,1);else l.note.push(n);cartChanged();renderSheet();}
+  else if(a==='send')send();
+  else if(a==='call'){
+    api('/api/call',{table:T,key:K,kind:b.dataset.k}).then(function(r){
+      if(r.ok){toast(b.dataset.k==='bill'?'แจ้งขอเช็คบิลแล้ว':'แจ้งพนักงานแล้ว');refreshStatus();}
+      else toast(r.j.error||'ส่งไม่สำเร็จ');
+    }).catch(function(){toast('ส่งไม่สำเร็จ ลองใหม่อีกครั้ง');});
+  }
+});
+document.addEventListener('input',function(e){if(e.target.id==='memo'){memo=e.target.value;cartChanged();}});
+
+function send(){
+  if(sending||closedForGuests())return;
+  var items=Object.keys(cart).map(function(k){return {id:+k,qty:cart[k].qty,note:cart[k].note};});
+  if(!items.length)return;
+  if(!reqId)reqId=newReqId();
+  sending=true;sendErr='';renderSheet();
+  api('/api/order',{table:T,key:K,items:items,memo:memo,reqId:reqId}).then(function(r){
+    sending=false;
+    if(r.ok){cart={};memo='';reqId=null;saveCart();sheetOpen=false;renderAll();renderSheet();toast('ส่งออเดอร์เข้าครัวแล้ว');refreshStatus();}
+    else{sendErr=r.j.error||'ส่งไม่สำเร็จ';renderSheet();refreshStatus();}
+  }).catch(function(){sending=false;sendErr='ส่งไม่สำเร็จ ตรวจสอบสัญญาณ แล้วกดสั่งอีกครั้ง (ระบบจะไม่ส่งซ้ำ)';renderSheet();});
+}
+
+function fatal(msg){
+  $('#app').innerHTML='<div class="wrap center"><h1 style="font-size:1.4rem">'+esc(msg)+'</h1><p class="muted">กรุณาสแกน QR ที่โต๊ะอีกครั้ง หรือเรียกพนักงาน</p></div>';
+}
+
+if(!(T>=1)){ fatal('ไม่พบเลขโต๊ะ'); }
+else {
+  loadCart();
+  Promise.all([api('/api/menu'),api('/api/table?t='+T+'&k='+encodeURIComponent(K))]).then(function(rs){
+    if(!rs[1].ok){fatal(rs[1].j.error||'เปิดหน้านี้ไม่ได้');return;}
+    M=rs[0].j;
+    applyStat(rs[1].j);
+    renderAll();
+    setInterval(function(){if(!document.hidden)refreshStatus();},5000);
+    document.addEventListener('visibilitychange',function(){if(!document.hidden)refreshStatus();});
+  }).catch(function(){fatal('เชื่อมต่อร้านไม่ได้');});
+}
+})();
+</script>
+</body>
+</html>

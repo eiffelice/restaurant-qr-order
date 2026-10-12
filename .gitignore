@@ -1,0 +1,13 @@
+# ข้อมูลจริงของร้าน ห้ามขึ้น git (มีรหัส QR, ยอดขาย, secret ของ cookie พนักงาน)
+data.json
+data.json.*
+sales/
+images/
+backups/
+*.restore-tmp/
+*.old-*/
+*.tmp
+
+node_modules/
+.DS_Store
+Thumbs.db

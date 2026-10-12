@@ -1,0 +1,29 @@
+{
+  "categories": ["จานเดียว", "ต้ม ยำ แกง", "ยำ ทอด", "เครื่องดื่ม", "ของหวาน"],
+  "stations": { "hot": "ครัวร้อน", "bar": "เครื่องดื่ม", "dessert": "ของหวาน" },
+  "notes": ["ไม่เผ็ด", "เผ็ดน้อย", "เผ็ดมาก", "ไม่ใส่ผัก", "ไข่ดาว", "ไม่หวาน", "ไม่ใส่น้ำแข็ง"],
+  "items": [
+    { "id": 1, "name": "ผัดกะเพราหมูสับ", "price": 60, "cat": 0, "station": "hot" },
+    { "id": 2, "name": "ข้าวผัดกุ้ง", "price": 80, "cat": 0, "station": "hot" },
+    { "id": 3, "name": "ผัดไทยกุ้งสด", "price": 90, "cat": 0, "station": "hot" },
+    { "id": 4, "name": "ข้าวมันไก่", "price": 60, "cat": 0, "station": "hot" },
+    { "id": 5, "name": "ราดหน้าหมู", "price": 70, "cat": 0, "station": "hot" },
+    { "id": 6, "name": "ต้มยำกุ้ง", "price": 180, "cat": 1, "station": "hot" },
+    { "id": 7, "name": "ต้มข่าไก่", "price": 150, "cat": 1, "station": "hot" },
+    { "id": 8, "name": "แกงเขียวหวานไก่", "price": 120, "cat": 1, "station": "hot" },
+    { "id": 9, "name": "แกงจืดเต้าหู้หมูสับ", "price": 100, "cat": 1, "station": "hot" },
+    { "id": 10, "name": "ปีกไก่ทอดน้ำปลา", "price": 110, "cat": 2, "station": "hot" },
+    { "id": 11, "name": "ปลาหมึกทอดกระเทียม", "price": 160, "cat": 2, "station": "hot" },
+    { "id": 12, "name": "ทอดมันกุ้ง", "price": 130, "cat": 2, "station": "hot" },
+    { "id": 13, "name": "ส้มตำไทย", "price": 70, "cat": 2, "station": "hot" },
+    { "id": 14, "name": "ยำวุ้นเส้นทะเล", "price": 140, "cat": 2, "station": "hot" },
+    { "id": 15, "name": "ชาไทยเย็น", "price": 40, "cat": 3, "station": "bar" },
+    { "id": 16, "name": "กาแฟเย็น", "price": 50, "cat": 3, "station": "bar" },
+    { "id": 17, "name": "น้ำมะนาวโซดา", "price": 45, "cat": 3, "station": "bar" },
+    { "id": 18, "name": "น้ำเปล่า", "price": 15, "cat": 3, "station": "bar" },
+    { "id": 19, "name": "เบียร์ช้าง", "price": 70, "cat": 3, "station": "bar" },
+    { "id": 20, "name": "ข้าวเหนียวมะม่วง", "price": 90, "cat": 4, "station": "dessert" },
+    { "id": 21, "name": "บัวลอยไข่หวาน", "price": 55, "cat": 4, "station": "dessert" },
+    { "id": 22, "name": "ไอศกรีมกะทิ", "price": 50, "cat": 4, "station": "dessert" }
+  ]
+}
