@@ -882,6 +882,21 @@ describe('จาก QA: สิทธิ์และการเดารหั�
     await s.stop();
   });
 
+  test('เดา PIN จากหลาย IP (ตั้ง IP เองใน WiFi ร้าน): รหัสผิดรวมถูกจำกัด แต่เครื่องร้านยังเข้าสู่ระบบได้', async () => {
+    const s = start(makeApp()); await s.ready;
+    const codes = {};
+    await Promise.all(Array.from({ length: 50 }, (_, ip) => (async () => {
+      for (let j = 0; j < 6; j++) {
+        const r = await fromIp(s, '127.0.4.' + (ip + 1), 'POST', '/api/login', { pin: String(100000 + ip * 6 + j) });
+        codes[r.status] = (codes[r.status] || 0) + 1;
+      }
+    })()));
+    assert.ok(codes[401] <= 30 && codes[429] >= 270, 'เดาผิดได้ ' + JSON.stringify(codes));
+    assert.equal((await fromIp(s, '127.0.4.200', 'POST', '/api/login', { pin: PIN })).status, 429, 'ช่วงถูกพัก เครื่องอื่นในวงต้องรอแม้รหัสถูก');
+    assert.equal((await s.login()).status, 200, 'เครื่องร้านเอง (127.0.0.1) เข้าสู่ระบบได้เสมอ');
+    await s.stop();
+  });
+
   test('เปิดระบบซ้อนบนข้อมูลชุดเดียวกัน (แม้คนละพอร์ต): ตัวที่สองไม่ยอมเปิดและไม่แตะข้อมูล', async () => {
     const dir = makeApp();
     const a = start(dir); await a.ready; await a.login();
