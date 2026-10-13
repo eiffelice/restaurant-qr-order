@@ -137,12 +137,14 @@ test/api.test.js   ชุดทดสอบ node:test
 D = {
   settings: { shop, address, phone, taxId, footer, promptpay, tables, svc, vat, baseUrl, soldOut: [menuId], acceptOrders,
               accent /* '#rrggbb' สีปุ่มหลัก หรือ '' = สีตั้งต้น */, logo /* 'logo-<hex8>.png' ใน images/ หรือ '' */, cover /* 'cover-<hex8>.jpg' ภาพพื้นหลังหน้าลูกค้า หรือ '' */,
-              requireSeat /* ต้องเปิดโต๊ะก่อนลูกค้าสั่ง */, hours: { on, open: 'HH:MM', close: 'HH:MM' } /* ปิดรับ QR นอกเวลา (เวลาเครื่องร้าน ข้ามเที่ยงคืนได้) */ },
+              requireSeat /* ต้องเปิดโต๊ะก่อนลูกค้าสั่ง */, hours: { on, open: 'HH:MM', close: 'HH:MM' } /* ปิดรับ QR นอกเวลา (เวลาเครื่องร้าน ข้ามเที่ยงคืนได้) */,
+              tagline /* คำโปรยใต้ชื่อร้าน ≤ 80 */, look /* 'dark'|'light'|'auto' โทนหน้าลูกค้า ค่าเริ่มต้น dark */,
+              social: { facebook, instagram, line, tiktok } /* URL https ของแพลตฟอร์มนั้น หรือ '' */, shareUrl /* ลิงก์ที่ปุ่ม "แชร์ร้านนี้" ส่ง หรือ '' */ },
   seated: { [table]: { at } },     // โต๊ะที่พนักงานกด "เปิดโต๊ะ" ปิดบิลแล้วหายเอง
   menu: {
     version,                       // เพิ่มทุกครั้งที่แก้เมนู ลูกค้าใช้ตรวจว่าต้องโหลดเมนูใหม่
     categories: [{ id, name }],    // ลำดับใน array = ลำดับที่แสดง
-    items: [{ id, name, price, cat /* category id */, station, desc, image /* ชื่อไฟล์ใน images/ หรือ '' */, hidden }],
+    items: [{ id, name, price, cat /* category id */, station, desc, image /* ชื่อไฟล์ใน images/ หรือ '' */, hidden, rec /* เมนูแนะนำ แถวบนสุดของหน้าลูกค้า */ }],
     stations: { hot: 'ครัวร้อน', bar: 'เครื่องดื่ม', dessert: 'ของหวาน' },
     notes: ['ไม่เผ็ด', ...],       // ตัวเลือกหมายเหตุที่ลูกค้ากดได้ (whitelist)
     nextId, nextCatId              // id ไม่ถูกใช้ซ้ำแม้ลบเมนู
@@ -186,7 +188,7 @@ D = {
 |---|---|---|
 | POST /api/login `{pin}` | public | ได้ cookie `st` ของคนที่ PIN ตรง และ `me` (id, name, role) (จำกัด 6 ครั้ง/นาที/IP และรหัสผิดรวมทุก IP 30 ครั้ง/นาที ยกเว้นเครื่องร้านเอง) |
 | POST /api/logout | public | ลบ cookie |
-| GET /api/menu | public | เมนูที่ไม่ซ่อน + หมวดที่มีเมนู + `version` + `logo` + `cover` + `address`/`phone` + `popular` (id เมนูขายดี 3 อันดับใน 7 วันจากบิลจริง อย่างน้อย 3 จาน) |
+| GET /api/menu | public | เมนูที่ไม่ซ่อน (มี `rec`) + หมวดที่มีเมนู + `version` + `logo` + `cover` + `address`/`phone` + `tagline` + `look` + `social` + `shareUrl` + `hours` + `popular` (id เมนูขายดี 3 อันดับใน 7 วันจากบิลจริง อย่างน้อย 3 จาน) |
 | GET /api/brand | public | ชื่อร้าน + โลโก้ + ภาพพื้นหลัง (หน้าเข้าสู่ระบบพนักงานใช้ก่อนเข้าสู่ระบบ) |
 | GET /api/table?t=&k= | QR | ออเดอร์ของโต๊ะ, ยอด, `menuVersion`, `soldOut`, `open`, `closedReason` (`off`/`hours`/`seat`), `closedText`, `seated` |
 | POST /api/order `{table,key,items:[{id,qty,note}],memo,reqId,expect}` | QR | สั่งอาหาร แยกตั๋วตาม station, `reqId` กันสั่งซ้ำ 10 นาที, `expect` = ยอดที่ลูกค้าเห็น ถ้าไม่ตรงราคาปัจจุบันได้ 409 `code: price_changed` |
@@ -200,13 +202,13 @@ D = {
 | POST /api/table/rekey `{table}` | เจ้าของ + PIN ซ้ำ | สุ่มรหัส QR ใหม่ของโต๊ะเดียว QR แผ่นเก่าโต๊ะนั้นใช้ไม่ได้ทันที |
 | GET /api/reauth · POST /api/reauth `{pin}` | staff | สถานะ/ยืนยัน PIN ซ้ำของเครื่องนี้ (PIN ของบัญชีที่เข้าอยู่) ผิดได้ 400 `code: bad_pin` นับรวม `pinLocked()` |
 | POST /api/pay `{table,expectedSub,svc,vat,method,received?}` | staff | ปิดบิล ถ้ายอดเปลี่ยนได้ 409, `received` (เงินสดที่รับมา) ต้อง ≥ ยอด ตอบ `change` กลับ |
-| POST /api/settings `{...}` | staff | แก้ตั้งค่าร้าน (ส่งเฉพาะ field ที่จะแก้) `accent` ต้องผ่าน `theme.derive()` เปลี่ยนสีแล้ว `menu.version` เพิ่ม หน้าลูกค้าโหลดสีใหม่เอง |
+| POST /api/settings `{...}` | staff | แก้ตั้งค่าร้าน (ส่งเฉพาะ field ที่จะแก้ `social` ส่งเฉพาะบางช่องได้) แก้บนสำเนา ผิดช่องเดียวไม่มีอะไรเปลี่ยน `accent` ต้องผ่าน `theme.derive()` ลิงก์ผ่าน `U.cleanLink()` เปลี่ยน PromptPay/baseUrl/social/shareUrl ต้อง PIN ซ้ำ สิ่งที่หน้าลูกค้าแสดง (ชื่อ ที่อยู่ เบอร์ สี คำโปรย โทน ลิงก์ เวลา) เปลี่ยนแล้ว `menu.version` เพิ่ม หน้าลูกค้าโหลดใหม่เอง |
 | GET /api/theme/preview?accent= | เจ้าของ | ผลคำนวณสี light/dark + ชุดสีสำเร็จรูป ใช้แสดงตัวอย่างก่อนบันทึก |
 | POST /api/settings/logo (body = รูป, Content-Type image/*) | เจ้าของ | อัปโหลดโลโก้ ≤ 3 MB ตรวจ magic bytes ลบไฟล์เก่า |
 | POST /api/settings/logo/delete | เจ้าของ | เอาโลโก้ออก |
 | POST /api/settings/cover (body = รูป) · POST /api/settings/cover/delete | เจ้าของ | ภาพพื้นหลังหน้าลูกค้า ใช้ `brandImage()` ร่วมกับโลโก้ |
 | POST /api/soldout `{id,soldOut}` | staff | ตั้ง/ยกเลิกเมนูหมด |
-| POST /api/menu/item `{id?,name,price,cat,station,desc,hidden,was?}` | เจ้าของ | เพิ่ม (ไม่มี id) หรือแก้เมนู ถ้า `was` ไม่ตรงกับค่าปัจจุบันได้ 409 |
+| POST /api/menu/item `{id?,name,price,cat,station,desc,hidden,rec,was?}` | เจ้าของ | เพิ่ม (ไม่มี id) หรือแก้เมนู ถ้า `was` ไม่ตรงกับค่าปัจจุบันได้ 409 |
 | POST /api/menu/item/delete `{id}` | staff | ลบเมนูและรูป |
 | POST /api/menu/image?id= (body = ไฟล์รูป, Content-Type image/*) | staff | อัปโหลดรูป ≤ 3 MB ตรวจ magic bytes |
 | POST /api/menu/image/delete `{id}` | staff | เอารูปออก |
@@ -284,6 +286,9 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 47. **รับออเดอร์ผ่าน QR ได้หรือไม่ ตัดสินที่ `qrClosed(t)` ที่เดียว** (ปิดเอง / นอกเวลา / ยังไม่เปิดโต๊ะ) ข้อความไปหน้าลูกค้าผ่าน `closedText` พนักงานสั่งแทนได้เสมอ โต๊ะที่มีออเดอร์อยู่ถือว่าเปิดแล้ว (เปิดโหมดกลางวันแล้วโต๊ะที่นั่งอยู่ไม่สะดุด) ปิดบิลแล้วต้อง `delete D.seated[t]`
 48. **เรื่องสำคัญต้อง `requireFresh(req)`**: เปลี่ยน PromptPay หรือ baseUrl, เพิ่ม/แก้พนักงาน, สั่งออกทุกเครื่อง, ดาวน์โหลดไฟล์สำรอง, กู้คืน, เปลี่ยนรหัส QR endpoint ใหม่ที่ทำให้เงินหรือลูกค้าถูกพาไปที่อื่น หรือได้ข้อมูลลับออกไป ต้องเพิ่มด้วย หน้าพนักงานจัดการผ่าน `api()` (ถาม PIN แล้วส่งซ้ำ) หรือ `ensureFresh()` สำหรับลิงก์ดาวน์โหลด/กู้คืน
 49. **cookie พนักงาน = `<id>.<เวลาออก-สุ่ม>.<ลายเซ็น>`** ต่อเครื่องไม่ซ้ำกัน การยืนยัน PIN ซ้ำ (`fresh`) ผูกกับค่า cookie ของเครื่องนั้น เจ้าของหมดอายุตาม `OWNER_SESSION_MIN` cookie แบบเดิม `<id>.<ลายเซ็น>` รับเฉพาะแคชเชียร์/ครัว (ไม่ให้แท็บเล็ตหลุดตอนอัปเดต) ห้ามกลับไปใช้ลายเซ็นที่เหมือนกันทุกเครื่อง
+50. **ลิงก์ที่พาลูกค้าออกไปเว็บอื่น (`social`, `shareUrl`) ต้องผ่าน `U.cleanLink()` ทั้งตอนบันทึกและใน `normalize()`** (ตรวจโดเมนของแพลตฟอร์ม ไม่รับ `javascript:`/`data:` โซเชียลมีเดียต้อง https) เปลี่ยนต้อง `requireFresh` ในหน้าลูกค้าใส่ `href` ผ่าน `esc()` + `safeUrl()` และ `target=_blank rel="noopener noreferrer"` หน้าลูกค้ามี `<meta name="referrer" content="no-referrer">` ห้ามเอาออก (ที่อยู่หน้ามีรหัส QR ของโต๊ะ)
+51. **ปุ่มแชร์ร้านส่ง `shareUrl` ที่ร้านตั้งเท่านั้น ห้ามแชร์ `location.href`** ที่อยู่หน้าลูกค้ามี `k=` ของโต๊ะ คนที่ได้ลิงก์ไปสั่งอาหารเข้าโต๊ะนั้นได้จากที่ไหนก็ได้ ไม่ตั้ง `shareUrl` = ไม่มีปุ่มแชร์
+52. **`POST /api/settings` แก้บนสำเนาแล้วแทนที่ทีเดียว** ห้ามแก้ `st.D.settings` ทีละช่องก่อนตรวจครบ (เคยแก้ชื่อร้านแล้วช่อง PromptPay ผิด ตอบ 400 แต่ชื่อร้านเปลี่ยนในหน่วยความจำแล้ว ไม่มี audit แล้วถูกบันทึกลงดิสก์ตอนบันทึกครั้งถัดไป)
 ---
 
 ## 7. วิธีแก้โค้ดที่ทำบ่อย
@@ -305,12 +310,15 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 ### แก้หน้าเว็บ
 - ไม่มี framework ไม่มี build แก้ไฟล์ HTML แล้ว refresh ได้เลย
 - **โครงหน้าลูกค้า (customer.html)**
-  - `#app` = หัวหน้าแบบหน้าปก `header.top` (ภาพพื้นหลังของร้านผ่าน `--cover` บน body หรือไล่สีจากสีร้าน + โลโก้วงกลม ชื่อร้าน โต๊ะ สถานะรับออเดอร์) `body.has-cover::before` = ภาพเดียวกันจาง 9% ทั้งหน้า (ห้ามเพิ่มความเข้ม ตัวหนังสือบนพื้นต้องผ่าน contrast) → แถบหมวด (`nav.cats` ปุ่มกระโดดไปหมวด + ไฮไลต์ตามตำแหน่งที่เลื่อน `spy()`) → ปุ่มตะกร้า `.bar` (fixed ล่างจอ แต่อยู่ก่อนรายการใน DOM ให้คีย์บอร์ดถึงเร็ว) → `<section class="sec">` ทุกหมวดเรียงต่อกัน การ์ด 2 คอลัมน์ (≥ 700px 3 คอลัมน์) → `#status` ออเดอร์ของโต๊ะ + เรียกพนักงาน/ขอบิล
-  - การ์ด: `.item > .picwrap > button.open[data-a=detail]` (รูปหรือ `.noimg.tn0-4` พื้นจางตามหมวด) + `.ctl` (ปุ่ม + หรือ − n +) ชื่อและราคาอยู่ใต้รูป
+  - `#app` มีโครงคงที่ (`skeleton()` สร้างครั้งเดียว) แล้ววาดใหม่ทีละส่วน (`#hdr`, `#catin`, `#barw`, `#main`, `#foot`, `#bnav`) **ช่องค้นหา `#q` ห้ามอยู่ในส่วนที่วาดใหม่** (คีย์บอร์ดมือถือหุบระหว่างพิมพ์) ลำดับ: `header.top` การ์ดหน้าปก `.hcard` (ภาพร้าน `.cov` ด้านขวา จางเข้าหาพื้นการ์ดด้านซ้าย ตัวหนังสืออยู่บนพื้นทึบเสมอ ไม่มีภาพใช้แสงจากสีร้าน + โลโก้ ชื่อร้าน คำโปรย โต๊ะ สถานะรับออเดอร์) `body.has-cover::before` = ภาพเดียวกันจาง 8% ทั้งหน้า → แถบหมวด (`nav.cats` sticky ปุ่มมีไอคอนจาก `catIcon()` เดาจากชื่อหมวด กระโดดไปหมวด + ไฮไลต์ตามตำแหน่ง `spy()`) → ช่องค้นหา (`keepSearch()` เลื่อนให้อยู่ใต้แถบหมวดเสมอ) → ปุ่มรายการสั่ง `.bar` (fixed เหนือแถบล่าง แต่อยู่ก่อนรายการใน DOM) → `#main`: แถวเมนูแนะนำ `.rsec` (เมนู `rec` ถ้าไม่มีใช้เมนูขายดี) → `<section class="sec">` ทุกหมวดเรียงต่อกัน (ค้นหาอยู่ = ส่วนผลค้นหาส่วนเดียว) → `#status` ออเดอร์ของโต๊ะ + เรียกพนักงาน/ขอบิล → `#foot` ที่อยู่ เบอร์ ปุ่มติดตาม/แชร์ → `.bnav` แถบล่าง เมนู / ออเดอร์ (ตัวเลข = ตั๋วที่ยังไม่เสิร์ฟ) / ร้าน
+  - การ์ดในหมวด: `.item > button.open[data-a=detail]` (`.pic` รูปหรือ `.noimg.tn0-4` ซ้าย + `.txt` ป้าย `.badge` ชื่อ คำอธิบาย ราคา) + `.ctl` (ปุ่ม + หรือ − n +) มุมขวาล่างในแถวราคา (แถวราคาสูงเท่าปุ่ม คำอธิบายไม่ลอดใต้ปุ่ม) จอ ≥ 620px 2 คอลัมน์
+  - การ์ดแนะนำ: `.rcard` (ไม่ใช่ `.item` เพราะเทสต์นับ `.item` = จำนวนเมนู) ปุ่มมี `data-z="r"` ให้คืนโฟกัสถูกใบ (`focusSel()`)
   - `#detail` หน้ารายละเอียด (นอก #app): `.hero` รูป 55% จอ มุม 28px gradient มืดบน/ล่าง ป้ายมีพื้นทึบ (`--scrim`) ตัวหนังสือบนรูปจึงผ่าน contrast ทุกรูป → `.buy` ราคาบนพื้นเว้า (`.notch`) + ตัวเพิ่มลด + ปุ่มแคปซูล `.cap` → แท็บ รายละเอียด/หมายเหตุ
   - `#sheetbg > #sheet` ตะกร้า (นอก #app) แต่ละแถวมีรูปเล็ก ตัวเพิ่มลด (`linc/ldec` ตาม index แถว) และชิปหมายเหตุ
+  - `#shopbg > #shop` ข้อมูลร้าน (นอก #app เปิดด้วย pushState เหมือนตะกร้า): ที่อยู่ เบอร์ เวลารับออเดอร์ ปุ่มติดตาม `a.soc` แชร์ (`shareShop()` → `navigator.share` → คัดลอก `copyText()` มีทางสำรอง `execCommand` เพราะร้านเปิดผ่าน http) ลิงก์แชร์ LINE/Facebook
+  - โทน: `<html data-look>` ตั้งจาก localStorage ก่อนวาด (สคริปต์ใน `<head>`) แล้วตาม `M.look` ใน `applyLook()` สีโทนมืดอยู่สองที่ใน `<style>` (`@media` + `:root[data-look=dark]`) ต้องแก้คู่กัน `/theme.css` มีสามชุดเหมือนกัน
   - ปุ่มหลักทุกจุดใช้ `.cap` (แคปซูล + วงกลมลูกศร) สีจาก `--accent` ที่เจ้าของตั้งได้ ไอคอนเป็น inline SVG ใน `IC` ห้ามโหลดฟอนต์/ไอคอนจากเน็ต
-  - selector ที่สคริปต์ QA ใช้ ห้ามเปลี่ยนชื่อโดยไม่แก้ qa/: `.item`, `.item.out`, `.item [data-a="inc"]`, `.item .open`, `[data-a="open"]`, `[data-a="send"]`, `[data-a="notes"]`, `#detail`, `[data-a="dadd"]`
+  - selector ที่สคริปต์ QA ใช้ ห้ามเปลี่ยนชื่อโดยไม่แก้ qa/: `.item`, `.item.out`, `.item .badge`, `.item [data-a="inc"]`, `.item .open`, `.rcard`, `#h-rec`, `[data-a="open"]`, `[data-a="send"]`, `[data-a="notes"]`, `#detail`, `[data-a="dadd"]`, `#q`, `#h-search`, `#bnav [data-v]`, `#shopbg`, `#shop a.soc`, `header.top .cov`, `footer.foot`
 - **QR ติดโต๊ะ (staff.html):** พิมพ์รวมใช้ `@page qrsheet` (A4 2×3) เฉพาะตอน `body.pm-qr` ห้ามตั้ง `@page` ทั่วไปเพราะจะทับใบเสร็จ 80 มม. พิมพ์ใบเดียวใช้ `printMode('qr','pm-one')` + `.qcard.pick` ไฟล์ PNG วาดใน `qrPng()` ตำแหน่ง QR คงที่ที่ `QR_BOX` (สคริปต์ QA อ่านจุดกลับมาเทียบ ถ้าย้ายต้องแก้ `qa/browser.js qrfiles` ด้วย) zip สร้างเองแบบไม่บีบอัดใน `makeZip()`
 - **ไฟล์สีร้าน:** โหลด/เปลี่ยนผ่าน `loadTheme()` เท่านั้น (โหลดใหม่เสร็จก่อนเอาอันเก่าออก, ล้มแล้วลองใหม่ทุก 5 วินาที) ห้ามตั้ง `href` ของ `#theme-css` ตรงๆ ตรวจว่าโหลดสำเร็จด้วย `sheetOk()` (Chromium มี sheet เปล่าให้แม้โหลดล้ม)
 - **ธีมร้าน:** แผง `#theme` ในแท็บตั้งค่า (ไม่วาดทับระหว่างเลือกสี `themeBusy()`) โลโก้เลือกผ่าน `#logo-file` และภาพพื้นหลังผ่าน `#cover-file` ที่อยู่ท้าย body (กฎข้อ 26) โลโก้แสดงที่หน้าเข้าสู่ระบบ แถบเมนู ใบเสร็จ แผ่น QR และหัวหน้าลูกค้า ภาพพื้นหลังแสดงที่หัวหน้าลูกค้า พื้นหลังจางทั้งหน้าลูกค้า และหน้าเข้าสู่ระบบ (`#login.has-cover` ทับด้วยเงาดำ 50% ให้การ์ดใส่รหัสอ่านชัด) ป้าย "ขายดี" มาจาก `popularIds()` ใน routes.js (ยอดขายจริง ห้ามให้เจ้าของตั้งเอง)

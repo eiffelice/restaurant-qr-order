@@ -10,6 +10,17 @@ const OUT = path.join(__dirname, '..', 'docs', 'screenshots');
 const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
+// รูปอาหาร/โลโก้/ภาพพื้นหลังจริง: ไฟล์ m<id>-*.jpg, logo-*, cover-* ในโฟลเดอร์นี้ (ค่าเริ่มต้น images/ ของร้านบนเครื่องนี้)
+// ใช้เฉพาะไฟล์รูป ไม่แตะ data.json จริง (รหัส QR ของร้านจริงจึงไม่หลุดไปอยู่ในภาพ QR ของคู่มือ)
+const PHOTOS = process.env.SHOTS_PHOTOS || path.join(__dirname, '..', 'images');
+function photo(re) {
+  try {
+    const f = fs.readdirSync(PHOTOS).filter(n => re.test(n)).map(n => path.join(PHOTOS, n)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    return f ? fs.readFileSync(f) : null;
+  } catch (e) { return null; }
+}
+const mime = b => b[0] === 0x89 ? 'image/png' : b[0] === 0xFF ? 'image/jpeg' : 'image/webp';
+const SHOP = process.env.SHOTS_SHOP || 'ครัวป้าแดง', TAGLINE = process.env.SHOTS_TAGLINE || 'อาหารไทยรสชาติต้นตำรับ ปรุงสดใหม่ทุกวัน';
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
@@ -19,12 +30,30 @@ const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
   const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
 
   // ---------- ข้อมูลร้านตัวอย่าง ----------
-  await s.call('POST', '/api/settings', { baseUrl: 'http://192.168.1.50:3000', shop: 'ครัวป้าแดง', address: '88/8 ถ.สุขุมวิท แขวงคลองตัน เขตคลองเตย กรุงเทพฯ', phone: '02-123-4567', promptpay: '0812345678', footer: 'ขอบคุณที่อุดหนุนค่ะ' });
-  await s.call('POST', '/api/settings/logo', await fakePhoto(browser, 8, 300), png);
-  await s.call('POST', '/api/settings/cover', await fakeCover(browser, 20), { headers: { 'content-type': 'image/jpeg' } });
+  await s.call('POST', '/api/settings', { baseUrl: 'http://192.168.1.50:3000', shop: SHOP, address: '88/8 ถ.สุขุมวิท แขวงคลองตัน เขตคลองเตย กรุงเทพฯ', phone: '02-123-4567', promptpay: '0812345678', footer: 'ขอบคุณที่อุดหนุนค่ะ',
+    tagline: TAGLINE, social: { facebook: 'https://www.facebook.com/kruapadaeng', instagram: '@kruapadaeng', line: '@kruapadaeng', tiktok: '@kruapadaeng' }, shareUrl: 'https://maps.app.goo.gl/kruapadaeng' });
+  const up = (p, b) => s.call('POST', p, b, { headers: { 'content-type': mime(b) } });
+  // โลโก้อัปโหลดผ่านหน้าตั้งค่าจริง (ย่อและตัดขอบว่างแบบเดียวกับที่เจ้าของร้านใช้)
+  const logoBuf = photo(/^logo-[a-f0-9]{8}\.(png|jpg|webp)$/) || await fakePhoto(browser, 8, 300);
+  {
+    const lc0 = await browser.newContext({ baseURL: s.B }); const lp0 = await lc0.newPage();
+    await lp0.goto('/staff'); await lp0.fill('#pin', PIN); await lp0.press('#pin', 'Enter'); await lp0.waitForSelector('#tabs .tab');
+    await lp0.click('#tabs [data-v="settings"]'); await lp0.waitForSelector('label[for="logo-file"]');
+    await lp0.setInputFiles('#logo-file', { name: 'logo.png', mimeType: mime(logoBuf), buffer: logoBuf });
+    for (let i = 0; i < 50 && !(await s.call('GET', '/api/state')).json.settings.logo; i++) await sleep(200);
+    await lc0.close();
+  }
+  await up('/api/settings/cover', photo(/^cover-[a-f0-9]{8}\.(png|jpg|webp)$/) || await fakeCover(browser, 20));
   const hues = { 1: 18, 2: 40, 3: 30, 4: 52, 6: 5, 7: 12, 11: 190, 12: 330 };
-  for (const id of Object.keys(hues)) await s.call('POST', '/api/menu/image?id=' + id, await fakePhoto(browser, hues[id]), png);
+  let real = 0;
+  for (const m of st0.menu.items) {
+    const b = photo(new RegExp('^m' + m.id + '-[a-f0-9]{8}\\.(png|jpg|webp)$'));
+    if (b) real++;
+    if (b || hues[m.id]) await up('/api/menu/image?id=' + m.id, b || await fakePhoto(browser, hues[m.id]));
+  }
+  console.log('รูปเมนูจริง ' + real + ' รูป จาก ' + PHOTOS);
   const m1 = st0.menu.items.find(i => i.id === 1);
+  for (const id of [3, 6, 12]) { const x = st0.menu.items.find(i => i.id === id); await s.call('POST', '/api/menu/item', Object.assign({}, x, { rec: true })); }
   await s.call('POST', '/api/menu/item', { id: 1, name: m1.name, price: m1.price, cat: m1.cat, station: m1.station, desc: 'กะเพราใบสดผัดไฟแรงกับหมูสับ พริกขี้หนูสวน กระเทียมไทย เสิร์ฟพร้อมข้าวสวยร้อนๆ เลือกระดับความเผ็ดได้ในแท็บหมายเหตุ' });
   await s.call('POST', '/api/staff', { name: 'น้องฝน', role: 'cashier', pin: '520011' });
   await s.call('POST', '/api/staff', { name: 'พี่ชัย', role: 'kitchen', pin: '520022' });
@@ -68,7 +97,15 @@ const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
   await p.evaluate(() => window.scrollTo(0, 0));
   await p.click('.item .open[data-id="4"]').catch(() => {}); await sleep(500);
   if (!(await p.isHidden('#detail'))) await shot(p, 'c07-soldout');
+  if (!(await p.isHidden('#detail'))) { await p.click('[data-a="dback"]'); await sleep(300); }
+  await p.evaluate(() => window.scrollTo(0, 0)); await p.click('#bnav [data-v="shop"]'); await sleep(500);
+  await shot(p, 'c11-shop-info');
+  await p.click('[data-a="sclose"]'); await sleep(300); await p.fill('#q', 'กุ้ง'); await sleep(400);
+  await shot(p, 'c12-search');
   await p.context().close();
+  await s.call('POST', '/api/settings', { look: 'light' });
+  p = await cust(); await shot(p, 'c08-menu-light'); await p.context().close();
+  await s.call('POST', '/api/settings', { look: 'dark' });
   p = await cust({ colorScheme: 'dark' }); await shot(p, 'c08-menu-dark');
   await p.click('.item .open[data-id="2"]'); await sleep(500); await shot(p, 'c09-detail-noimage-dark'); await p.context().close();
   p = await cust({ viewport: { width: 768, height: 1024 }, isMobile: false, deviceScaleFactor: 1 }); await shot(p, 'c10-tablet-menu'); await p.context().close();
