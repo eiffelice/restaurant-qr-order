@@ -134,4 +134,19 @@ async function fakePhoto(browser, hue, size) {
   return Buffer.from(b64, 'base64');
 }
 
-module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker, fakePhoto };
+// ภาพพื้นหลังจำลองแนวนอน (แสงโบเก้โทนร้านอาหารยามเย็น) สำหรับทดสอบ/ถ่ายภาพหน้าจอ
+async function fakeCover(browser, hue) {
+  const p = await (await browser.newContext()).newPage();
+  const b64 = await p.evaluate(h => {
+    const W = 1600, H = 900, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
+    const g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, 'hsl(' + h + ',55%,22%)'); g.addColorStop(1, 'hsl(' + (h + 30) + ',70%,45%)');
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    let s = 7; const r = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    for (let i = 0; i < 70; i++) { const rad = 20 + r() * 110; x.fillStyle = 'hsla(' + (h + 20 + r() * 40) + ',90%,' + (60 + r() * 25) + '%,' + (0.08 + r() * 0.25) + ')'; x.beginPath(); x.arc(r() * W, r() * H * 0.8, rad, 0, 7); x.fill(); }
+    x.fillStyle = 'rgba(40,20,10,.55)'; x.fillRect(0, H * 0.72, W, H * 0.28);
+    return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+  }, hue || 25);
+  await p.context().close();
+  return Buffer.from(b64, 'base64');
+}
+module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker, fakePhoto, fakeCover };

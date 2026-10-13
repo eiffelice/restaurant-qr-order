@@ -1577,3 +1577,153 @@ describe('ยืนยัน PIN ซ้ำก่อนทำเรื่อง�
   });
 });
 
+describe('ภาพพื้นหลังหน้าลูกค้าและเมนูขายดี', () => {
+  const up = (s, buf, type, cookie, kind) => fetch(s.B + '/api/settings/' + (kind || 'cover'), { method: 'POST', headers: { 'content-type': type || 'image/jpeg', cookie: cookie === undefined ? s.cookie : cookie }, body: buf })
+    .then(async r => ({ status: r.status, json: await r.json().catch(() => null) }));
+
+  test('ภาพพื้นหลัง: เจ้าของเท่านั้น ตรวจ magic bytes แสดงในเมนูและหน้าเข้าสู่ระบบ เปลี่ยนแล้วไฟล์เก่าถูกลบ อยู่ในไฟล์สำรอง', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    assert.equal((await up(s, JPG, 'image/jpeg', c.cookie)).status, 403, 'แคชเชียร์เปลี่ยนไม่ได้');
+    assert.equal((await up(s, JPG, 'image/jpeg', '')).status, 401);
+    assert.equal((await up(s, Buffer.from('<svg/>'), 'image/png')).status, 400, 'ไม่ใช่รูปจริง');
+    const v0 = (await s.guest('GET', '/api/menu')).json.version;
+    const a = await up(s, JPG);
+    assert.equal(a.status, 200);
+    assert.match(a.json.cover, /^cover-[a-f0-9]{8}\.jpg$/);
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.equal(m.cover, a.json.cover);
+    assert.ok(m.version > v0, 'หน้าลูกค้าที่เปิดอยู่รู้ว่าต้องโหลดใหม่');
+    assert.equal((await s.guest('GET', '/api/brand')).json.cover, a.json.cover, 'หน้าเข้าสู่ระบบใช้ภาพเดียวกัน');
+    assert.equal((await fetch(s.B + '/img/' + a.json.cover)).status, 200);
+    const b = await up(s, JPG);
+    assert.ok(!fs.existsSync(path.join(s.dir, 'images', a.json.cover)), 'ภาพเก่าถูกลบ');
+    assert.equal((await up(s, JPG, 'image/jpeg', undefined, 'logo')).status, 200);
+    const st = (await s.call('GET', '/api/state')).json.settings;
+    assert.ok(st.cover === b.json.cover && st.logo, 'ภาพพื้นหลังกับโลโก้แยกกัน ไม่ทับกัน');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    assert.ok((await getBackup(s, bk.name)).json.images[b.json.cover], 'ภาพพื้นหลังอยู่ในไฟล์สำรอง');
+    assert.equal((await s.call('POST', '/api/settings/cover/delete', {})).status, 200);
+    assert.equal((await s.guest('GET', '/api/menu')).json.cover, '');
+    assert.ok(!fs.existsSync(path.join(s.dir, 'images', b.json.cover)));
+    const ev = readLog(s.dir, 'audit').map(e => e.action);
+    assert.ok(ev.includes('settings.cover.updated') && ev.includes('settings.cover.removed'));
+    await s.stop();
+  });
+
+  test('ชื่อไฟล์ภาพพื้นหลังแปลกปลอมใน data.json ถูกล้าง และรูปเมนูอ้างไฟล์ภาพพื้นหลังไม่ได้', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.stop();
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    d.settings.cover = '../data.json'; d.menu.items[0].image = 'cover-0123abcd.jpg';
+    fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready;
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.deepEqual([m.cover, m.items[0].image], ['', '']);
+    await s.stop();
+  });
+
+  test('เมนูขายดี: 3 เมนูที่ขายมากสุดใน 7 วันจากบิลจริง (อย่างน้อย 3 จาน) ไม่มีบิลก็ไม่มีป้าย', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.deepEqual((await s.guest('GET', '/api/menu')).json.popular, [], 'ยังไม่มียอดขาย ไม่มีป้ายขายดี');
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const sell = async (t, items) => { await s.call('POST', '/api/order', { table: t, key: keys[t], items }); await payTable(s, t); };
+    await sell(1, [{ id: 3, qty: 5 }, { id: 1, qty: 4 }, { id: 2, qty: 2 }]);
+    await sell(2, [{ id: 4, qty: 3 }, { id: 2, qty: 2 }, { id: 5, qty: 2 }]);
+    const pop = (await s.guest('GET', '/api/menu')).json.popular;
+    assert.deepEqual(pop, [3, 1, 2], 'เรียงตามจำนวนจาน (2 = 4 จานรวมสองบิล), เมนู 5 ขายแค่ 2 จาน ไม่ได้ป้าย');
+    await s.stop();
+  });
+});
+
+
+describe('หน้าลูกค้าแบบใหม่: ลิงก์โซเชียลมีเดีย แชร์ร้าน คำโปรย โทนสี เมนูแนะนำ', () => {
+  test('ลิงก์โซเชียลมีเดีย: รับชื่อบัญชีหรือลิงก์ ตรวจโดเมน ไม่รับ javascript: เจ้าของเท่านั้น ลูกค้าเห็นใน /api/menu และ audit', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    assert.equal((await c.call('POST', '/api/settings', { social: { facebook: 'https://facebook.com/x' } })).status, 403, 'แคชเชียร์แก้ไม่ได้');
+    const bad = async (body, what) => { const r = await s.call('POST', '/api/settings', body); assert.equal(r.status, 400, what); assert.ok(r.json.error, what); };
+    await bad({ social: { facebook: 'javascript:alert(1)' } }, 'javascript:');
+    await bad({ social: { facebook: 'https://evil.example/facebook.com' } }, 'โดเมนอื่น');
+    await bad({ social: { facebook: 'https://facebook.com.evil.example/x' } }, 'โดเมนปลอมต่อท้าย');
+    await bad({ social: { instagram: 'http://instagram.com/x' } }, 'http ไม่รับสำหรับโซเชียลมีเดีย');
+    await bad({ social: { line: '@มี ช่องว่าง' } }, 'ชื่อบัญชีผิดรูปแบบ');
+    await bad({ shareUrl: 'ftp://x.example/a' }, 'ลิงก์แชร์ต้อง http(s)');
+    await bad({ social: 'x' }, 'social ต้องเป็น object');
+    const v0 = (await s.guest('GET', '/api/menu')).json.version;
+    const ok = await s.call('POST', '/api/settings', { social: { facebook: 'facebook.com/kruapadaeng', instagram: '@krua.pa', line: '@kruapa', tiktok: 'kruapa' }, shareUrl: 'https://maps.app.goo.gl/abc', tagline: 'อาหารไทยต้นตำรับ' });
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.deepEqual(m.social, { facebook: 'https://facebook.com/kruapadaeng', instagram: 'https://www.instagram.com/krua.pa/', line: 'https://line.me/R/ti/p/@kruapa', tiktok: 'https://www.tiktok.com/@kruapa' });
+    assert.equal(m.shareUrl, 'https://maps.app.goo.gl/abc');
+    assert.equal(m.tagline, 'อาหารไทยต้นตำรับ');
+    assert.ok(m.version > v0, 'หน้าลูกค้าที่เปิดอยู่โหลดข้อมูลร้านใหม่เอง');
+    assert.equal((await s.call('POST', '/api/settings', { social: { tiktok: '' } })).status, 200, 'ส่งเฉพาะช่องที่แก้ได้ ว่าง = เอาออก');
+    const m2 = (await s.guest('GET', '/api/menu')).json.social;
+    assert.ok(m2.tiktok === '' && m2.facebook, 'ช่องอื่นไม่หาย');
+    const ev = readLog(s.dir, 'audit').filter(e => e.action === 'settings.changed' && e.after && e.after.social);
+    assert.ok(ev.length >= 2 && ev[0].after.social.facebook === 'https://facebook.com/kruapadaeng');
+    await s.stop();
+  });
+
+  test('เปลี่ยนลิงก์โซเชียลมีเดีย/แชร์ = พาลูกค้าไปที่อื่น ต้องใส่ PIN ซ้ำ (แก้คำโปรย/โทนสีไม่ต้อง)', async () => {
+    const s = start(makeApp(), { REAUTH_SEC: '1.5' }); await s.ready; await s.login();
+    await new Promise(r => setTimeout(r, 1700));
+    const need = async (r, what) => { assert.equal(r.status, 403, what); assert.equal(r.json && r.json.code, 'reauth', what); };
+    await need(await s.call('POST', '/api/settings', { social: { line: '@evil' } }), 'เปลี่ยน LINE');
+    await need(await s.call('POST', '/api/settings', { shareUrl: 'https://evil.example' }), 'เปลี่ยนลิงก์แชร์');
+    assert.equal((await s.call('POST', '/api/settings', { tagline: 'ใหม่', look: 'light', social: { line: '' }, shareUrl: '' })).status, 200, 'ค่าเดิม (ว่าง) ส่งซ้ำได้ ไม่ต้องยืนยัน');
+    const st = (await s.call('GET', '/api/state')).json.settings;
+    assert.deepEqual([st.tagline, st.look, st.social.line, st.shareUrl], ['ใหม่', 'light', '', '']);
+    await s.stop();
+  });
+
+  test('ตั้งค่าผิดช่องหนึ่ง = ไม่มีอะไรเปลี่ยนเลย (เดิมชื่อร้านที่แก้มาด้วยเปลี่ยนในหน่วยความจำ ไม่มี audit)', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const before = (await s.call('GET', '/api/state')).json.settings;
+    assert.equal((await s.call('POST', '/api/settings', { shop: 'ชื่อใหม่', address: 'ที่อยู่ใหม่', promptpay: '123' })).status, 400);
+    assert.equal((await s.call('POST', '/api/settings', { shop: 'ชื่อใหม่', look: 'neon' })).status, 400);
+    assert.equal((await s.call('POST', '/api/settings', { tagline: 'x', social: { facebook: 'https://x.example' } })).status, 400);
+    await s.call('POST', '/api/settings', { svc: before.svc });     // บันทึกครั้งถัดไป (ถ้าค่าค้างในหน่วยความจำจะถูกเขียนลงดิสก์ตอนนี้)
+    const after = (await s.call('GET', '/api/state')).json.settings;
+    assert.deepEqual([after.shop, after.address, after.look, after.tagline], [before.shop, before.address, before.look, before.tagline]);
+    assert.equal(readLog(s.dir, 'audit').filter(e => e.action === 'settings.changed').length, 0);
+    await s.stop();
+  });
+
+  test('โทนสีหน้าลูกค้า: ค่าเริ่มต้นมืด /theme.css มีสีร้านสำหรับ data-look ทั้งมืดและสว่าง หน้าพนักงานยังตามเครื่อง', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.equal((await s.guest('GET', '/api/menu')).json.look, 'dark');
+    await s.call('POST', '/api/settings', { accent: '#1d4ed8' });
+    const css = await (await fetch(s.B + '/theme.css')).text();
+    assert.match(css, /:root\[data-look=dark\]\{--accent:/);
+    assert.match(css, /@media \(prefers-color-scheme:dark\)\{:root:not\(\[data-look=light\]\)\{--accent:/);
+    const html = await (await fetch(s.B + '/order?t=1&k=x')).text();
+    assert.match(html, /<meta name="referrer" content="no-referrer">/, 'ลิงก์ออกไปเว็บอื่นไม่ส่งที่อยู่หน้า (มีรหัส QR)');
+    await s.stop();
+  });
+
+  test('เมนูแนะนำ: เจ้าของตั้งได้ ลูกค้าเห็น rec, was ไม่ตรง (อีกเครื่องแก้ไปแล้ว) ได้ 409, ไฟล์เก่าที่ไม่มี rec = ไม่แนะนำ', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.login();
+    const m = (await s.call('GET', '/api/state')).json.menu.items[0];
+    assert.equal(m.rec, false);
+    const base = { id: m.id, name: m.name, price: m.price, cat: m.cat, station: m.station, desc: m.desc };
+    assert.equal((await s.call('POST', '/api/menu/item', Object.assign({ rec: true }, base))).status, 200);
+    assert.equal((await s.guest('GET', '/api/menu')).json.items.find(i => i.id === m.id).rec, true);
+    const stale = await s.call('POST', '/api/menu/item', Object.assign({ rec: false, was: { name: m.name, price: m.price, rec: false } }, base));
+    assert.equal(stale.status, 409, 'อีกเครื่องเปิดแนะนำไปแล้ว');
+    await s.stop();
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    d.menu.items.forEach(i => { delete i.rec; }); d.menu.items[1].rec = 'yes';
+    d.settings.social = { facebook: 'javascript:alert(1)', line: 'https://line.me/R/ti/p/@ok' }; d.settings.shareUrl = 'data:text/html,x'; d.settings.look = 'neon';
+    fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready;
+    const g = (await s.guest('GET', '/api/menu')).json;
+    assert.ok(g.items.every(i => i.rec === false), 'rec ที่ไม่ใช่ true = ไม่แนะนำ');
+    assert.deepEqual([g.social.facebook, g.social.line, g.shareUrl, g.look], ['', 'https://line.me/R/ti/p/@ok', '', 'dark'], 'ลิงก์อันตรายจากไฟล์ถูกล้าง');
+    await s.stop();
+  });
+});

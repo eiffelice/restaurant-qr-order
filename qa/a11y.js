@@ -23,6 +23,10 @@ async function main() {
   const b2 = (await s.call('GET', '/api/state')).json.bills[2].sub;
   await s.call('POST', '/api/pay', { table: 2, expectedSub: b2, method: 'cash' });
   await s.call('POST', '/api/call', { table: 1, key: keys[1], kind: 'bill' }, { staff: false });
+  // หน้าลูกค้าแบบเต็ม: คำโปรย ลิงก์ติดตาม/แชร์ เมนูแนะนำ
+  await s.call('POST', '/api/settings', { tagline: 'อาหารไทยรสชาติต้นตำรับ', address: '88/8 ถ.สุขุมวิท', phone: '02-123-4567', social: { facebook: 'facebook.com/x', instagram: '@x', line: '@x', tiktok: '@x' }, shareUrl: 'https://maps.app.goo.gl/x' });
+  const m3 = (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 3);
+  await s.call('POST', '/api/menu/item', Object.assign({}, m3, { rec: true }));
   const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge', headless: true });
   const all = [];
   for (const scheme of ['light', 'dark']) {
@@ -37,6 +41,7 @@ async function main() {
       if (v === 'menu') { await p.click('[data-a="eopen"][data-id="1"]'); await sleep(200); }
       all.push(...await scan(p, 'staff ' + v + ' ' + scheme));
     }
+    await s.call('POST', '/api/settings', { look: scheme });      // หน้าลูกค้าตั้งโทนเองได้: สแกนทั้งโทนสว่างและมืด
     const m = await browser.newContext({ baseURL: s.B, colorScheme: scheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const c = await m.newPage();
     await c.goto('/order?t=1&k=' + keys[1]); await c.waitForSelector('.item');
@@ -48,6 +53,10 @@ async function main() {
     await c.click('[data-a="dback"]'); await sleep(150);
     await c.click('.item [data-a="inc"]'); await c.click('[data-a="open"]'); await c.click('[data-a="notes"]'); await sleep(200);
     all.push(...await scan(c, 'customer cart ' + scheme));
+    await c.click('[data-a="close"]'); await sleep(200); await c.click('#bnav [data-v="shop"]'); await sleep(400);
+    all.push(...await scan(c, 'customer shop ' + scheme));
+    await c.click('[data-a="sclose"]'); await sleep(200); await c.fill('#q', 'ผัด'); await sleep(200);
+    all.push(...await scan(c, 'customer search ' + scheme));
     await ctx.close(); await m.close();
   }
   // คีย์บอร์ด: เข้าสู่ระบบ สลับแท็บ และสั่งอาหารได้โดยไม่ใช้เมาส์ และเห็นกรอบโฟกัส
@@ -67,9 +76,11 @@ async function main() {
   const cctx = await browser.newContext({ baseURL: s.B }); const c2 = await cctx.newPage();
   await c2.goto('/order?t=3&k=' + keys[3]); await c2.waitForSelector('.item');
   let added = false;
-  for (let i = 0; i < 25 && !added; i++) { await c2.keyboard.press('Tab'); if (await c2.evaluate(() => document.activeElement && document.activeElement.dataset.a === 'inc')) { await c2.keyboard.press('Enter'); added = true; } }
+  let pressed = null;
+  for (let i = 0; i < 25 && !added; i++) { await c2.keyboard.press('Tab'); pressed = await c2.evaluate(() => { const a = document.activeElement; return a && a.dataset.a === 'inc' ? a.dataset.id + '|' + (a.dataset.z || '') : null; }); if (pressed) { await c2.keyboard.press('Enter'); added = true; } }
   // กด + แล้วโฟกัสต้องอยู่ที่ปุ่มของจานเดิม (ไม่เด้งไปบนสุด) ปุ่มตะกร้าอยู่ก่อนรายการเมนูในลำดับ Tab จึงย้อน (Shift+Tab) ไปไม่กี่ครั้ง
-  const stay = added && await c2.evaluate(() => !!document.activeElement.closest('.item'));
+  // ปุ่มแรกที่ Tab ถึงอาจอยู่บนการ์ดเมนูแนะนำ (.rcard) หรือการ์ดในหมวด (.item) ต้องกลับมาที่ปุ่มเดียวกัน (จานเดิม แถวเดิม)
+  const stay = added && await c2.evaluate(p => { const a = document.activeElement; return !!a && (a.dataset.a === 'inc' || a.dataset.a === 'dec') && a.dataset.id + '|' + (a.dataset.z || '') === p; }, pressed);
   ok(stay, 'หน้าลูกค้า: กด + ด้วยคีย์บอร์ดแล้วโฟกัสยังอยู่ที่จานเดิม');
   for (let i = 0; i < 20 && added; i++) { await c2.keyboard.press('Shift+Tab'); if (await c2.evaluate(() => document.activeElement && document.activeElement.dataset.a === 'open')) { await c2.keyboard.press('Enter'); break; } }
   await sleep(200);

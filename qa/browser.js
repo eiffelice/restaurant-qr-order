@@ -1,14 +1,14 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto } = require('./lib');
+const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto, fakeCover } = require('./lib');
 
 const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const MOBILE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -790,6 +790,141 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await c.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* ไฟล์สีร้าน (/theme.css) โหลดไม่สำเร็จชั่วคราว (เซิร์ฟเวอร์รีสตาร์ท/เน็ตสะดุด): หน้าต้องลองใหม่เอง ไม่ค้างสีตั้งต้น */
+  async themeretry(browser) {
+    const ok = checker('themeretry'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { accent: '#dc2626' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const accent = pg => pg.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+    for (const who of ['customer', 'staff']) {
+      const ctx = await browser.newContext(Object.assign({ baseURL: s.B }, who === 'customer' ? MOBILE : {}));
+      let failed = 0;
+      await ctx.route('**/theme.css*', r => { if (failed++ === 0) return r.abort('connectionrefused'); return r.continue(); });   // ครั้งแรกล้ม
+      const p = await ctx.newPage();
+      if (who === 'customer') { await p.goto('/order?t=1&k=' + keys[1]); await p.waitForSelector('.item'); }
+      else { await p.goto('/staff'); await p.fill('#pin', PIN); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab'); }
+      const first = await accent(p);
+      await p.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() === '#dc2626', null, { timeout: 9000 }).catch(() => {});
+      ok(failed >= 2 && await accent(p) === '#dc2626', who + ': โหลดสีร้านครั้งแรกล้ม แล้วลองใหม่เองจนได้สีร้าน', { first, after: await accent(p), tries: failed });
+      ok(await p.evaluate(() => document.querySelectorAll('link[rel=stylesheet]').length) === 1, who + ': ไม่มีไฟล์สีซ้อนค้าง');
+      await ctx.close();
+    }
+    await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* ภาพพื้นหลังหน้าลูกค้า: อัปโหลดจากหน้าตั้งค่า หน้าลูกค้าที่เปิดอยู่เปลี่ยนตาม หน้าเข้าสู่ระบบใช้ภาพเดียวกัน เอาออกแล้วกลับเป็นไล่สี
+     + ป้ายขายดีจากยอดขายจริง + ท้ายหน้ามีที่อยู่/เบอร์โทร */
+  async cover(browser) {
+    const ok = checker('cover'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { address: '88/8 ถ.สุขุมวิท', phone: '02-123-4567' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 5, key: keys[5], items: [{ id: 3, qty: 4 }] }, { staff: false });
+    const sub = (await s.call('GET', '/api/state')).json.bills[5].sub;
+    await s.call('POST', '/api/pay', { table: 5, expectedSub: sub, method: 'cash' });
+    const c = await customerPage(browser, s, 2, keys[2], errors);
+    ok(!(await c.evaluate(() => document.body.classList.contains('has-cover'))) && await c.$('header.top .cov'), 'ยังไม่มีภาพ: หัวหน้าเป็นพื้นไล่สีจากสีร้าน');
+    ok(await c.$eval('.item:has(.open[data-id="3"]) .badge', e => e.textContent).catch(() => '') === 'ขายดี' && !(await c.$('.item:has(.open[data-id="1"]) .badge')), 'เมนูที่ขายได้ 4 จานมีป้าย "ขายดี" เมนูที่ยังไม่มียอดไม่มีป้าย');
+    ok(/02-123-4567/.test(await c.textContent('footer.foot')) && await c.getAttribute('footer.foot a', 'href') === 'tel:021234567', 'ท้ายหน้ามีที่อยู่และเบอร์โทร กดโทรได้');
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'settings'); await p.waitForSelector('label[for="cover-file"]');
+    await p.setInputFiles('#cover-file', { name: 'cover.jpg', mimeType: 'image/jpeg', buffer: await fakeCover(browser, 20) });
+    await until(async () => !!(await s.call('GET', '/api/state')).json.settings.cover, 8000).catch(() => {});
+    const cv = (await s.call('GET', '/api/state')).json.settings.cover;
+    ok(/^cover-/.test(cv || ''), 'อัปโหลดภาพพื้นหลังจากหน้าตั้งค่า (input อยู่นอกส่วนที่วาดใหม่)', cv);
+    await c.waitForFunction(() => document.body.classList.contains('has-cover'), null, { timeout: 9000 }).catch(() => {});
+    const bg = await c.evaluate(() => getComputedStyle(document.querySelector('header.top .cov')).backgroundImage);
+    ok(bg.includes(cv), 'หน้าลูกค้าที่เปิดอยู่เปลี่ยนเป็นภาพใหม่เอง (ไม่ต้องรีเฟรช)', bg.slice(0, 80));
+    ok(await c.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage.includes('cover-')), 'ภาพจางเป็นพื้นหลังทั้งหน้า');
+    const lp = await (await browser.newContext({ baseURL: s.B })).newPage();
+    await lp.goto('/staff'); await lp.waitForSelector('#login.has-cover', { timeout: 5000 }).catch(() => {});
+    ok(await lp.$('#login.has-cover'), 'หน้าใส่รหัสพนักงานใช้ภาพพื้นหลังของร้าน');
+    await lp.context().close();
+    await p.waitForSelector('[data-a="coverdel"]'); await p.click('[data-a="coverdel"]'); await p.waitForSelector('#confirm-dlg[open]'); await p.click('#cf-ok');
+    await c.waitForFunction(() => !document.body.classList.contains('has-cover'), null, { timeout: 9000 }).catch(() => {});
+    ok(!(await c.evaluate(() => document.body.classList.contains('has-cover'))), 'เอาภาพออก (ผ่านหน้าต่างยืนยัน): หน้าลูกค้ากลับเป็นไล่สี');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* หน้าลูกค้าแบบใหม่: เจ้าของใส่ลิงก์โซเชียลมีเดีย/แชร์ คำโปรย เมนูแนะนำ โทนสี จากหน้าพนักงาน แล้วลูกค้าเห็น
+     + แผ่นข้อมูลร้าน (ปุ่ม back ปิด) แชร์ไม่ส่งรหัส QR ของโต๊ะ ค้นหาเมนู แถบล่าง */
+  async shopinfo(browser) {
+    const ok = checker('shopinfo'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'settings'); await p.waitForSelector('#s-facebook');
+    await p.fill('#s-tag', 'อาหารไทยรสชาติต้นตำรับ');
+    await p.fill('#s-facebook', 'facebook.com/kruapadaeng'); await p.fill('#s-instagram', '@krua.pa');
+    await p.fill('#s-line', '@kruapa'); await p.fill('#s-share', 'https://maps.app.goo.gl/abc');
+    await p.click('[data-a="savesettings"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.shareUrl, 8000).catch(() => {});
+    const st = (await s.call('GET', '/api/state')).json.settings;
+    ok(st.tagline === 'อาหารไทยรสชาติต้นตำรับ' && st.social.facebook === 'https://facebook.com/kruapadaeng' && st.social.line === 'https://line.me/R/ti/p/@kruapa' && st.shareUrl === 'https://maps.app.goo.gl/abc', 'บันทึกคำโปรย ลิงก์โซเชียลมีเดีย และลิงก์แชร์จากหน้าตั้งค่า', st.social);
+    await sleep(1200); await p.waitForSelector('#s-tiktok'); await p.fill('#s-tiktok', 'https://evil.example/tiktok'); await p.click('[data-a="savesettings"]'); await sleep(600);
+    ok(/TikTok/.test(await p.textContent('#toast')) && (await s.call('GET', '/api/state')).json.settings.social.tiktok === '', 'ลิงก์ผิดโดเมน: บอกว่าผิดช่องไหน ไม่บันทึก', await p.textContent('#toast'));
+    await p.fill('#s-tiktok', ''); await p.click('[data-a="savesettings"]'); await sleep(500);
+    // เมนูแนะนำจากหน้าแก้เมนู
+    await tab(p, 'menu'); await p.click('[data-a="eopen"][data-id="3"]'); await p.waitForSelector('#e-rec');
+    await p.click('#e-rec'); await p.click('[data-a="esave"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 3).rec, 8000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 3).rec === true, 'ตั้งเมนูแนะนำจากหน้าแก้เมนู');
+
+    const c = await customerPage(browser, s, 2, keys[2], errors);
+    ok(await c.getAttribute('html', 'data-look') === 'dark' && /อาหารไทยรสชาติต้นตำรับ/.test(await c.textContent('header.top')), 'หน้าลูกค้าโทนมืดเป็นค่าเริ่มต้น มีคำโปรยใต้ชื่อร้าน');
+    ok(/เมนูแนะนำ/.test(await c.textContent('#h-rec')) && await c.$('.rcard .open[data-id="3"]') && await c.$$eval('.item', x => x.length) === (await s.call('GET', '/api/menu', undefined, { staff: false })).json.items.length, 'แถวเมนูแนะนำแสดงเมนูที่ร้านเลือก (การ์ดในหมวดยังครบทุกจาน)');
+    await c.click('.rcard [data-a="inc"][data-id="3"]');
+    ok(await c.evaluate(() => document.activeElement && document.activeElement.matches('.rcard [data-a="inc"][data-id="3"]')), 'กด + บนการ์ดแนะนำแล้วโฟกัสอยู่ที่ปุ่มเดิม');
+    ok(/1 จาน/.test(await c.textContent('[data-a="open"]')), 'เพิ่มจากการ์ดแนะนำลงรายการสั่ง');
+
+    // ค้นหา
+    await c.fill('#q', 'ผัด'); await sleep(300);
+    const names = await c.$$eval('.item .nm', x => x.map(e => e.textContent));
+    const box = await c.evaluate(() => ({ s: document.querySelector('.sbox').getBoundingClientRect().top, n: document.querySelector('nav.cats').getBoundingClientRect().bottom }));
+    ok(names.length > 0 && names.length < (await s.call('GET', '/api/menu', undefined, { staff: false })).json.items.length && await c.$('#h-search'), 'ค้นหา "ผัด": เหลือเฉพาะเมนูที่ตรง', names);
+    ok(box.s >= box.n - 1, 'ระหว่างค้นหา ช่องค้นหาไม่ถูกแถบหมวดบัง', box);
+    await c.fill('#q', 'ไม่มีเมนูนี้แน่นอน'); await sleep(200);
+    ok(/ไม่พบเมนู/.test(await c.textContent('#main')), 'ค้นหาไม่เจอ: บอกตรงๆ มีปุ่มดูทั้งหมด');
+    await c.click('#main [data-a="qclear"]'); await sleep(200);
+    ok(await c.$$eval('.item', x => x.length) === (await s.call('GET', '/api/menu', undefined, { staff: false })).json.items.length && await c.inputValue('#q') === '', 'ล้างคำค้น: กลับมาเห็นทุกจาน');
+
+    // แถบล่าง: ออเดอร์ → เลื่อนไปสถานะโต๊ะ / ร้าน → แผ่นข้อมูลร้าน
+    await c.click('#bnav [data-v="orders"]'); await sleep(900);
+    const stTop = await c.$eval('#status', e => [Math.round(e.getBoundingClientRect().top), innerHeight, scrollY, document.documentElement.scrollHeight]);
+    ok(stTop[0] >= 0 && stTop[0] < stTop[1] * 0.6, 'แถบล่าง "ออเดอร์": เลื่อนไปออเดอร์ของโต๊ะ', stTop);
+    const url0 = c.url();
+    await c.click('#bnav [data-v="shop"]'); await c.waitForSelector('#shopbg:not([hidden])');
+    const links = await c.$$eval('#shop a.soc', x => x.map(a => ({ h: a.href, t: a.target, r: a.rel })));
+    ok(links.length === 3 && links.every(l => l.h.startsWith('https://') && l.t === '_blank' && /noopener/.test(l.r) && /noreferrer/.test(l.r)), 'ข้อมูลร้าน: ปุ่มติดตาม 3 ช่องที่ใส่ไว้ (ช่องว่างไม่แสดง) เปิดแท็บใหม่ ไม่ส่ง referrer', links);
+    const allHref = await c.$$eval('a[href]', x => x.map(a => a.href).join(' '));
+    ok(!allHref.includes(keys[2]) && allHref.includes(encodeURIComponent('https://maps.app.goo.gl/abc')), 'ลิงก์แชร์ใช้ลิงก์ร้าน ไม่มีรหัส QR ของโต๊ะ');
+    await c.click('#shop [data-a="copy"]'); await sleep(300);
+    ok(/คัดลอก/.test(await c.textContent('#toast')), 'คัดลอกลิงก์ร้าน (เว็บร้านเป็น http ก็คัดลอกได้)', await c.textContent('#toast'));
+    await c.goBack(); await c.waitForSelector('#shopbg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    ok(await c.isHidden('#shopbg') && c.url() === url0, 'ปุ่ม back ปิดข้อมูลร้าน ยังอยู่หน้าเดิม');
+
+    // เจ้าของเปลี่ยนโทน: หน้าลูกค้าที่เปิดอยู่เปลี่ยนตามเอง
+    await tab(p, 'settings'); await p.click('[data-a="tlook"][data-v="light"]');
+    await c.waitForFunction(() => document.documentElement.dataset.look === 'light', null, { timeout: 9000 }).catch(() => {});
+    const bg = await c.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    ok(await c.getAttribute('html', 'data-look') === 'light' && bg === 'rgb(248, 250, 252)', 'เปลี่ยนเป็นโทนสว่าง: หน้าลูกค้าที่เปิดอยู่เปลี่ยนเอง', bg);
+    const c2 = await customerPage(browser, s, 3, keys[3], errors, { viewport: { width: 360, height: 740 } });
+    ok(await c2.getAttribute('html', 'data-look') === 'light', 'เปิดหน้าใหม่ได้โทนที่ร้านตั้ง');
+    const bad = [];
+    const chk = async n => { const o = await overflow(c2); if (o) bad.push(n + ' ' + JSON.stringify(o)); };
+    await chk('เมนู'); await c2.click('#bnav [data-v="shop"]'); await sleep(300); await chk('ข้อมูลร้าน');
+    ok(!bad.length, '360px: เมนูและข้อมูลร้านไม่เลื่อนแนวนอน', bad);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await c2.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
