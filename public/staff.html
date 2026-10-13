@@ -12,7 +12,7 @@
   --bg:#f8fafc; --surface:#ffffff; --surface2:#f1f5f9; --ink:#111827; --muted:#4b5563; --line:#e2e8f0; --line-strong:#7c8796;
   --accent:#84cc16; --accent-ink:#111827; --accent-soft:#ecfccb; --accent-text:#3f6212; --focus:#4d7c0f;
   --nav:#111827; --nav-ink:#f9fafb;
-  --ok:#15803d; --ok-bg:#dcfce7; --warn:#92400e; --warn-bg:#fef3c7; --warn-line:var(--warn-line); --crit:#b91c1c; --crit-bg:#fee2e2; --danger:#dc2626; --danger-ink:#ffffff;
+  --ok:#15803d; --ok-bg:#dcfce7; --warn:#92400e; --warn-bg:#fef3c7; --warn-line:#d97706; --crit:#b91c1c; --crit-bg:#fee2e2; --danger:#dc2626; --danger-ink:#ffffff;
   --r-sm:8px; --r:12px; --r-lg:16px; --ctl:44px;
   --font:'Inter','Noto Sans Thai','IBM Plex Sans Thai','Leelawadee UI','Sarabun','Thonburi',system-ui,-apple-system,'Segoe UI',sans-serif;
   --paper:#fdfdfb; --paper-ink:#1c1f1e; --paper-line:#bfc6c3; --paper-muted:#5a625f;
@@ -113,6 +113,11 @@ button.pill{border:0}
 .qr{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:6px;text-align:center}
 .qr svg{width:10.5rem;height:10.5rem;background:#fff}
 .qr small{color:var(--paper-muted)}
+.qr .payqr{width:12rem;max-width:100%;height:auto;background:#fff;border-radius:6px}
+.payqr-box{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:4px 0 14px;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface2)}
+.payqr-box .pq{width:120px;height:120px;flex:none;border:1px dashed var(--line-strong);border-radius:var(--r-sm);background:#ffffff;display:flex;align-items:center;justify-content:center;text-align:center;font-size:.78rem;color:#4b5563;padding:6px;overflow:hidden}
+.payqr-box .pq img{max-width:100%;max-height:100%;object-fit:contain}
+.payqr-box .stack{flex:1;min-width:14rem}
 .pay-wrap{max-width:22rem;margin:12px auto 0;width:100%;display:flex;flex-direction:column;gap:8px}
 .pay-two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .cash{display:flex;flex-direction:column;gap:8px}
@@ -145,7 +150,6 @@ table.list td.r,table.list th.r{text-align:right}
 label.f{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--muted)}
 input.in,select.in{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-sm);padding:8px 12px;min-height:var(--ctl);width:100%}
 .toggles{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0}
-.soldgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13rem,1fr));gap:6px}
 .sold{display:flex;justify-content:space-between;gap:8px;align-items:center;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;text-align:left}
 .sold[aria-pressed="true"]{background:var(--crit-bg);border-color:var(--crit);color:var(--crit)}
 .qrsheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:12px}
@@ -209,6 +213,10 @@ select.in{appearance:auto}
 .qcard .qact{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;justify-content:center}
 .qcard .qact .btn{color:var(--ink)}
 @page qrsheet{size:A4;margin:10mm}
+/* ใบเสร็จพิมพ์จากสำเนาใน #print-area (ลูกตรงของ body) ส่วนอื่นซ่อนแบบไม่กินที่ ใบเสร็จไหลต่อหน้าตามปกติ
+   เดิมซ่อนด้วย visibility + position:fixed: ส่วนที่ซ่อนยังกินความยาวกระดาษ ใบสั้นพิมพ์ออกมา 2 ใบซ้ำ ใบยาวหน้าถัดไปพิมพ์หัวใบเสร็จทับยอดรวม */
+@page receipt{margin:0}
+#print-area{display:none}
 dialog.dlg{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);color:var(--ink);padding:18px;width:min(28rem,calc(100% - 32px))}
 dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 .dlg h3{margin:0 0 6px}
@@ -239,9 +247,12 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 #toast.on{opacity:1}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
 @media print{
-  body.pm-receipt *{visibility:hidden}
-  body.pm-receipt .view:not([hidden]) .receipt,body.pm-receipt .view:not([hidden]) .receipt *{visibility:visible}
-  body.pm-receipt .view:not([hidden]) .receipt{position:fixed;left:0;top:0;width:80mm;max-width:none;box-shadow:none;border-radius:0;padding:4mm}
+  body.pm-receipt>*:not(#print-area){display:none!important}
+  body.pm-receipt{background:#fff}
+  body.pm-receipt #print-area{display:block;page:receipt}
+  /* กว้าง 72 มม. = พื้นที่พิมพ์จริงของเครื่องพิมพ์ความร้อน 80 มม. ส่วนใหญ่ (กระดาษ 58 มม. เลือกย่อในหน้าต่างพิมพ์) */
+  body.pm-receipt #print-area .receipt{width:72mm;max-width:none;margin:0 auto;box-shadow:none;border:0;border-radius:0;padding:3mm 0;background:#fff}
+  body.pm-receipt #print-area tr,body.pm-receipt #print-area .qr{break-inside:avoid;page-break-inside:avoid}
   body.pm-qr .top,body.pm-qr .np{display:none!important}
   body.pm-qr{background:#fff;padding:0}
   body.pm-receipt{padding:0}
@@ -296,10 +307,12 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
   <section class="view" id="v-settings" hidden></section>
 </div>
 <div id="toast" role="status"></div>
+<div id="print-area" aria-hidden="true"></div>
 <!-- อยู่นอกส่วนที่ re-render: ถ้ามีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ input จะไม่ถูกแทนที่ ไฟล์ที่เลือกจึงไม่หาย -->
 <input type="file" id="e-file" accept="image/*" hidden>
 <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp" hidden>
 <input type="file" id="cover-file" accept="image/png,image/jpeg,image/webp" hidden>
+<input type="file" id="payqr-file" accept="image/png,image/jpeg,image/webp" hidden>
 <!-- ใส่ PIN ซ้ำก่อนทำเรื่องสำคัญ (เซิร์ฟเวอร์ตอบ 403 code reauth แล้ว api() เปิดหน้าต่างนี้ ยืนยันแล้วส่งคำขอเดิมซ้ำให้เอง) -->
 <dialog class="dlg" id="reauth-dlg" aria-labelledby="ra-h">
   <form method="dialog" id="ra-form">
@@ -354,10 +367,12 @@ var S={tab:'kitchen',kStation:'all',sel:null,bSvc:true,bVat:false,d:null,report:
 function $(s){return document.querySelector(s);}
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 /* บทบาท: ซ่อนสิ่งที่ทำไม่ได้ (เซิร์ฟเวอร์ตรวจสิทธิ์ซ้ำทุกครั้งอยู่แล้ว ส่วนนี้แค่ไม่ให้เห็นปุ่มที่กดแล้วได้ 403) */
-var TABS={owner:['kitchen','tables','menu','report','settings'],cashier:['kitchen','tables','menu','report'],kitchen:['kitchen','menu']};
+var TABS={owner:['kitchen','tables','menu','report','settings'],cashier:['kitchen','tables','menu','report'],waiter:['kitchen','tables','menu'],kitchen:['kitchen','menu']};
 function role(){return S.d&&S.d.me?S.d.me.role:'owner';}
 function isOwner(){return role()==='owner';}
 function front(){return role()!=='kitchen';}
+// แตะเงินได้ (รับเงิน ยกเลิกออเดอร์ ค่าบริการ/VAT ของบิล) = เจ้าของและแคชเชียร์ พนักงานเสิร์ฟดูแลโต๊ะได้แต่ไม่แตะเงิน (เซิร์ฟเวอร์ตรวจซ้ำใน PERM)
+function canMoney(){var r=role();return r==='owner'||r==='cashier';}
 function baht(n){return '฿'+Number(n).toLocaleString('th-TH',{maximumFractionDigits:2});}
 function now(){return Date.now()+S.skew;}
 function mins(t){return Math.max(0,Math.floor((now()-t)/60000));}
@@ -377,10 +392,25 @@ function unlockAudio(){
 }
 document.addEventListener('pointerdown',unlockAudio,true);
 document.addEventListener('keydown',unlockAudio,true);
-function beep(){
+/* เสียงแต่ละเรื่องไม่เหมือนกัน (ได้ยินแล้วรู้เลยว่าต้องทำอะไร) และดังพอสำหรับครัว
+   order = ออเดอร์ใหม่ (ไล่ขึ้น 3 โน้ต) · call = เรียกพนักงาน (ติ๊ดสองครั้ง) · bill = ขอเช็คบิล (ดิ๊ง-ด่อง) · ready = อาหารพร้อมเสิร์ฟ (กระดิ่ง) */
+var TONES={order:[[660,0,.18],[880,.2,.18],[1100,.4,.3]],call:[[1200,0,.14],[1200,.22,.14]],bill:[[990,0,.3],[740,.32,.45]],ready:[[1320,0,.6]]};
+function beep(kind){
   if(!soundReady())return;
-  try{var o=AC.createOscillator(),g=AC.createGain(),t=AC.currentTime;o.connect(g);g.connect(AC.destination);o.frequency.value=880;g.gain.setValueAtTime(.12,t);g.gain.exponentialRampToValueAtTime(.001,t+.35);o.start(t);o.stop(t+.35);}catch(e){}
+  try{
+    var t0=AC.currentTime;
+    (TONES[kind]||TONES.order).forEach(function(n){
+      var o=AC.createOscillator(),g=AC.createGain(),t=t0+n[1];
+      o.type='sine';o.frequency.value=n[0];o.connect(g);g.connect(AC.destination);
+      g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.35,t+.015);g.gain.exponentialRampToValueAtTime(.001,t+n[2]);
+      o.start(t);o.stop(t+n[2]+.02);
+    });
+  }catch(e){}
 }
+/* ใครได้ยินอะไร (ข้อความบนจอขึ้นให้ทุกคนเหมือนเดิม): ครัวสนใจออเดอร์ใหม่ของจุดที่ดูอยู่ หน้าร้านสนใจการเรียก ขอบิล และอาหารพร้อมเสิร์ฟ เจ้าของได้ยินทุกเรื่อง */
+function hears(kind){var r=role();if(r==='owner')return true;if(r==='kitchen')return kind==='order';return kind!=='order';}
+function stationOk(k){return S.kStation==='all'||k.station===S.kStation;}
+
 
 function rawApi(path,body){
   return fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'})
@@ -559,6 +589,8 @@ function makeZip(files){
 }
 function qrLocalWarn(){if(/localhost|127\.0\.0\.1/.test(baseUrl())){toast('QR ชี้ไปที่ localhost มือถือลูกค้าเปิดไม่ได้ ตั้ง "ที่อยู่เว็บที่ใส่ใน QR" ก่อน');return true;}return false;}
 function orderUrl(t){return baseUrl()+'/order?t='+t+'&k='+S.d.keys[t];}
+// สั่งแทนลูกค้า: ที่อยู่เดียวกับหน้าพนักงานที่เปิดอยู่ (cookie เข้าสู่ระบบไปด้วย = โหมดพนักงาน) ไม่ใช่ที่อยู่ใน QR ซึ่งอาจเป็นคนละชื่อเครื่อง
+function staffOrderUrl(t){return '/order?t='+t+'&k='+encodeURIComponent(S.d.keys[t]||'');}
 
 /* ---------- data ---------- */
 function tableTickets(t){return S.d.tickets.filter(function(k){return k.table===t;});}
@@ -570,14 +602,45 @@ function pad(n,w){return String(n).padStart(w,'0');}
 function billNo(no,at){var d=new Date(at);return 'R'+d.getFullYear()+pad(d.getMonth()+1,2)+pad(d.getDate(),2)+'-'+pad(no,4);}
 function fmtDate(at){var d=new Date(at);return d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'numeric'})+' '+d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});}
 
+var readyAt={};      // ตั๋ว → เวลาที่หน้านี้เห็นว่าพร้อมเสิร์ฟ (เซิร์ฟเวอร์ไม่ได้เก็บ) ใช้เตือนซ้ำเมื่อค้าง
 function detectNew(){
-  var ids={},calls={},fresh=[],newCall=null;
-  S.d.tickets.forEach(function(k){ids[k.id]=1;if(S.seen&&!S.seen[k.id]&&k.status==='new')fresh.push(k);});
+  // S.seen = สถานะล่าสุดของแต่ละตั๋วที่เห็นแล้ว (จับได้ทั้งตั๋วใหม่ และตั๋วที่เพิ่งเปลี่ยนเป็นพร้อมเสิร์ฟ)
+  var ids={},calls={},fresh=[],ready=[],newCall=null,first=!S.seen;
+  S.d.tickets.forEach(function(k){
+    ids[k.id]=k.status;
+    if(k.status==='ready'){if(!readyAt[k.id])readyAt[k.id]=Date.now();}else delete readyAt[k.id];
+    if(first)return;
+    if(!S.seen[k.id]&&k.status==='new')fresh.push(k);
+    else if(k.status==='ready'&&S.seen[k.id]&&S.seen[k.id]!=='ready')ready.push(k);
+  });
   Object.keys(S.d.calls).forEach(function(t){var key=t+':'+S.d.calls[t].at;calls[key]=1;if(S.seenCalls&&!S.seenCalls[key])newCall={t:t,c:S.d.calls[t]};});
   S.seen=ids;S.seenCalls=calls;
-  if(fresh.length){beep();toast('ออเดอร์ใหม่ โต๊ะ '+fresh[0].table+(fresh.length>1?' และอีก '+(fresh.length-1)+' ใบ':''));}
-  else if(newCall){beep();toast('โต๊ะ '+newCall.t+(newCall.c.kind==='bill'?' ขอเช็คบิล':' เรียกพนักงาน'));}
+  Object.keys(readyAt).forEach(function(id){if(!ids[id])delete readyAt[id];});
+  var msg=[],sound=null;
+  if(fresh.length){
+    msg.push('ออเดอร์ใหม่ โต๊ะ '+fresh[0].table+(fresh.length>1?' และอีก '+(fresh.length-1)+' ใบ':''));
+    if(fresh.some(stationOk)&&hears('order'))sound='order';
+  }
+  if(newCall){var kb=newCall.c.kind==='bill'?'bill':'call';msg.push('โต๊ะ '+newCall.t+(kb==='bill'?' ขอเช็คบิล':' เรียกพนักงาน'));if(!sound&&hears(kb))sound=kb;}
+  if(ready.length){msg.push('พร้อมเสิร์ฟ โต๊ะ '+ready.map(function(k){return k.table;}).filter(function(t,i,a){return a.indexOf(t)===i;}).join(', '));if(!sound&&hears('ready'))sound='ready';}
+  if(msg.length)toast(msg.join(' · '));
+  if(sound){beep(sound);lastRemind=Date.now();}
 }
+/* เตือนซ้ำทุก 1 นาที ถ้ามีเรื่องค้าง: ออเดอร์ใหม่ที่ยังไม่มีใครกดเริ่มทำเกิน 2 นาที (ครัว) / ลูกค้าเรียกหรือขอบิลแล้วยังไม่มีใครรับทราบเกิน 1 นาที / อาหารพร้อมเสิร์ฟค้างเกิน 2 นาที (หน้าร้าน)
+   (เดิมดังครั้งเดียว ไม่ได้ยินก็พลาดเลย) */
+var lastRemind=0,REMIND_MS=60000;
+function remind(){
+  if(!S.d||!$('#login').hidden||!soundReady()||Date.now()-lastRemind<REMIND_MS)return;
+  // เวลาจากเซิร์ฟเวอร์ (createdAt, เวลาเรียก) เทียบกับ now() ที่ชดเชยนาฬิกาเครื่องนี้ต่างจากเครื่องร้านแล้ว (S.skew)
+  // ไม่อย่างนั้นแท็บเล็ตนาฬิกาเร็วจะเห็นทุกออเดอร์ค้างแล้วเตือนทุกนาที · เวลาพร้อมเสิร์ฟจดด้วยนาฬิกาเครื่องนี้ เทียบกับ Date.now()
+  var sv=now(),local=Date.now(),kind=null;
+  if(hears('order')&&S.d.tickets.some(function(k){return k.status==='new'&&stationOk(k)&&sv-k.createdAt>=120000;}))kind='order';
+  else if(hears('bill')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind==='bill'&&sv-S.d.calls[t].at>=60000;}))kind='bill';
+  else if(hears('call')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind!=='bill'&&sv-S.d.calls[t].at>=60000;}))kind='call';
+  else if(hears('ready')&&S.d.tickets.some(function(k){return k.status==='ready'&&local-(readyAt[k.id]||local)>=120000;}))kind='ready';
+  if(kind){beep(kind);lastRemind=local;}
+}
+setInterval(remind,10000);
 
 var loading=false,again=false;
 function load(){
@@ -679,7 +742,7 @@ function renderKitchen(){
       '<ul>'+k.items.map(function(it){return '<li><b>×'+it.qty+'</b><span>'+esc(it.name)+(it.note.length?'<br><span class="note-txt">'+esc(it.note.join(' · '))+'</span>':'')+'</span></li>';}).join('')+'</ul>'+
       (k.memo?'<div class="memo-txt">'+esc(k.memo)+'</div>':'')+
       '<div class="card-act"><button class="btn primary" data-a="adv" data-id="'+k.id+'" data-from="'+k.status+'" data-st="'+NEXT[k.status][0]+'">'+NEXT[k.status][1]+'</button>'+
-      (k.status==='ready'||!front()?'':'<button class="btn" data-a="void" data-id="'+k.id+'">ยกเลิก</button>')+'</div></div>';
+      (k.status==='ready'||!canMoney()?'':'<button class="btn" data-a="void" data-id="'+k.id+'">ยกเลิก</button>')+'</div></div>';
   }).join('')+'</div>';
   $('#v-kitchen').innerHTML=h;
 }
@@ -702,8 +765,10 @@ function receiptHtml(o){
   if(o.qr){
     var pay=o.total;
     h+='<hr><div class="qr">';
-    var payload=ppPayload(s.promptpay,pay),svg=payload?qrSvg(payload,'PromptPay QR'):'';
-    if(svg)h+=svg+'<small>สแกนจ่ายผ่าน PromptPay '+baht(pay)+'</small>';
+    // ร้านอัปโหลดรูป QR ของตัวเอง: ใช้รูปนั้น (ใส่ยอดให้ไม่ได้ บอกยอดตัวใหญ่ให้ลูกค้าพิมพ์เอง) ไม่มีรูปใช้ QR ที่สร้างจากเบอร์ (ใส่ยอดให้แล้ว)
+    var payload=s.payQr?null:ppPayload(s.promptpay,pay),svg=payload?qrSvg(payload,'PromptPay QR'):'';
+    if(s.payQr)h+='<img class="payqr" src="/img/'+esc(s.payQr)+'" alt="QR รับเงินของร้าน"><small>สแกนจ่าย แล้วใส่ยอด <b>'+baht(pay)+'</b></small>';
+    else if(svg)h+=svg+'<small>สแกนจ่ายผ่าน PromptPay '+baht(pay)+'</small>';
     else h+='<small>ตั้งค่าเบอร์ PromptPay ในแท็บ "ตั้งค่า" เพื่อแสดง QR รับเงิน</small>';
     h+='</div>';
   }
@@ -756,7 +821,7 @@ function renderTables(){
   if(!S.sel){h+='<div class="panel empty">เลือกโต๊ะด้านบน</div>';$('#v-tables').innerHTML=h;return;}
   var t2=S.sel,tk2=tableTickets(t2),bill=d.bills[t2],call2=d.calls[t2];
   var SL={new:['รอทำ','warn'],cooking:['กำลังทำ','acc'],ready:['พร้อมเสิร์ฟ','ok'],served:['เสิร์ฟแล้ว','']};
-  h+='<div class="detail"><div class="stack np"><div class="panel"><div class="sec-title"><h3>โต๊ะ '+t2+'</h3><a class="btn sm" href="'+esc(orderUrl(t2))+'" target="_blank" rel="noopener">สั่งแทนลูกค้า</a></div>';
+  h+='<div class="detail"><div class="stack np"><div class="panel"><div class="sec-title"><h3>โต๊ะ '+t2+'</h3><a class="btn sm" href="'+esc(staffOrderUrl(t2))+'" target="_blank" rel="noopener">สั่งแทนลูกค้า</a></div>';
   if(call2)h+='<div class="row" style="margin-bottom:10px"><span class="pill crit">'+(call2.kind==='bill'?'ลูกค้าขอเช็คบิล':'ลูกค้าเรียกพนักงาน')+'</span><button class="btn sm" data-a="clearcall" data-id="'+t2+'">รับทราบ</button></div>';
   if(d.settings.requireSeat&&!tk2.length){
     // โหมดต้องเปิดโต๊ะ: QR โต๊ะว่างสั่งไม่ได้จนกว่าจะกดเปิด
@@ -769,7 +834,7 @@ function renderTables(){
     h+='<div class="sent-row"><span>'+k.items.map(function(i){return esc(i.name)+' ×'+i.qty;}).join(', ')+(k.memo?'<br><span class="muted">'+esc(k.memo)+'</span>':'')+'</span><span style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><span class="pill '+SL[k.status][1]+'">'+SL[k.status][0]+'</span>'+(k.status==='ready'?'<button class="btn sm" data-a="adv" data-id="'+k.id+'" data-from="ready" data-st="served">เสิร์ฟแล้ว</button>':'')+'</span></div>';
   });
   h+='</div>';
-  if(bill){
+  if(bill&&canMoney()){
     h+='<div class="panel stack"><div class="row"><span>ค่าบริการ 10%</span><button class="sw" data-a="bsvc" aria-pressed="'+S.bSvc+'">'+(S.bSvc?'เปิด':'ปิด')+'</button></div>';
     h+='<div class="row"><span>VAT 7%</span><button class="sw" data-a="bvat" aria-pressed="'+S.bVat+'">'+(S.bVat?'เปิด':'ปิด')+'</button></div></div>';
   }
@@ -781,6 +846,10 @@ function renderTables(){
     h+='<div class="pay-wrap np">';
     if(pending)h+='<div class="banner warn" style="margin:0">ยังมี '+pending+' รายการที่ยังไม่ได้เสิร์ฟ ถ้าปิดบิลตอนนี้ รายการเหล่านี้จะหายจากจอครัว</div>';
     h+='<button class="btn block" data-a="printr">พิมพ์ใบแจ้งยอด</button>';
+    if(!canMoney()){
+      // พนักงานเสิร์ฟ: เห็นใบแจ้งยอดให้ลูกค้าดู/พิมพ์ได้ แต่รับเงินไม่ได้
+      h+='<p class="muted small" style="margin:0">รับเงินได้เฉพาะแคชเชียร์และเจ้าของร้าน แจ้งให้มาปิดบิลโต๊ะนี้</p></div></div>';
+    } else {
     var cashArmed=armed('pay:'+t2+':cash');
     if(cashArmed){
       h+='<div class="panel cash"><label class="f" for="cash-in">รับเงินมา (บาท)<input class="in" id="cash-in" type="text" inputmode="decimal" value="'+esc(S.cash)+'" autocomplete="off"></label>'+
@@ -793,6 +862,7 @@ function renderTables(){
       h+='<button class="btn '+(armed(key)?'danger':'primary')+'" data-a="pay" data-id="'+t2+'" data-m="'+p[0]+'" data-sub="'+bill.sub+'" data-due="'+c.total+'"'+(p[0]==='cash'&&cashArmed&&cashState(c.total).short?' disabled':'')+'>'+(armed(key)?'ยืนยัน '+baht(c.total):p[1])+'</button>';
     });
     h+='</div></div></div>';
+    }
   } else {
     h+='<div class="panel empty">เมื่อโต๊ะนี้มีออเดอร์ ยอดเงินจะแสดงที่นี่</div>';
   }
@@ -806,11 +876,15 @@ var ACT={'ticket.voided':'ยกเลิกออเดอร์','bill.pay_rej
   'backup.downloaded':'ดาวน์โหลดไฟล์สำรอง','backup.created':'สำรองข้อมูล','report.exported':'ดาวน์โหลด CSV','log.downloaded':'ดาวน์โหลด log',
   'menu.image.updated':'เปลี่ยนรูปเมนู','menu.image.removed':'เอารูปเมนูออก','menu.category.created':'เพิ่มหมวด','menu.category.renamed':'แก้ชื่อหมวด',
   'menu.category.deleted':'ลบหมวด','menu.notes.changed':'แก้ตัวเลือกหมายเหตุ','staff.created':'เพิ่มพนักงาน','staff.updated':'แก้ข้อมูลพนักงาน',
-  'staff.sessions_revoked':'สั่งออกจากระบบทุกเครื่อง'};
-var FLD={shop:'ชื่อร้าน',promptpay:'PromptPay',tables:'จำนวนโต๊ะ',svc:'ค่าบริการ',vat:'VAT',acceptOrders:'รับออเดอร์ QR',address:'ที่อยู่',phone:'โทร',
+  'staff.sessions_revoked':'สั่งออกจากระบบทุกเครื่อง','settings.payqr.updated':'เปลี่ยนรูป QR รับเงิน','settings.payqr.removed':'เลิกใช้รูป QR รับเงิน',
+  'settings.logo.updated':'เปลี่ยนโลโก้','settings.logo.removed':'เอาโลโก้ออก','settings.cover.updated':'เปลี่ยนภาพพื้นหลัง','settings.cover.removed':'เอาภาพพื้นหลังออก'};
+var FLD={tagline:'คำโปรย',look:'โทนหน้าลูกค้า',social:'ลิงก์โซเชียลมีเดีย',shareUrl:'ลิงก์แชร์ร้าน',accent:'สีปุ่ม',requireSeat:'ต้องเปิดโต๊ะก่อนสั่ง',hours:'เวลารับออเดอร์',shop:'ชื่อร้าน',promptpay:'PromptPay',tables:'จำนวนโต๊ะ',svc:'ค่าบริการ',vat:'VAT',acceptOrders:'รับออเดอร์ QR',address:'ที่อยู่',phone:'โทร',
   taxId:'เลขผู้เสียภาษี',footer:'ท้ายใบเสร็จ',baseUrl:'ที่อยู่ใน QR',name:'ชื่อ',price:'ราคา',cat:'หมวด',station:'จุดทำ',desc:'คำอธิบาย',hidden:'ซ่อน',
   role:'บทบาท',active:'ใช้งาน'};
-function fv(v){return v===true?'เปิด':v===false?'ปิด':(v===''||v==null)?'(ว่าง)':String(v);}
+function fv(v){
+  if(v&&typeof v==='object'){var k=Object.keys(v).filter(function(x){return v[x]!==''&&v[x]!=null;});return k.length?k.map(function(x){return x+' '+(typeof v[x]==='object'?JSON.stringify(v[x]):v[x]);}).join(' '):'(ว่าง)';}
+  return v===true?'เปิด':v===false?'ปิด':(v===''||v==null)?'(ว่าง)':String(v);
+}
 function changes(e){return Object.keys(e.after||{}).map(function(k){return (FLD[k]||k)+' '+fv(e.before&&e.before[k])+' → '+fv(e.after[k]);}).join(', ');}
 function auditDetail(e){
   if(e.action==='ticket.voided')return 'โต๊ะ '+e.table+' · '+(e.items||[]).map(function(i){return i.name+' ×'+i.qty;}).join(', ')+' · มูลค่า '+baht(e.value)+(e.reason?' · เหตุผล: '+e.reason:'')+(e.approvedBy?' · อนุมัติโดย '+e.approvedBy.name:'');
@@ -882,6 +956,9 @@ function renderSettings(){
     '<label class="f" for="s-tax">เลขประจำตัวผู้เสียภาษี 13 หลัก (ถ้ามี)<input class="in" id="s-tax" value="'+esc(s.taxId)+'" inputmode="numeric" autocomplete="off"></label>'+
     '<label class="f" for="s-foot">ข้อความท้ายใบเสร็จ<input class="in" id="s-foot" value="'+esc(s.footer)+'" maxlength="80" autocomplete="off"></label>'+
     '<label class="f" for="s-tag" style="grid-column:1/-1">คำโปรยใต้ชื่อร้านในหน้าลูกค้า (ไม่บังคับ)<input class="in" id="s-tag" value="'+esc(s.tagline||'')+'" maxlength="80" placeholder="เช่น อาหารไทยรสชาติต้นตำรับ ปรุงสดใหม่ทุกวัน" autocomplete="off"></label></div>'+
+    '<div class="payqr-box" id="payqr"><div class="pq">'+(s.payQr?'<img src="/img/'+esc(s.payQr)+'" alt="รูป QR รับเงินที่ใช้อยู่">':(s.promptpay?'ใช้ QR ที่สร้างจากเบอร์ PromptPay':'ยังไม่มี QR รับเงิน'))+'</div>'+
+    '<div class="stack" style="gap:6px"><b>รูป QR รับเงินของร้าน (ไม่บังคับ)</b><span class="muted small">มี QR จากแอปธนาคาร หรือ QR ร้านค้า (แม่มณี, K SHOP, ถุงเงิน ฯลฯ) อยู่แล้ว อัปโหลดรูปนั้นได้ ใบแจ้งยอดจะใช้รูปนี้แทน QR จากเบอร์ ลูกค้าต้องพิมพ์ยอดเอง (ใบแจ้งยอดบอกยอดตัวใหญ่) · ครอปให้เห็นแค่ QR จะสแกนง่ายขึ้น · เปลี่ยนรูปต้องใส่ PIN ยืนยัน · อัปโหลดแล้วลองสแกนจ่าย 1 บาทก่อนใช้จริง</span>'+
+    '<span class="row" style="gap:8px;flex-wrap:wrap;justify-content:flex-start"><label class="btn" for="payqr-file">'+(s.payQr?'เปลี่ยนรูป QR':'อัปโหลดรูป QR')+'</label>'+(s.payQr?'<button class="btn" data-a="payqrdel">เลิกใช้รูปนี้</button>':'')+'</span></div></div>'+
     '<div class="toggles">'+
     '<span class="row" style="gap:10px">รับออเดอร์ผ่าน QR <button class="sw" id="s-open" data-a="tog" aria-pressed="'+s.acceptOrders+'">'+(s.acceptOrders?'เปิด':'ปิด')+'</button></span>'+
     '<span class="row" style="gap:10px">ค่าบริการ 10% เริ่มต้น <button class="sw" id="s-svc" data-a="tog" aria-pressed="'+s.svc+'">'+(s.svc?'เปิด':'ปิด')+'</button></span>'+
@@ -1045,6 +1122,35 @@ function uploadCover(file){
     if(!r.ok){toast(r.j.error||'อัปโหลดภาพไม่สำเร็จ');if(r.status===401)showLogin();return;}
     toast('เปลี่ยนภาพพื้นหลังแล้ว หน้าลูกค้าที่เปิดอยู่จะเปลี่ยนตามภายใน 5 วินาที');load();
   },function(err){toast(err.message||'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');});
+}
+function preparePayQr(file){
+  if(file.size<=2.5*1024*1024&&/^image\/(png|jpeg|webp)$/.test(file.type))return Promise.resolve({blob:file,type:file.type});
+  return new Promise(function(resolve,reject){
+    var url=URL.createObjectURL(file),img=new Image();
+    img.onload=function(){
+      var max=1600,w=img.naturalWidth,h=img.naturalHeight,k=Math.min(1,max/Math.max(w,h));
+      w=Math.max(1,Math.round(w*k));h=Math.max(1,Math.round(h*k));
+      var c=document.createElement('canvas');c.width=w;c.height=h;var x=c.getContext('2d');x.fillStyle='#ffffff';x.fillRect(0,0,w,h);x.imageSmoothingEnabled=false;x.drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);
+      c.toBlob(function(b){b?resolve({blob:b,type:'image/png'}):reject(new Error('แปลงรูปไม่สำเร็จ'));},'image/png');
+    };
+    img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('เปิดไฟล์รูปนี้ไม่ได้ ลองแคปหน้าจอ QR เป็นไฟล์ PNG หรือ JPG'));};
+    img.src=url;
+  });
+}
+function uploadPayQr(file){
+  // เปลี่ยนบัญชีที่เงินเข้า: ยืนยัน PIN ก่อน (เซิร์ฟเวอร์ตรวจซ้ำ)
+  ensureFresh().then(function(ok){
+    if(!ok)return;
+    toast('กำลังอัปโหลดรูป QR…');
+    return preparePayQr(file).then(function(p){
+      return fetch('/api/settings/payqr',{method:'POST',headers:{'Content-Type':p.type},body:p.blob,credentials:'same-origin'})
+        .then(function(r){return r.json().then(function(j){return {ok:r.ok,status:r.status,j:j};},function(){return {ok:false,status:r.status,j:{}};});});
+    }).then(function(r){
+      if(!r.ok){toast(r.j.error||'อัปโหลดรูป QR ไม่สำเร็จ');if(r.status===401)showLogin();return;}
+      toast('ใช้รูป QR นี้รับเงินแล้ว ลองสแกนจ่าย 1 บาทจากใบแจ้งยอดก่อนใช้จริง');S.dirty=false;load();
+    },function(err){toast(err.message||'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');});
+  });
 }
 function uploadLogo(file){
   resizeLogo(file).then(function(blob){
@@ -1251,13 +1357,13 @@ function doRestore(){
 }
 
 /* ---------- พนักงาน (เจ้าของ) ---------- */
-var ROLE_HELP={owner:'ทำได้ทุกอย่าง',cashier:'โต๊ะ รับเงิน ยกเลิกออเดอร์ สรุปยอดวันนี้',kitchen:'จอครัว เปลี่ยนสถานะอาหาร ตั้งเมนูหมด'};
+var ROLE_HELP={owner:'ทำได้ทุกอย่าง',cashier:'โต๊ะ รับเงิน ยกเลิกออเดอร์ สรุปยอดวันนี้',waiter:'สั่งอาหารแทนลูกค้า ดูโต๊ะที่เรียก เปิดโต๊ะ เสิร์ฟ (รับเงินและดูยอดขายไม่ได้)',kitchen:'จอครัว เปลี่ยนสถานะอาหาร ตั้งเมนูหมด'};
 function loadStaff(){return api('/api/staff').then(function(r){if(r.ok){S.staff=r.j.list;renderStaff();}},function(){});}
 function staffBusy(){var a=document.activeElement;return !!(a&&a.closest&&a.closest('#stf')&&/^(INPUT|SELECT)$/.test(a.tagName));}
 function staffForm(a){
   var v=S.sf&&S.sf.for===S.stEdit?S.sf:{name:a?a.name:'',role:a?a.role:'cashier'};
   return '<div class="form"><label class="f" for="sf-name">ชื่อ<input class="in" id="sf-name" maxlength="30" value="'+esc(v.name)+'" autocomplete="off"></label>'+
-    '<label class="f" for="sf-role">บทบาท<select class="in" id="sf-role">'+['cashier','kitchen','owner'].map(function(r){return '<option value="'+r+'"'+(r===v.role?' selected':'')+'>'+esc(S.d.roles[r])+' · '+ROLE_HELP[r]+'</option>';}).join('')+'</select></label>'+
+    '<label class="f" for="sf-role">บทบาท<select class="in" id="sf-role">'+['cashier','waiter','kitchen','owner'].map(function(r){return '<option value="'+r+'"'+(r===v.role?' selected':'')+'>'+esc(S.d.roles[r])+' · '+ROLE_HELP[r]+'</option>';}).join('')+'</select></label>'+
     '<label class="f" for="sf-pin">'+(a?'PIN ใหม่ (เว้นว่างถ้าไม่เปลี่ยน)':'PIN ตัวเลข 6-8 หลัก')+'<input class="in" id="sf-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password"></label></div>'+
     '<div class="err" id="sf-err">'+esc(S.stErr||'')+'</div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn sm primary" data-a="stsave" data-id="'+(a?a.id:'')+'">บันทึก</button><button class="btn sm" data-a="stcancel">ยกเลิก</button></div>';
@@ -1300,10 +1406,20 @@ function render(){
 
 /* ---------- events ---------- */
 function printMode(mode,extra){
+  var pa=$('#print-area');
+  if(mode==='receipt'){
+    var src=document.querySelector('.view:not([hidden]) .receipt');
+    if(!src){toast('ไม่พบใบเสร็จที่จะพิมพ์');return;}
+    pa.innerHTML='';pa.appendChild(src.cloneNode(true));
+  }
   document.body.classList.add('pm-'+mode);if(extra)document.body.classList.add(extra);
-  var done=function(){document.body.classList.remove('pm-'+mode);if(extra)document.body.classList.remove(extra);document.querySelectorAll('.qcard.pick').forEach(function(c){c.classList.remove('pick');});window.removeEventListener('afterprint',done);};
+  var done=function(){document.body.classList.remove('pm-'+mode);if(extra)document.body.classList.remove(extra);pa.innerHTML='';document.querySelectorAll('.qcard.pick').forEach(function(c){c.classList.remove('pick');});window.removeEventListener('afterprint',done);};
   window.addEventListener('afterprint',done);
-  setTimeout(function(){window.print();},50);
+  // รอรูปในสำเนา (โลโก้ / รูป QR รับเงิน) โหลดเสร็จก่อนสั่งพิมพ์ ไม่อย่างนั้นได้ช่องว่างแทนรูป QR (รอไม่เกิน 3 วินาที)
+  var wait=Array.prototype.slice.call(pa.querySelectorAll('img')).filter(function(i){return !i.complete;}).map(function(i){
+    return new Promise(function(r){i.addEventListener('load',r);i.addEventListener('error',r);setTimeout(r,3000);});
+  });
+  Promise.all(wait).then(function(){setTimeout(function(){window.print();},50);});
 }
 document.addEventListener('input',function(e){
   if(e.target.closest&&e.target.closest('#stf')){S.sf={for:S.stEdit,name:($('#sf-name')||{}).value||'',role:($('#sf-role')||{}).value||'cashier'};return;}
@@ -1327,6 +1443,7 @@ document.addEventListener('change',function(e){
   if(e.target.id==='rs-file'&&f)pickRestore(f);
   if(e.target.id==='logo-file'&&f)uploadLogo(f);
   if(e.target.id==='cover-file'&&f)uploadCover(f);
+  if(e.target.id==='payqr-file'&&f)uploadPayQr(f);
 });
 document.addEventListener('keydown',function(e){
   if(e.key!=='Enter')return;
@@ -1402,6 +1519,11 @@ document.addEventListener('click',function(e){
   else if(a==='tsave'){
     var T=S.theme;T.saving=true;renderTheme();
     act('/api/settings',{accent:T.pick},'บันทึกสีแล้ว').then(function(r){T.saving=false;if(r&&!r.ok)T.err=r.j.error||'';if(r&&r.ok)load();else renderTheme();});
+  }
+  else if(a==='payqrdel'){
+    var pp=S.d.settings.promptpay;
+    confirmBox({title:'เลิกใช้รูป QR นี้?',lines:[pp?'ใบแจ้งยอดจะกลับไปใช้ QR ที่สร้างจากเบอร์ PromptPay '+pp:'ยังไม่ได้ตั้งเบอร์ PromptPay ใบแจ้งยอดจะไม่มี QR รับเงิน','ไฟล์รูปถูกลบจากเครื่อง ถ้าต้องการใช้อีกต้องอัปโหลดใหม่'],ok:'เลิกใช้รูปนี้'})
+      .then(function(ok){if(ok)act('/api/settings/payqr/delete',{},'เลิกใช้รูป QR แล้ว').then(function(r){if(r&&r.ok){S.dirty=false;load();}});});
   }
   else if(a==='coverdel'){
     confirmBox({title:'เอาภาพพื้นหลังออก?',lines:['หน้าลูกค้าและหน้าใส่รหัสพนักงานจะกลับไปใช้สีร้านไล่สีแทน','ไฟล์ภาพถูกลบจากเครื่อง ถ้าต้องการใช้อีกต้องอัปโหลดใหม่'],ok:'เอาภาพออก'})

@@ -1727,3 +1727,123 @@ describe('หน้าลูกค้าแบบใหม่: ลิงก์�
     await s.stop();
   });
 });
+
+describe('รูป QR รับเงินที่ร้านอัปโหลด (แทน QR จากเบอร์ PromptPay)', () => {
+  test('เจ้าของเท่านั้น + ใส่ PIN ซ้ำ ตรวจว่าเป็นรูปจริง เปลี่ยนแล้วไฟล์เก่าถูกลบ อยู่ในไฟล์สำรอง audit ไม่ทำให้หน้าลูกค้าโหลดใหม่', async () => {
+    const dir = makeApp();
+    let s = start(dir, { REAUTH_SEC: '2' }); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    const up = (cookie, buf, type) => fetch(s.B + '/api/settings/payqr', { method: 'POST', headers: { 'content-type': type || 'image/jpeg', cookie }, body: buf })
+      .then(async r => ({ status: r.status, json: await r.json().catch(() => null) }));
+    assert.equal((await up(c.cookie, JPG)).status, 403, 'แคชเชียร์เปลี่ยนรูป QR รับเงินไม่ได้');
+    assert.equal((await up('', JPG)).status, 401);
+    assert.equal((await up(s.cookie, Buffer.from('<svg/>'), 'image/png')).status, 400, 'ไม่ใช่รูปจริง');
+    const v0 = (await s.guest('GET', '/api/menu')).json.version;
+    const a = await up(s.cookie, JPG);
+    assert.equal(a.status, 200);
+    assert.match(a.json.payqr, /^payqr-[a-f0-9]{8}\.jpg$/);
+    assert.equal((await s.call('GET', '/api/state')).json.settings.payQr, a.json.payqr, 'หน้าพนักงานได้ชื่อไฟล์ไปแสดงบนใบแจ้งยอด');
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.equal(m.version, v0, 'หน้าลูกค้าไม่ต้องโหลดเมนูใหม่');
+    assert.ok(!('payQr' in m), 'หน้าลูกค้าไม่ได้ใช้รูปนี้');
+    assert.equal((await fetch(s.B + '/img/' + a.json.payqr)).status, 200);
+    const b = await up(s.cookie, JPG);
+    assert.ok(!fs.existsSync(path.join(s.dir, 'images', a.json.payqr)), 'รูปเก่าถูกลบ');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    assert.ok((await getBackup(s, bk.name)).json.images[b.json.payqr], 'รูป QR รับเงินอยู่ในไฟล์สำรอง');
+    await new Promise(r => setTimeout(r, 2200));
+    const r1 = await up(s.cookie, JPG);
+    assert.equal(r1.status, 403); assert.equal(r1.json.code, 'reauth', 'หมดเวลายืนยัน: เปลี่ยนรูปต้องใส่ PIN ซ้ำ');
+    const r2 = await s.call('POST', '/api/settings/payqr/delete', {});
+    assert.equal(r2.status, 403); assert.equal(r2.json.code, 'reauth', 'เลิกใช้รูปก็ต้องใส่ PIN ซ้ำ (เงินกลับไปเข้าเบอร์ PromptPay)');
+    assert.equal((await s.call('GET', '/api/state')).json.settings.payQr, b.json.payqr, 'ไม่มีอะไรเปลี่ยน');
+    assert.equal((await s.call('POST', '/api/reauth', { pin: PIN })).status, 200);
+    assert.equal((await s.call('POST', '/api/settings/payqr/delete', {})).status, 200);
+    assert.equal((await s.call('GET', '/api/state')).json.settings.payQr, '');
+    assert.ok(!fs.existsSync(path.join(s.dir, 'images', b.json.payqr)));
+    const ev = readLog(s.dir, 'audit').map(e => e.action);
+    assert.equal(ev.filter(x => x === 'settings.payqr.updated').length, 2);
+    assert.ok(ev.includes('settings.payqr.removed'));
+    await s.stop();
+    // ชื่อไฟล์แปลกปลอมใน data.json ถูกล้าง
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    d.settings.payQr = '../data.json'; fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready; await s.login();
+    assert.equal((await s.call('GET', '/api/state')).json.settings.payQr, '');
+    await s.stop();
+  });
+});
+
+describe('บทบาทพนักงานเสิร์ฟ: ดูแลโต๊ะได้ ไม่แตะเงิน', () => {
+  test('สั่งแทนลูกค้า รับทราบการเรียก เปิดโต๊ะ เสิร์ฟได้ · รับเงิน ยกเลิกออเดอร์ สรุปยอด CSV ตั้งค่าไม่ได้ (ตรวจทุก endpoint)', async () => {
+    const { api, PERM } = require('../lib/routes');
+    const s = start(makeApp()); await s.ready; await s.login();
+    const add = await s.call('POST', '/api/staff', { name: 'น้องเอ', role: 'waiter', pin: '520033' });
+    assert.equal(add.status, 200, JSON.stringify(add.json));
+    const w = await device(s, '520033');
+    assert.equal(w.me.role, 'waiter');
+    assert.equal((await s.call('GET', '/api/staff')).json.roles.waiter, 'พนักงานเสิร์ฟ');
+    // ทุก endpoint: ทำได้เฉพาะที่ PERM ให้พนักงานเสิร์ฟ
+    const PUBLIC = ['POST /api/login', 'POST /api/logout', 'GET /api/menu', 'GET /api/table', 'POST /api/order', 'POST /api/call', 'GET /api/brand'];
+    const wrong = [];
+    for (const k of Object.keys(api).filter(x => !PUBLIC.includes(x)).concat(['GET /api/events'])) {
+      const [method, p] = k.split(' ');
+      const r = await fetch(s.B + p + '?id=1&name=x&month=2024-01', { method, headers: Object.assign({ cookie: w.cookie }, method === 'POST' ? { 'content-type': 'application/json' } : {}), body: method === 'POST' ? '{}' : undefined });
+      await r.body?.cancel();
+      const allowed = (PERM[k] || ['owner']).includes('waiter');
+      if (allowed ? (r.status === 401 || r.status === 403) : r.status !== 403) wrong.push(k + ' → ' + r.status + (allowed ? ' (ควรทำได้)' : ' (ควรได้ 403)'));
+    }
+    assert.deepEqual(wrong, []);
+    for (const k of ['POST /api/pay', 'POST /api/ticket/void', 'GET /api/report', 'GET /api/export.csv', 'POST /api/settings', 'GET /api/audit', 'POST /api/backup']) {
+      assert.ok(!(PERM[k] || ['owner']).includes('waiter'), k + ' ต้องไม่ใช่สิทธิ์พนักงานเสิร์ฟ');
+    }
+    // ร้านปิดรับ QR อยู่ ลูกค้าสั่งเองไม่ได้ แต่พนักงานเสิร์ฟสั่งแทนได้ (ไม่ต้องมีรหัส QR)
+    await s.call('POST', '/api/settings', { acceptOrders: false });
+    const o = await w.call('POST', '/api/order', { table: 3, items: [{ id: 1, qty: 2 }] });
+    assert.equal(o.status, 200, JSON.stringify(o.json));
+    const tk = (await s.call('GET', '/api/state')).json.tickets.find(k => k.table === 3);
+    assert.equal(tk.by, 'staff', 'ออเดอร์บันทึกว่าพนักงานสั่ง');
+    const t = await w.call('GET', '/api/table?t=3');
+    assert.equal(t.status, 200); assert.equal(t.json.staff, true, 'เปิดหน้าลูกค้าในโหมดพนักงานได้');
+    // ลูกค้าเรียก → พนักงานเสิร์ฟเห็นและรับทราบได้
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/call', { table: 5, key: keys[5], kind: 'staff' });
+    const ws = (await w.call('GET', '/api/state')).json;
+    assert.equal(ws.calls[5].kind, 'staff');
+    assert.ok(!('sales' in ws) && !('report' in ws), 'state ไม่มียอดขาย');
+    assert.deepEqual(ws.keys, {}, 'ไม่ได้รหัส QR ของโต๊ะ (สั่งแทนด้วย cookie พนักงาน ปิดบัญชีแล้วไม่มีรหัสติดตัวไปสั่งเข้าโต๊ะได้)');
+    assert.equal((await w.call('GET', '/api/table?t=3&k=')).status, 200, 'เปิดหน้าโต๊ะในโหมดพนักงานได้โดยไม่มีรหัส');
+    assert.equal((await w.call('POST', '/api/call/clear', { table: 5 })).status, 200);
+    assert.equal((await w.call('POST', '/api/table/seat', { table: 6, open: true })).status, 200);
+    assert.equal((await w.call('POST', '/api/ticket', { id: tk.id, from: 'new', status: 'cooking' })).status, 200);
+    // เรื่องเงิน: ไม่ได้
+    const sub = (await s.call('GET', '/api/state')).json.bills[3].sub;
+    assert.equal((await w.call('POST', '/api/pay', { table: 3, expectedSub: sub, method: 'cash' })).status, 403);
+    assert.equal((await w.call('POST', '/api/ticket/void', { id: tk.id, reason: 'ลูกค้าเปลี่ยนใจ' })).status, 403);
+    assert.equal((await w.call('GET', '/api/report')).status, 403);
+    assert.ok((await s.call('GET', '/api/state')).json.tickets.some(k => k.id === tk.id), 'ออเดอร์ยังอยู่ บิลยังไม่ถูกปิด');
+    // ครัวยังสั่งแทนลูกค้าไม่ได้เหมือนเดิม
+    const kc = await (async () => { await s.call('POST', '/api/staff', { name: 'ครัว', role: 'kitchen', pin: '520022' }); return device(s, '520022'); })();
+    assert.equal((await kc.call('POST', '/api/order', { table: 4, items: [{ id: 1, qty: 1 }] })).status, 403);
+    await s.stop();
+  });
+});
+
+describe('กู้คืนไฟล์สำรองที่รูปของร้านหายไป', () => {
+  test('ไฟล์สำรองอ้างถึงรูป QR รับเงิน โลโก้ ภาพพื้นหลัง แต่ไม่มีไฟล์ติดมา: ล้างทิ้ง ใบแจ้งยอดกลับไปใช้ QR จากเบอร์ (ไม่แสดงรูปเสีย)', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const up = (kind) => fetch(s.B + '/api/settings/' + kind, { method: 'POST', headers: { 'content-type': 'image/jpeg', cookie: s.cookie }, body: JPG }).then(r => r.json());
+    const q = await up('payqr'), l = await up('logo'), c = await up('cover');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    const data = (await getBackup(s, bk.name)).json;
+    delete data.images[q.payqr]; delete data.images[l.logo]; delete data.images[c.cover];
+    const r = await restoreRaw(s, Buffer.from(JSON.stringify(data)), 'application/json');
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    await s.login();
+    const st = (await s.call('GET', '/api/state')).json.settings;
+    assert.deepEqual([st.payQr, st.logo, st.cover], ['', '', '']);
+    await s.stop();
+  });
+});
+

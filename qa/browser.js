@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -925,6 +925,216 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await c.context().close(); await c2.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* รูป QR รับเงินของร้าน: อัปโหลดจากหน้าตั้งค่า ใบแจ้งยอดใช้รูปนั้นพร้อมบอกยอด หมดเวลายืนยันแล้วขอ PIN ก่อน เลิกใช้แล้วกลับเป็น QR จากเบอร์ */
+  async payqr(browser) {
+    const ok = checker('payqr'); const errors = [];
+    const app = makeApp(); const s = start(app.code, { REAUTH_SEC: '3' }); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { promptpay: '0812345678' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    const p = await staffPage(browser, s, null, errors);
+    const bill = async () => { await tab(p, 'tables'); await sleep(200); if (!(await p.$('.receipt .grand .a'))) await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('.receipt .grand .a', { timeout: 5000 }).catch(() => {}); await sleep(300); return p.evaluate(() => { const q = document.querySelector('.receipt .qr'); return { img: q && q.querySelector('img.payqr') ? q.querySelector('img.payqr').getAttribute('src') : '', svg: !!(q && q.querySelector('svg')), t: q ? q.textContent : '', total: document.querySelector('.receipt .grand .a').textContent.trim() }; }); };
+    let b = await bill();
+    ok(b.svg && !b.img, 'ยังไม่อัปโหลด: ใบแจ้งยอดใช้ QR ที่สร้างจากเบอร์ PromptPay');
+    await tab(p, 'settings'); await p.waitForSelector('label[for="payqr-file"]');
+    await p.setInputFiles('#payqr-file', { name: 'qr.png', mimeType: 'image/png', buffer: await fakePhoto(browser, 120, 300) });
+    await until(async () => !!(await s.call('GET', '/api/state')).json.settings.payQr, 8000).catch(() => {});
+    const q1 = (await s.call('GET', '/api/state')).json.settings.payQr;
+    ok(/^payqr-/.test(q1 || ''), 'อัปโหลดรูป QR จากหน้าตั้งค่า (input อยู่นอกส่วนที่วาดใหม่)', q1);
+    await p.waitForSelector('#payqr .pq img', { timeout: 5000 }).catch(() => {});
+    ok(await p.$('#payqr .pq img'), 'หน้าตั้งค่าแสดงรูป QR ที่ใช้อยู่');
+    b = await bill();
+    ok(b.img.includes(q1) && !b.svg && b.t.includes(b.total), 'ใบแจ้งยอดใช้รูป QR ของร้าน และบอกยอดให้ลูกค้าพิมพ์เอง', b);
+    // หมดเวลายืนยัน: เปลี่ยนรูปต้องใส่ PIN ก่อน แล้วอัปโหลดต่อให้เอง
+    await sleep(3300);
+    await tab(p, 'settings'); await p.waitForSelector('label[for="payqr-file"]');
+    await p.setInputFiles('#payqr-file', { name: 'qr2.png', mimeType: 'image/png', buffer: await fakePhoto(browser, 200, 300) });
+    await p.waitForSelector('#reauth-dlg[open]', { timeout: 5000 }).catch(() => {});
+    ok(await p.isVisible('#reauth-dlg') && (await s.call('GET', '/api/state')).json.settings.payQr === q1, 'หมดเวลายืนยัน: ขอ PIN ก่อน ยังไม่เปลี่ยนรูป');
+    await p.fill('#ra-pin', PIN); await p.click('#ra-ok');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.payQr !== q1, 8000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.settings.payQr !== q1, 'ใส่ PIN ถูกแล้วอัปโหลดต่อเอง');
+    // เลิกใช้รูป: ผ่านหน้าต่างยืนยัน กลับไปใช้ QR จากเบอร์
+    await p.waitForSelector('[data-a="payqrdel"]'); await p.click('[data-a="payqrdel"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(/0812345678/.test(await p.textContent('#confirm-dlg')), 'หน้าต่างยืนยันบอกว่าจะกลับไปใช้เบอร์ไหน');
+    await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.settings.payQr, 8000).catch(() => {});
+    b = await bill();
+    ok(b.svg && !b.img, 'เลิกใช้รูปแล้ว ใบแจ้งยอดกลับไปใช้ QR จากเบอร์');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* พนักงานเสิร์ฟ: เห็นแท็บ ครัว / โต๊ะ / เมนูหมด เห็นโต๊ะที่เรียก สั่งแทนลูกค้าได้ ไม่มีปุ่มรับเงิน ยกเลิก สรุปยอด */
+  async waiter(browser) {
+    const ok = checker('waiter'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'น้องเอ', role: 'waiter', pin: '520033' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    const ctx = await browser.newContext({ baseURL: s.B }); const p = await ctx.newPage(); watch(p, errors, 'waiter');
+    await p.goto('/staff'); await p.fill('#pin', '520033'); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
+    const tabs = await p.$$eval('#tabs .tab', x => x.map(b => b.dataset.v));
+    ok(JSON.stringify(tabs) === JSON.stringify(['kitchen', 'tables', 'menu']) && /พนักงานเสิร์ฟ/.test(await p.textContent('#brand')), 'แท็บ: ครัว โต๊ะ & บิล เมนูหมด (ไม่มีสรุปยอด ตั้งค่า)', tabs);
+    await tab(p, 'kitchen'); await p.waitForSelector('#v-kitchen .card');
+    ok(!(await p.$('#v-kitchen [data-a="void"]')) && await p.$('#v-kitchen [data-a="adv"]'), 'จอครัว: เปลี่ยนสถานะได้ ไม่มีปุ่มยกเลิกออเดอร์');
+    await s.call('POST', '/api/call', { table: 2, key: keys[2], kind: 'bill' }, { staff: false });
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="2"]'); await p.waitForSelector('.receipt .grand .a');
+    ok(/ขอเช็คบิล/.test(await p.textContent('#v-tables')), 'เห็นโต๊ะที่ลูกค้าขอเช็คบิล');
+    ok(!(await p.$('[data-a="pay"]')) && !(await p.$('[data-a="bsvc"]')) && /รับเงินได้เฉพาะแคชเชียร์/.test(await p.textContent('#v-tables')) && await p.$('[data-a="printr"]'), 'ใบแจ้งยอดดู/พิมพ์ได้ แต่ไม่มีปุ่มรับเงินและปรับค่าบริการ');
+    await p.click('[data-a="clearcall"]');
+    await until(async () => !(await s.call('GET', '/api/state')).json.calls[2], 6000).catch(() => {});
+    ok(!(await s.call('GET', '/api/state')).json.calls[2], 'กดรับทราบการเรียกได้');
+    // สั่งแทนลูกค้า: ลิงก์เปิดหน้าลูกค้าในโหมดพนักงาน (ใช้ cookie เดียวกัน)
+    const href = await p.getAttribute('#v-tables a[href*="/order?"]', 'href');
+    const c = await ctx.newPage(); watch(c, errors, 'waiter-order');
+    ok(href.startsWith('/order?'), 'ลิงก์สั่งแทนลูกค้าเป็นที่อยู่เดียวกับหน้าพนักงาน (cookie ไปด้วย)', href);
+    await c.goto(href); await c.waitForSelector('.item');
+    ok(/โหมดพนักงาน/.test(await c.textContent('header.top')), 'สั่งแทนลูกค้า: หน้าลูกค้าเปิดในโหมดพนักงาน');
+    await c.click('.item [data-a="inc"][data-id="2"]'); await c.click('[data-a="open"]'); await c.click('[data-a="send"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 2 && k.by === 'staff'), 6000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 2 && k.by === 'staff'), 'ส่งออเดอร์แทนลูกค้าเข้าครัวได้');
+    // เปิด URL สรุปยอดตรงๆ ก็ไม่ได้ข้อมูล
+    const rep = await p.evaluate(() => fetch('/api/report', { credentials: 'same-origin' }).then(r => r.status));
+    ok(rep === 403, 'เรียกข้อมูลสรุปยอดตรงๆ ได้ 403', rep);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* เสียงแจ้งเตือน: ครัวได้ยินเฉพาะออเดอร์ใหม่ของจุดที่ดูอยู่ หน้าร้านได้ยินการเรียก ขอบิล พร้อมเสิร์ฟ เจ้าของได้ยินทุกเรื่อง
+     เสียงแต่ละเรื่องไม่เหมือนกัน และเตือนซ้ำถ้ามีเรื่องค้าง (เร่งนาฬิกาในหน้าเว็บ) */
+  async sound(browser) {
+    const ok = checker('sound'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'ครัว', role: 'kitchen', pin: '520022' });
+    await s.call('POST', '/api/staff', { name: 'เสิร์ฟ', role: 'waiter', pin: '520033' });
+    const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
+    const hot = st0.menu.items.find(i => i.station === 'hot').id, bar = st0.menu.items.find(i => i.station === 'bar').id;
+    // นับเสียงจาก oscillator ที่เริ่มเล่น: โน้ตแรกของแต่ละเสียง order 660 · call 1200 (สองครั้ง) · bill 990 · ready 1320
+    const open = async (pin, label) => {
+      const ctx = await browser.newContext({ baseURL: s.B });
+      await ctx.addInitScript(() => {
+        window.__f = [];
+        const A = window.AudioContext;
+        window.AudioContext = function () {
+          const ac = new A(), co = ac.createOscillator.bind(ac);
+          ac.createOscillator = () => { const o = co(), st = o.start.bind(o); o.start = t => { window.__f.push(o.frequency.value); return st(t); }; return o; };
+          return ac;
+        };
+      });
+      const p = await ctx.newPage(); watch(p, errors, label);
+      await p.clock.install();
+      await p.goto('/staff'); await p.fill('#pin', pin); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
+      await p.mouse.click(5, 5); await sleep(200);
+      return p;
+    };
+    const k = await open('520022', 'kitchen'), w = await open('520033', 'waiter'), o = await open(PIN, 'owner');
+    const P = { k, w, o };
+    const kinds = async p => { const f = await p.evaluate(() => window.__f.slice()); const n = x => f.filter(v => v === x).length; return { order: n(660), call: n(1200) / 2, bill: n(990), ready: n(1320) }; };
+    const delta = async fn => { const a = {}; for (const x in P) a[x] = await kinds(P[x]); await fn(); await sleep(1500); const d = {}; for (const x in P) { const b = await kinds(P[x]); d[x] = {}; for (const kk in b) if (b[kk] - a[x][kk]) d[x][kk] = b[kk] - a[x][kk]; } return d; };
+    const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    let d = await delta(() => s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: hot, qty: 1 }] }, { staff: false }));
+    ok(eq(d, { k: { order: 1 }, w: {}, o: { order: 1 } }), 'ออเดอร์ใหม่: ครัวและเจ้าของได้ยินเสียงออเดอร์ หน้าร้านไม่ดัง (เห็นข้อความ)', d);
+    ok(/ออเดอร์ใหม่/.test(await w.textContent('#toast')), 'พนักงานเสิร์ฟยังเห็นข้อความออเดอร์ใหม่บนจอ');
+    await k.click('[data-a="kst"][data-s="bar"]');
+    d = await delta(() => s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: hot, qty: 1 }] }, { staff: false }));
+    ok(!d.k.order, 'จอครัวที่ดูเฉพาะเครื่องดื่ม: ออเดอร์ครัวร้อนไม่ดัง', d.k);
+    d = await delta(() => s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: bar, qty: 1 }] }, { staff: false }));
+    ok(d.k.order === 1, 'จอครัวที่ดูเฉพาะเครื่องดื่ม: ออเดอร์เครื่องดื่มดัง', d.k);
+    d = await delta(() => s.call('POST', '/api/call', { table: 4, key: keys[4], kind: 'staff' }, { staff: false }));
+    ok(eq(d, { k: {}, w: { call: 1 }, o: { call: 1 } }), 'ลูกค้าเรียกพนักงาน: หน้าร้านและเจ้าของได้ยิน ครัวไม่ดัง', d);
+    d = await delta(() => s.call('POST', '/api/call', { table: 5, key: keys[5], kind: 'bill' }, { staff: false }));
+    ok(eq(d, { k: {}, w: { bill: 1 }, o: { bill: 1 } }), 'ขอเช็คบิล: เสียงคนละแบบกับเรียกพนักงาน ครัวไม่ดัง', d);
+    const t1 = (await s.call('GET', '/api/state')).json.tickets.find(x => x.table === 1);
+    await s.call('POST', '/api/ticket', { id: t1.id, from: 'new', status: 'cooking' }); await sleep(800);
+    d = await delta(() => s.call('POST', '/api/ticket', { id: t1.id, from: 'cooking', status: 'ready' }));
+    ok(eq(d, { k: {}, w: { ready: 1 }, o: { ready: 1 } }), 'อาหารพร้อมเสิร์ฟ: พนักงานเสิร์ฟและเจ้าของได้ยิน (เดิมไม่มีเสียง)', d);
+    // เรื่องค้าง: ออเดอร์ที่ยังไม่มีใครเริ่มทำ / การเรียกที่ยังไม่มีใครรับทราบ → เตือนซ้ำ
+    d = await delta(async () => { for (const p of [k, w, o]) await p.clock.fastForward('02:30'); });
+    ok(d.k.order >= 1 && !d.k.call && !d.k.bill, 'ออเดอร์ค้างเกิน 2 นาที: จอครัวเตือนซ้ำ', d.k);
+    ok((d.w.bill || 0) + (d.w.call || 0) >= 1 && !d.w.order, 'ลูกค้าเรียก/ขอบิลค้าง: หน้าร้านเตือนซ้ำ', d.w);
+    // จัดการทุกเรื่องแล้วต้องเงียบ
+    const st = (await s.call('GET', '/api/state')).json;
+    for (const t of st.tickets) { let from = t.status; for (const nx of ['cooking', 'ready', 'served'].slice(['new', 'cooking', 'ready'].indexOf(from))) { await s.call('POST', '/api/ticket', { id: t.id, from, status: nx }); from = nx; } }
+    for (const t of Object.keys(st.calls)) await s.call('POST', '/api/call/clear', { table: +t });
+    await sleep(1500);
+    d = await delta(async () => { for (const p of [k, w, o]) await p.clock.fastForward('03:00'); });
+    ok(eq(d, { k: {}, w: {}, o: {} }), 'ไม่มีเรื่องค้าง: ไม่เตือนซ้ำ', d);
+    // แท็บเล็ตนาฬิกาเร็วกว่าเครื่องร้าน 5 นาที: ออเดอร์ที่เพิ่งเข้าต้องไม่ถูกนับว่าค้าง (ใช้เวลาที่ชดเชยแล้ว ไม่ใช่นาฬิกาแท็บเล็ต)
+    {
+      const ctx = await browser.newContext({ baseURL: s.B });
+      await ctx.addInitScript(() => {
+        window.__f = [];
+        const A = window.AudioContext;
+        window.AudioContext = function () { const ac = new A(), co = ac.createOscillator.bind(ac); ac.createOscillator = () => { const o2 = co(), st2 = o2.start.bind(o2); o2.start = t => { window.__f.push(o2.frequency.value); return st2(t); }; return o2; }; return ac; };
+      });
+      const sk = await ctx.newPage(); watch(sk, errors, 'skew');
+      await sk.clock.install({ time: Date.now() + 5 * 60000 });
+      await sk.goto('/staff'); await sk.fill('#pin', '520022'); await sk.press('#pin', 'Enter'); await sk.waitForSelector('#tabs .tab');
+      await sk.mouse.click(5, 5); await sleep(200);
+      await s.call('POST', '/api/order', { table: 9, key: keys[9], items: [{ id: hot, qty: 1 }] }, { staff: false }); await sleep(1500);
+      const before = (await kinds(sk)).order;
+      await sk.clock.fastForward('01:15'); await sleep(800);
+      const after = (await kinds(sk)).order;
+      ok(before === 1 && after === 1, 'แท็บเล็ตนาฬิกาเร็ว 5 นาที: ออเดอร์ใหม่ดังครั้งเดียว ไม่เตือนซ้ำทั้งที่เพิ่งเข้า', { before, after });
+      await ctx.close();
+    }
+    // รีเฟรชหน้าแล้วยังไม่ได้แตะจอ: ป้ายบอกว่าเสียงปิดอยู่ แตะแล้วหาย
+    await w.reload(); await w.waitForSelector('#tabs .tab');
+    const before = await w.isVisible('#sound'); await w.click('#sound'); await sleep(300);
+    ok(before && !(await w.isVisible('#sound')), 'รีเฟรชแล้วยังไม่แตะจอ: มีป้ายเปิดเสียง แตะแล้วเสียงเปิดและป้ายหาย');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    for (const p of [k, w, o]) await p.context().close();
+    await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* พิมพ์ใบเสร็จ (กระดาษความร้อน 80 มม.): ใบสั้นได้หน้าเดียวไม่ซ้ำ ใบยาวไหลต่อหน้าไม่ทับกัน มีแต่ใบเสร็จ ไม่มีส่วนอื่นของหน้าจอ */
+  async print(browser) {
+    const ok = checker('print'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { promptpay: '0812345678' });
+    const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] }, { staff: false });
+    for (let r = 0; r < 2; r++) await s.call('POST', '/api/order', { table: 2, key: keys[2], items: st0.menu.items.slice(r * 11, r * 11 + 11).map(m => ({ id: m.id, qty: 1, note: ['ไม่เผ็ด'] })) }, { staff: false });
+    const p = await staffPage(browser, s, null, errors);
+    await p.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+    const pdfOf = async t => {
+      await tab(p, 'tables'); await sleep(200);
+      await p.click('[data-a="sel"][data-id="' + t + '"]'); await p.waitForSelector('.view:not([hidden]) .receipt .grand'); await sleep(200);
+      const before = await p.evaluate(() => window.__printed);
+      await p.click('[data-a="printr"]');
+      await p.waitForFunction(n => window.__printed > n, before, { timeout: 5000 }).catch(() => {});
+      await p.emulateMedia({ media: 'print' });
+      const info = await p.evaluate(() => {
+        const pa = document.querySelector('#print-area'), mm = px => Math.round(px * 25.4 / 96);
+        const shown = [...document.body.children].filter(e => e !== pa && getComputedStyle(e).display !== 'none').map(e => e.id || e.className);
+        const r = pa.getBoundingClientRect();
+        return { h: mm(r.height), w: mm(pa.querySelector('.receipt').getBoundingClientRect().width), shown, fixed: [...pa.querySelectorAll('*')].some(e => getComputedStyle(e).position === 'fixed'), grand: pa.querySelectorAll('.grand').length };
+      });
+      const buf = await p.pdf({ width: '80mm', height: '200mm', margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+      info.pages = (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+      await p.emulateMedia({ media: 'screen' });
+      return info;
+    };
+    const a = await pdfOf(1);
+    ok(a.pages === 1 && a.grand === 1, 'ใบเสร็จสั้น: หน้าเดียว ไม่พิมพ์ซ้ำ (เดิมออกมา 2 ใบ)', a);
+    ok(!a.shown.length && !a.fixed, 'ตอนพิมพ์มีแต่ใบเสร็จ ส่วนอื่นของหน้าจอไม่กินกระดาษ', a);
+    ok(a.w >= 70 && a.w <= 74, 'กว้างพอดีพื้นที่พิมพ์กระดาษ 80 มม. (72 มม.)', a.w);
+    const b = await pdfOf(2);
+    ok(b.h > 200 && b.pages === Math.ceil(b.h / 200) && b.grand === 1, 'ใบเสร็จยาวเกินหน้า: ไหลต่อหน้าตามความยาวจริง ไม่ทับกัน (เดิมหัวใบเสร็จพิมพ์ทับยอดรวม)', b);
+    ok(!(await p.evaluate(() => document.body.className.includes('pm-receipt'))) && !(await p.evaluate(() => document.querySelector('#print-area').innerHTML)), 'พิมพ์เสร็จ: กลับหน้าจอปกติ ล้างสำเนาใบเสร็จ');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
