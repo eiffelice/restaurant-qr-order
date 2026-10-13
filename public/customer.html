@@ -186,7 +186,7 @@ nav.cats .in::-webkit-scrollbar{display:none}
 <div class="offline" id="offline" role="status" hidden>สัญญาณหลุด สถานะอาหารที่เห็นอาจไม่ใช่ล่าสุด กำลังเชื่อมต่อใหม่…</div>
 <!-- หน้ารายละเอียดและตะกร้าอยู่นอก #app: รายการเมนูวาดใหม่ทุกครั้งที่สถานะเปลี่ยน สิ่งที่ลูกค้าเลือกค้างไว้จึงไม่หาย -->
 <div class="detail" id="detail" role="dialog" aria-modal="true" aria-labelledby="d-name" hidden></div>
-<div class="sheet-bg" id="sheetbg" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="ตะกร้า"></div></div>
+<div class="sheet-bg" id="sheetbg" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="รายการสั่ง"></div></div>
 <div id="toast" role="status"></div>
 
 <script>
@@ -279,7 +279,7 @@ function cardCtl(m){
   var ls=linesOf(m.id),q=qtyOf(m.id);
   if(ls.length===1&&!ls[0].note.length)return '<span class="ctl step"><button data-a="dec" data-id="'+m.id+'" aria-label="ลด '+esc(m.name)+'">'+IC.minus+'</button><b aria-live="polite">'+q+'</b><button data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+'"'+(q>=20?' disabled':'')+'>'+IC.plus+'</button></span>';
   // มีแถวที่ใส่หมายเหตุ: ที่นี่เพิ่มจานปกติอย่างเดียว พร้อมตัวเลขรวม ลด/แก้ในตะกร้า
-  return '<button class="ctl add" data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+(q?' (มีในตะกร้า '+q+')':'')+'">'+IC.plus+(q?'<span class="n" aria-hidden="true">'+q+'</span>':'')+'</button>';
+  return '<button class="ctl add" data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+(q?' (มีในรายการสั่ง '+q+' จาน)':'')+'">'+IC.plus+(q?'<span class="n" aria-hidden="true">'+q+'</span>':'')+'</button>';
 }
 function renderAll(){
   if(!M){return;}
@@ -293,7 +293,7 @@ function renderAll(){
   h+='<nav class="cats" aria-label="หมวดอาหาร"><div class="wrap"><div class="in">'+M.categories.map(function(c){return '<button class="cat" data-a="cat" data-id="'+c.id+'" aria-pressed="'+(cat===c.id)+'">'+esc(c.name)+'</button>';}).join('')+'</div></div></nav>';
   // ปุ่มตะกร้าอยู่ล่างจอ (fixed) แต่ใน DOM อยู่ก่อนรายการ คีย์บอร์ด/โปรแกรมอ่านหน้าจอเข้าถึงได้ทันที ไม่ต้องผ่านทุกจาน
   var n=cartCount();
-  if(n) h+='<div class="bar"><button class="cap" data-a="open"><span class="lb">ดูตะกร้า · '+n+' รายการ</span><span class="rt">'+baht(cartTotal())+'<span class="arr">'+IC.arr+'</span></span></button></div>';
+  if(n) h+='<div class="bar"><button class="cap" data-a="open"><span class="lb">ดูรายการสั่ง · '+n+' จาน</span><span class="rt">'+baht(cartTotal())+'<span class="arr">'+IC.arr+'</span></span></button></div>';
   h+='<main class="wrap">'+(M.items.length?'':'<div class="center muted">ร้านยังไม่ได้เพิ่มเมนู กรุณาเรียกพนักงาน</div>');
   M.categories.forEach(function(c){
     var its=M.items.filter(function(m){return m.cat===c.id;});
@@ -392,7 +392,7 @@ function renderDetail(){
     '<div class="cap-name">'+(cn?'<span class="tag">'+esc(cn)+'</span>':'')+'<h2 id="d-name">'+esc(m.name)+'</h2></div></div>';
   h+='<div class="buy"><div class="notch"><div class="price"><b>'+baht(m.price)+'</b><span>/ จาน</span></div>'+
     '<span class="step"><button data-a="ddec" aria-label="ลดจำนวน"'+(D.qty<=1||cant?' disabled':'')+'>'+IC.minus+'</button><b aria-live="polite">'+D.qty+'</b><button data-a="dinc" aria-label="เพิ่มจำนวน"'+(D.qty>=20||cant?' disabled':'')+'>'+IC.plus+'</button></span></div>'+
-    '<button class="cap" data-a="dadd"'+(cant?' disabled':'')+'><span class="lb">'+(out?'หมดแล้ว':closed?'ร้านปิดรับออเดอร์':'ใส่ตะกร้า<br>'+baht(m.price*D.qty))+'</span><span class="arr">'+IC.arr+'</span></button></div>';
+    '<button class="cap" data-a="dadd"'+(cant?' disabled':'')+'><span class="lb">'+(out?'หมดแล้ว':closed?'ร้านปิดรับออเดอร์':'เพิ่มรายการ<br>'+baht(m.price*D.qty))+'</span><span class="arr">'+IC.arr+'</span></button></div>';
   h+='<div class="d-body">';
   if(closed)h+='<div class="err">ร้านปิดรับออเดอร์ผ่าน QR ชั่วคราว ดูเมนูได้ แต่สั่งไม่ได้ กรุณาเรียกพนักงาน</div>';
   if(M.notes.length){
@@ -405,7 +405,7 @@ function renderDetail(){
   } else h+=m.desc?'<p style="margin:0">'+esc(m.desc)+'</p>':'<p class="muted" style="margin:0">ร้านยังไม่ได้ใส่รายละเอียดของเมนูนี้</p>';
   h+='</div>';
   var inCart=qtyOf(m.id);
-  if(inCart)h+='<p class="small muted d-msg">มีในตะกร้าแล้ว '+inCart+' จาน</p>';
+  if(inCart)h+='<p class="small muted d-msg">มีในรายการสั่งแล้ว '+inCart+' จาน</p>';
   h+='</div></div>';
   el.innerHTML=h;el.hidden=false;
   if(fsel){var f=$(fsel);if(f&&!f.disabled)f.focus();else{var bk=$('#detail [data-a="dback"]');if(bk)bk.focus();}}
@@ -431,9 +431,9 @@ var openNotes={};       // แถวที่เปิดตัวเลือ�
 function renderSheet(){
   var bg=$('#sheetbg');bg.hidden=!sheetOpen;
   if(!sheetOpen)return;
-  var h='<h2><span>ตะกร้า · โต๊ะ '+T+'</span><button class="circle" data-a="close" aria-label="ปิดตะกร้า">'+IC.x+'</button></h2>';
+  var h='<h2><span>รายการสั่ง · โต๊ะ '+T+'</span><button class="circle" data-a="close" aria-label="ปิดรายการสั่ง">'+IC.x+'</button></h2>';
   if(sendErr)h+='<div class="err" role="alert">'+esc(sendErr)+'</div>';
-  if(!lines.length)h+='<div class="center muted">ตะกร้าว่าง</div>';
+  if(!lines.length)h+='<div class="center muted">ยังไม่ได้เลือกอาหาร</div>';
   lines.forEach(function(l,i){
     var m=item(l.id);if(!m)return;
     h+='<div class="cl"><div class="th'+(m.image?'':' noimg '+tone(m.cat))+'">'+(m.image?'<img src="/img/'+esc(m.image)+'" alt="">':IC.dish)+'</div><div class="bd">'+
@@ -478,7 +478,7 @@ function applyStat(s){
   lines=lines.filter(function(l){var m=item(l.id);if(!m||m.soldOut){if(m){if(removed.indexOf(m.name)<0)removed.push(m.name);}else gone++;return false;}return true;});
   if(removed.length||gone){
     openNotes={};cartChanged();
-    toast((removed.length?removed.join(', ')+' หมดแล้ว ':'')+(gone?'มีเมนูที่ไม่มีขายแล้ว ':'')+'นำออกจากตะกร้าให้แล้ว');
+    toast((removed.length?removed.join(', ')+' หมดแล้ว ':'')+(gone?'มีเมนูที่ไม่มีขายแล้ว ':'')+'นำออกจากรายการสั่งให้แล้ว');
   }
   var after=s.open+'|'+out.join(',');
   if(before!==after||removed.length||gone){
@@ -535,7 +535,7 @@ document.addEventListener('click',function(e){
   else if(a==='dadd'){
     var dm=item(D.id);if(!dm||dm.soldOut||closedForGuests())return;
     addLine(D.id,D.qty,D.note);
-    var msg='ใส่ตะกร้าแล้ว '+D.qty+' จาน';
+    var msg='เพิ่มลงรายการสั่งแล้ว '+D.qty+' จาน';
     closeDetail();renderAll();renderSheet();toast(msg);
   }
   else if(a==='call'){

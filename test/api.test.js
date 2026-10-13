@@ -1395,3 +1395,27 @@ describe('ธีมร้าน: สีปุ่มและโลโก้', ()
     await s.stop();
   });
 });
+
+describe('จาก security review: เดา PIN เจ้าของผ่านหน้าต่างอนุมัติ', () => {
+  test('PIN อนุมัติยกเลิกออเดอร์ผิด นับรวมเพดาน 30 ครั้ง/นาทีทุก IP เหมือนหน้าเข้าสู่ระบบ (แคชเชียร์ตั้ง IP เองหลายเครื่องก็เดาต่อไม่ได้)', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const id = (await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] })).json.tickets[0];
+    await s.call('POST', '/api/ticket', { id, from: 'new', status: 'cooking' });
+    const tryPin = (ip, pin) => new Promise((resolve, reject) => {
+      const data = Buffer.from(JSON.stringify({ id, reason: 'ลูกค้าเปลี่ยนใจ', approvePin: pin }));
+      const req = require('node:http').request(s.B + '/api/ticket/void', { method: 'POST', localAddress: ip, agent: false, headers: { cookie: c.cookie, 'content-type': 'application/json', 'content-length': data.length } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      req.on('error', reject); req.end(data);
+    });
+    const codes = [];
+    for (let i = 0; i < 40; i++) codes.push(await tryPin('127.0.6.' + (1 + Math.floor(i / 5)), String(100000 + i)));   // 8 เครื่อง เครื่องละ 5 ครั้ง (ไม่ติดลิมิตต่อ IP)
+    const wrong = codes.filter(x => x === 403).length;
+    assert.ok(wrong <= 30, 'เดาผิดได้ไม่เกิน 30 ครั้งต่อนาทีรวมทุก IP (ได้ ' + wrong + ')');
+    assert.equal(codes[codes.length - 1], 429, 'ครั้งท้ายๆ ถูกพัก');
+    assert.equal(await tryPin('127.0.6.200', PIN), 429, 'ระหว่างพัก PIN ถูกก็ใช้ไม่ได้ (ไม่อย่างนั้นใช้ผลพักเป็นตัวบอกว่าเดาถูก)');
+    assert.ok((await s.call('GET', '/api/state')).json.tickets.some(t => t.id === id), 'ออเดอร์ยังอยู่');
+    await s.stop();
+  });
+});

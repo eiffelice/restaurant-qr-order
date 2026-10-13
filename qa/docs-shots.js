@@ -19,7 +19,7 @@ const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
   const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
 
   // ---------- ข้อมูลร้านตัวอย่าง ----------
-  await s.call('POST', '/api/settings', { shop: 'ครัวป้าแดง', address: '88/8 ถ.สุขุมวิท แขวงคลองตัน เขตคลองเตย กรุงเทพฯ', phone: '02-123-4567', promptpay: '0812345678', footer: 'ขอบคุณที่อุดหนุนค่ะ' });
+  await s.call('POST', '/api/settings', { baseUrl: 'http://192.168.1.50:3000', shop: 'ครัวป้าแดง', address: '88/8 ถ.สุขุมวิท แขวงคลองตัน เขตคลองเตย กรุงเทพฯ', phone: '02-123-4567', promptpay: '0812345678', footer: 'ขอบคุณที่อุดหนุนค่ะ' });
   await s.call('POST', '/api/settings/logo', await fakePhoto(browser, 8, 300), png);
   const hues = { 1: 18, 2: 40, 3: 30, 4: 52, 6: 5, 7: 12, 11: 190, 12: 330 };
   for (const id of Object.keys(hues)) await s.call('POST', '/api/menu/image?id=' + id, await fakePhoto(browser, hues[id]), png);
@@ -80,13 +80,16 @@ const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
   const state = await lc.storageState();
   await sleep(400); await shot(lp, 's02-kitchen-phone', true);
   await lc.close();
-  const staff = async (opts) => { const ctx = await browser.newContext(Object.assign({ baseURL: s.B, storageState: state }, DESK, opts || {})); const q = await ctx.newPage(); await q.goto('/staff'); await q.waitForSelector('#tabs .tab'); await sleep(500); return q; };
+  const staff = async (opts) => { const ctx = await browser.newContext(Object.assign({ baseURL: s.B, storageState: state, acceptDownloads: true }, DESK, opts || {})); const q = await ctx.newPage(); await q.goto('/staff'); await q.waitForSelector('#tabs .tab'); await sleep(500); return q; };
   p = await staff();
   await shot(p, 's03-kitchen');
   await p.click('#v-kitchen [data-a="void"]'); await p.waitForSelector('#void-dlg[open]'); await p.check('#void-form input[value="สั่งผิด หรือกดซ้ำ"]'); await sleep(200);
   await shot(p, 's04-void-dialog');
   await p.keyboard.press('Escape');
-  await p.click('#tabs [data-v="tables"]'); await sleep(300); await p.click('[data-a="sel"][data-id="1"]'); await sleep(400);
+  await p.click('#tabs [data-v="tables"]'); await sleep(300);
+  await p.click('[data-a="deltable"]'); await p.waitForSelector('#confirm-dlg[open]'); await sleep(200);
+  await shot(p, 's18-confirm-delete'); await p.click('#cf-no'); await sleep(200);
+  await p.click('[data-a="sel"][data-id="1"]'); await sleep(400);
   await shot(p, 's05-tables-bill');
   await p.setViewportSize({ width: 1440, height: 1400 });   // ให้เห็นช่องรับเงินและเงินทอนในภาพเดียว (fullPage ทำให้แถบซ้ายลอย)
   await p.click('[data-a="pay"][data-m="cash"]'); await p.keyboard.type('1000'); await sleep(400);
@@ -108,6 +111,7 @@ const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
   await el(p, '#bk', 's14-backup');
   await p.evaluate(() => document.querySelector('.qrsheet').scrollIntoView({ block: 'start' })); await sleep(300);
   await shot(p, 's15-qr-sheet');
+  { const [d] = await Promise.all([p.waitForEvent('download'), p.click('[data-a="qrpng"][data-t="5"]')]); fs.copyFileSync(await d.path(), path.join(OUT, 's19-qr-file.png')); }
   await p.context().close();
   p = await staff({ colorScheme: 'dark' });
   for (let i = 0; i < 3 && await p.isHidden('#v-tables'); i++) { await p.click('#tabs [data-v="tables"]'); await sleep(500); }

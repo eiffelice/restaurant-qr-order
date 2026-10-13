@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -202,7 +202,7 @@ const cases = {
     const paid = (await s.call('GET', '/api/audit')).json.events.find(e => e.action === 'bill.paid');
     ok(paid && paid.name === 'สมใจ' && paid.role === 'cashier', 'log บอกว่าสมใจ (แคชเชียร์) เป็นคนรับเงิน', paid && paid.name);
     // ปิดบัญชีครัวจากหน้าเว็บ: จอครัวหลุดไปหน้าใส่ PIN
-    await owner.click('#stf [data-a="sttoggle"][data-id="s2"]');
+    await owner.click('#stf [data-a="sttoggle"][data-id="s2"]'); await owner.waitForSelector('#confirm-dlg[open]'); await owner.click('#cf-ok');
     await s.call('POST', '/api/order', { table: 4, key: keys[4], items: [{ id: 1, qty: 1 }] }, { staff: false });   // ให้จอครัวโหลดข้อมูลใหม่
     await kitchen.waitForSelector('#login:not([hidden])', { timeout: 8000 }).catch(() => {});
     ok(await kitchen.isVisible('#login'), 'ปิดบัญชีแล้ว จอครัวที่เปิดอยู่หลุดไปหน้าใส่ PIN');
@@ -377,7 +377,7 @@ const cases = {
     await s.call('POST', '/api/settings', { shop: 'เปลี่ยนชั่วคราว' });
     await staff.setInputFiles('#rs-file', bkFile);
     await staff.waitForSelector('[data-a="rsgo"]');
-    await staff.click('[data-a="rsgo"]'); await staff.click('[data-a="rsgo"]');
+    await staff.click('[data-a="rsgo"]'); await staff.waitForSelector('#confirm-dlg[open]'); await staff.click('#cf-ok');
     await until(async () => /กู้คืนข้อมูลแล้ว/.test(await toastText(staff)), 10000, 'กู้คืนจากหน้าเว็บ');
     if (staff) { const c = (await staff.context().cookies()).find(x => x.name === 'st'); if (c) s.cookie = 'st=' + c.value; }
     ok((await s.call('GET', '/api/state')).json.settings.shop === 'ร้านป้าแดง', 'สำรองแล้วกู้คืนจากหน้าเว็บ ข้อมูลกลับมา');
@@ -449,7 +449,7 @@ const cases = {
     await c.click('[data-a="dtab"][data-t="notes"]');
     await c.click('[data-a="dnote"][data-n="ไม่เผ็ด"]');
     await c.click('[data-a="dinc"]');
-    ok(/฿120/.test(await c.textContent('[data-a="dadd"]')), 'ปุ่มใส่ตะกร้าแสดงราคารวมตามจำนวน (2 × 60)', await c.textContent('[data-a="dadd"]'));
+    ok(/฿120/.test(await c.textContent('[data-a="dadd"]')), 'ปุ่มเพิ่มรายการแสดงราคารวมตามจำนวน (2 × 60)', await c.textContent('[data-a="dadd"]'));
     await c.click('[data-a="dadd"]');
     await c.waitForSelector('#detail', { state: 'hidden' });
     await sleep(200);
@@ -523,7 +523,7 @@ const cases = {
     const c5 = await customerPage(browser, s, 5, keys[5], errors);
     await c5.evaluate(r => { localStorage.setItem('cart-5', JSON.stringify({ cart: { 1: { qty: 2, note: ['เผ็ดน้อย'], open: false } }, memo: '', reqId: r })); }, rid);
     await c5.reload(); await c5.waitForSelector('.item');
-    ok(/2 รายการ/.test(await c5.textContent('[data-a="open"]')), 'ตะกร้ารูปแบบเดิมแปลงเป็นแบบใหม่ ของไม่หาย');
+    ok(/2 จาน/.test(await c5.textContent('[data-a="open"]')), 'ตะกร้ารูปแบบเดิมแปลงเป็นแบบใหม่ ของไม่หาย');
     await c5.click('[data-a="open"]'); await c5.click('[data-a="send"]'); await sleep(800);
     const t5 = (await s.call('GET', '/api/state')).json.tickets.filter(k => k.table === 5);
     ok(first.status === 200 && t5.length === 1, 'reqId เดิมจากตะกร้าแบบเดิม: ไม่เกิดออเดอร์ซ้ำ', t5.length);
@@ -622,6 +622,111 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* ยืนยันก่อนลบ + ลบโต๊ะ: หน้าต่างบอกว่าลบอะไร โฟกัสเริ่มที่ "ไม่ลบ" Esc/ไม่ลบ = ไม่มีอะไรหาย */
+  async confirm(browser) {
+    const ok = checker('confirm'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const X = '<img src=x onerror="window.__xss=1">';
+    const it = (await s.call('POST', '/api/menu/item', { name: 'ทดสอบ' + X, price: 10, cat: 1, station: 'hot' })).json.item;
+    const p = await staffPage(browser, s, null, errors);
+    // ลบโต๊ะ
+    await tab(p, 'tables'); await p.waitForSelector('[data-a="deltable"]');
+    ok(/ลบโต๊ะ 12/.test(await p.textContent('[data-a="deltable"]')), 'มีปุ่มลบโต๊ะเลขสุดท้าย (โต๊ะ 12)');
+    await p.click('[data-a="deltable"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(await p.evaluate(() => document.activeElement.id === 'cf-no'), 'เปิดหน้าต่างแล้วโฟกัสที่ "ไม่ลบ" (กด Enter พลาดก็ไม่ลบ)');
+    ok(/QR โต๊ะ 12/.test(await p.textContent('#cf-b')), 'หน้าต่างบอกผลที่ตามมา (QR โต๊ะ 12 ใช้ไม่ได้)');
+    await p.keyboard.press('Enter'); await sleep(400);
+    ok((await s.call('GET', '/api/state')).json.settings.tables === 12, 'กด Enter ตอนโฟกัส "ไม่ลบ": ไม่ลบ');
+    await p.click('[data-a="deltable"]'); await p.waitForSelector('#confirm-dlg[open]'); await p.keyboard.press('Escape'); await sleep(400);
+    ok((await s.call('GET', '/api/state')).json.settings.tables === 12, 'กด Esc: ไม่ลบ');
+    await p.click('[data-a="deltable"]'); await p.waitForSelector('#confirm-dlg[open]'); await p.click('#cf-ok');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.tables === 11, 5000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.settings.tables === 11, 'ยืนยัน: เหลือ 11 โต๊ะ');
+    // โต๊ะสุดท้ายมีออเดอร์ค้าง: ไม่เปิดหน้าต่าง บอกเหตุผล
+    await s.call('POST', '/api/order', { table: 11, key: keys[11], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await sleep(800);
+    await p.click('[data-a="deltable"]'); await sleep(300);
+    ok(!(await p.$('#confirm-dlg[open]')) && /ยังมีออเดอร์/.test(await toastText(p)), 'โต๊ะที่ยังมีออเดอร์ ลบไม่ได้ บอกเหตุผล');
+    // เพิ่มโต๊ะกลับ: QR แผ่นเดิมใช้ได้
+    await p.click('[data-a="addtable"]'); await sleep(600);
+    const k12 = (await s.call('GET', '/api/state')).json.keys[12];
+    ok(k12 === keys[12], 'เพิ่มโต๊ะ 12 กลับ: รหัส QR เดิม แผ่นเดิมใช้ต่อได้');
+    // ลบเมนู: ชื่อเมนูในหน้าต่างเป็นข้อความธรรมดา
+    await tab(p, 'menu'); await p.click('[data-a="eopen"][data-id="' + it.id + '"]'); await sleep(300);
+    await p.click('[data-a="edel"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok((await p.textContent('#cf-h')).includes('<img src=x') && !(await p.evaluate(() => window.__xss)), 'ชื่อเมนูในหน้าต่างยืนยันแสดงเป็นข้อความ ไม่ทำงาน');
+    await p.click('#cf-no'); await sleep(300);
+    ok((await s.call('GET', '/api/state')).json.menu.items.some(m => m.id === it.id), 'กด "ไม่ลบ": เมนูยังอยู่');
+    await p.click('[data-a="edel"]'); await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.menu.items.some(m => m.id === it.id), 5000).catch(() => {});
+    ok(!(await s.call('GET', '/api/state')).json.menu.items.some(m => m.id === it.id), 'ยืนยัน: ลบเมนูแล้ว');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* QR ติดโต๊ะ: พิมพ์รวม A4 หน้าละ 6 ใบ, พิมพ์ทีละโต๊ะ, PNG ทีละโต๊ะ (อ่านจุดในรูปกลับมาตรงกับ QR จริง), zip ทุกโต๊ะ */
+  async qrfiles(browser) {
+    const ok = checker('qrfiles'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { baseUrl: 'http://192.168.1.50:3000', tables: 7 });
+    await s.call('POST', '/api/settings/logo', await fakePhoto(browser, 200, 200), { headers: { 'content-type': 'image/png' } });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const ctx = await browser.newContext({ baseURL: s.B, acceptDownloads: true });
+    const p = await ctx.newPage(); watch(p, errors, 'staff');
+    await p.goto('/staff'); await p.fill('#pin', PIN); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
+    await tab(p, 'settings'); await p.waitForSelector('[data-a="qrpng"][data-t="5"]');
+    // PNG โต๊ะ 5
+    const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-a="qrpng"][data-t="5"]')]);
+    const png = fs.readFileSync(await dl.path());
+    ok(dl.suggestedFilename() === 'QR-โต๊ะ-5.png' && png.slice(1, 4).toString() === 'PNG' && png.readUInt32BE(16) === 1200 && png.readUInt32BE(20) === 1600, 'ดาวน์โหลด PNG โต๊ะ 5: ชื่อไฟล์ถูก ขนาด 1200×1600', dl.suggestedFilename());
+    // อ่านรูปกลับ: ทุกจุดของ QR ตรงกับข้อมูล QR ของ URL โต๊ะ 5 (ใช้ qrcode.js ตัวเดียวกับที่หน้าเว็บใช้)
+    const match = await p.evaluate(async ([b64, url]) => {
+      const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+      const q = qrcode(0, 'M'); q.addData(url); q.make();
+      const n = q.getModuleCount(), box = { x: 150, y: 520, size: 900, margin: 4 }, m = box.size / (n + box.margin * 2);
+      let bad = 0;
+      for (let r = 0; r < n; r++) for (let cc = 0; cc < n; cc++) {
+        const px = x.getImageData(Math.floor(box.x + (cc + box.margin + .5) * m), Math.floor(box.y + (r + box.margin + .5) * m), 1, 1).data;
+        if ((px[0] < 128) !== q.isDark(r, cc)) bad++;
+      }
+      return { n, bad };
+    }, [png.toString('base64'), 'http://192.168.1.50:3000/order?t=5&k=' + keys[5]]);
+    ok(match.bad === 0 && match.n > 20, 'QR ในรูปตรงกับ URL โต๊ะ 5 ทุกจุด (' + match.n + '×' + match.n + ')', match);
+    // zip ทุกโต๊ะ
+    const [dz] = await Promise.all([p.waitForEvent('download', { timeout: 30000 }), p.click('[data-a="qrzip"]')]);
+    const zip = fs.readFileSync(await dz.path());
+    const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    const count = zip.readUInt16LE(eocd + 10), cdOff = zip.readUInt32LE(eocd + 16);
+    const entries = []; let o = cdOff;
+    for (let i = 0; i < count; i++) {
+      const nl = zip.readUInt16LE(o + 28), lo = zip.readUInt32LE(o + 42), crc = zip.readUInt32LE(o + 16), size = zip.readUInt32LE(o + 20);
+      const name = zip.slice(o + 46, o + 46 + nl).toString('utf8');
+      const data = zip.slice(lo + 30 + zip.readUInt16LE(lo + 26), lo + 30 + zip.readUInt16LE(lo + 26) + size);
+      entries.push({ name, crcOk: require('node:zlib').crc32(data) === crc, png: data.slice(1, 4).toString() === 'PNG' });
+      o += 46 + nl;
+    }
+    ok(count === 7 && entries.every(e => e.crcOk && e.png) && entries[0].name === 'QR-โต๊ะ-01.png' && entries[6].name === 'QR-โต๊ะ-07.png', 'zip ทุกโต๊ะ: 7 ไฟล์ PNG ชื่อภาษาไทยถูก CRC ถูก', entries.map(e => e.name));
+    // พิมพ์: ปิด window.print แล้วจำลองหน้าพิมพ์
+    await p.evaluate(() => { window.print = () => {}; });
+    await p.click('[data-a="printqr"]'); await p.emulateMedia({ media: 'print' }); await sleep(200);
+    const all = await p.$$eval('.qcard', cs => cs.filter(c => getComputedStyle(c).display !== 'none').map(c => { const r = c.getBoundingClientRect(); return { t: c.dataset.t, x: Math.round(r.x), y: Math.round(r.y), act: getComputedStyle(c.querySelector('.qact')).display }; }));
+    ok(all.length === 7 && all[0].y === all[1].y && all[0].x !== all[1].x && all.every(c => c.act === 'none'), 'พิมพ์รวม: 7 ใบ 2 คอลัมน์ ไม่มีปุ่มติดไปในกระดาษ', all.slice(0, 3));
+    await p.emulateMedia({ media: 'screen' }); await p.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await p.click('[data-a="qrprint"][data-t="3"]'); await p.emulateMedia({ media: 'print' }); await sleep(200);
+    const one = await p.$$eval('.qcard', cs => cs.filter(c => getComputedStyle(c).display !== 'none').map(c => c.dataset.t));
+    ok(one.length === 1 && one[0] === '3', 'พิมพ์ทีละโต๊ะ: เห็นแค่โต๊ะ 3', one);
+    await p.emulateMedia({ media: 'screen' }); await p.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    ok(!(await p.$('.qcard.pick')) && !(await p.evaluate(() => document.body.className.includes('pm-'))), 'พิมพ์เสร็จ: หน้าจอกลับเป็นปกติ');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await ctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
