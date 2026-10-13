@@ -1021,6 +1021,22 @@ describe('Log และเงินทอน', () => {
     await s.stop();
   });
 
+  test('แก้ตัวเลขใน audit โดยขนาดไฟล์เท่าเดิม: หน้าสรุปยอดตรวจเจอทันที ไม่ใช่รอรอบตรวจถัดไป', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const o = await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 3 }] });
+    await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    assert.equal((await s.call('GET', '/api/audit')).json.chain.ok, true, 'ตรวจครั้งแรก ระบบจำผลไว้');
+    const lf = path.join(s.dir, 'logs', 'audit-' + monthNow() + '.jsonl');
+    const text = fs.readFileSync(lf, 'utf8'), fake = text.replace('"value":180', '"value":100');
+    assert.ok(fake !== text && fake.length === text.length);
+    await new Promise(r => setTimeout(r, 20));
+    fs.writeFileSync(lf, fake);                                    // ลดมูลค่าที่ยกเลิก ขนาดไฟล์ไม่เปลี่ยน
+    const chain = (await s.call('GET', '/api/audit')).json.chain;
+    assert.equal(chain.ok, false, 'ต้องตรวจเจอ ' + JSON.stringify(chain));
+    await s.stop();
+  });
+
   test('เขียน log ไม่ได้: ป้ายเตือนขึ้น ระบบยังรับออเดอร์ได้ และ log ที่ค้างถูกเขียนครบเมื่อกลับมาปกติ', async () => {
     const s = start(makeApp()); await s.ready; await s.login();
     const keys = (await s.call('GET', '/api/state')).json.keys;

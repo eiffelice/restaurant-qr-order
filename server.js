@@ -140,6 +140,7 @@ lockDataDir(() => {
     if (C.PIN === '1234' || C.PIN.length < 6) console.log('\n  ! รหัสพนักงานสั้นหรือเป็นค่าเริ่มต้น ควรตั้งอย่างน้อย 6 หลัก:  STAFF_PIN=รหัสใหม่ node server.js');
     console.log('');
     log.app('info', 'start', { port: C.PORT, trustProxy: C.TRUST_PROXY });
+    log.startVerifier();
     backup.startAuto();
   });
 });
