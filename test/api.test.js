@@ -1065,3 +1065,159 @@ describe('Log และเงินทอน', () => {
     await s.stop();
   });
 });
+
+/* ---------- พนักงานรายคนและบทบาท ---------- */
+// เข้าสู่ระบบด้วย PIN แล้วได้ "เครื่อง" ของคนนั้น เรียก API ด้วย cookie ของตัวเอง
+// แต่ละเครื่องมี IP ของตัวเอง (เหมือนแท็บเล็ตคนละเครื่อง) ไม่ชนลิมิตเข้าสู่ระบบ 6 ครั้ง/นาที/IP
+let deviceIp = 0;
+async function device(s, pin) {
+  const ip = '127.0.5.' + (1 + (deviceIp++ % 250));
+  const login = await new Promise((resolve, reject) => {
+    const data = Buffer.from(JSON.stringify({ pin }));
+    const req = require('node:http').request(s.B + '/api/login', { method: 'POST', localAddress: ip, agent: false, headers: { 'content-type': 'application/json', 'content-length': data.length } }, res => {
+      let t = ''; res.on('data', c => { t += c; }); res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(t), sc: res.headers['set-cookie'] }));
+    });
+    req.on('error', reject); req.end(data);
+  });
+  const d = { status: login.status, me: login.json.me, cookie: login.sc ? login.sc[0].split(';')[0] : '' };
+  d.call = async (method, p, body) => {
+    const rr = await fetch(s.B + p, { method, headers: Object.assign({ cookie: d.cookie }, body !== undefined ? { 'content-type': 'application/json' } : {}), body: body === undefined ? undefined : JSON.stringify(body) });
+    const t = await rr.text(); let j = null; try { j = JSON.parse(t); } catch (e) { /* ignore */ }
+    return { status: rr.status, json: j };
+  };
+  return d;
+}
+async function withStaff(s) {
+  const add = async (name, role, pin) => (await s.call('POST', '/api/staff', { name, role, pin })).json.staff;
+  return { cashier: await add('สมใจ', 'cashier', '520011'), kitchen: await add('ช่างต้ม', 'kitchen', '520022') };
+}
+
+describe('พนักงานรายคนและบทบาท', () => {
+  test('เจ้าของเพิ่มแคชเชียร์และครัว แต่ละคนเข้าสู่ระบบด้วย PIN ของตัวเอง และ log บอกชื่อคนที่ทำ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const st0 = (await s.call('GET', '/api/state')).json;
+    assert.deepEqual(st0.me, { id: 'owner', name: 'เจ้าของร้าน', role: 'owner' }, 'STAFF_PIN เดิมคือบัญชีเจ้าของร้าน');
+    const { cashier } = await withStaff(s);
+    const c = await device(s, '520011');
+    assert.equal(c.status, 200);
+    assert.deepEqual(c.me, { id: cashier.id, name: 'สมใจ', role: 'cashier' });
+    const keys = st0.keys;
+    const o = await c.call('POST', '/api/order', { table: 4, items: [{ id: 1, qty: 1 }] });
+    assert.equal(o.status, 200, 'แคชเชียร์สั่งแทนลูกค้าได้');
+    await c.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    const v = readLog(s.dir, 'audit').find(e => e.action === 'ticket.voided');
+    assert.deepEqual([v.staff, v.name, v.role], [cashier.id, 'สมใจ', 'cashier'], 'log บอกว่าใครยกเลิก');
+    assert.ok(readLog(s.dir, 'security').some(e => e.action === 'auth.login' && e.name === 'สมใจ'));
+    assert.equal((await device(s, '999999')).status, 401);
+    assert.ok(keys[1]);
+    await s.stop();
+  });
+
+  test('สิทธิ์ตามบทบาท ตรวจทุก endpoint อัตโนมัติ (endpoint ที่ไม่ได้ประกาศสิทธิ์ = เจ้าของเท่านั้น)', async () => {
+    const { api, PERM } = require('../lib/routes');
+    const PUBLIC = ['POST /api/login', 'POST /api/logout', 'GET /api/menu', 'GET /api/table', 'POST /api/order', 'POST /api/call'];
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const who = { cashier: await device(s, '520011'), kitchen: await device(s, '520022') };
+    const wrong = [];
+    for (const k of Object.keys(api).filter(x => !PUBLIC.includes(x)).concat(['GET /api/events'])) {
+      const [method, p] = k.split(' ');
+      for (const role of ['cashier', 'kitchen']) {
+        const r = await fetch(s.B + p + '?id=1&name=x&month=2024-01', { method, headers: Object.assign({ cookie: who[role].cookie }, method === 'POST' ? { 'content-type': 'application/json' } : {}), body: method === 'POST' ? '{}' : undefined });
+        await r.body?.cancel();
+        const allowed = (PERM[k] || ['owner']).includes(role);
+        if (allowed ? (r.status === 401 || r.status === 403) : r.status !== 403) wrong.push(role + ' ' + k + ' → ' + r.status + (allowed ? ' (ควรทำได้)' : ' (ควรได้ 403)'));
+      }
+    }
+    assert.deepEqual(wrong, []);
+    const ks = (await who.kitchen.call('GET', '/api/state')).json;
+    assert.deepEqual(ks.keys, {}, 'จอครัวไม่ได้รหัส QR ของโต๊ะ');
+    assert.ok(Object.keys((await who.cashier.call('GET', '/api/state')).json.keys).length > 0, 'แคชเชียร์ได้รหัส QR ไว้สั่งแทนลูกค้า');
+    assert.ok(readLog(s.dir, 'security').some(e => e.action === 'auth.forbidden' && e.role === 'kitchen'), 'บันทึกการพยายามทำเกินสิทธิ์');
+    await s.stop();
+  });
+
+  test('แก้ราคาเมนูและตั้งเมนูหมด: log บอกชื่อคนที่ทำ ไม่ถูกชื่อเมนูทับ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'ผู้จัดการแดง', role: 'owner', pin: '560011' });
+    const m = await device(s, '560011');
+    assert.equal((await m.call('POST', '/api/menu/item', { id: 1, name: 'ผัดกะเพราหมูสับ', price: 70, cat: 1, station: 'hot' })).status, 200);
+    assert.equal((await m.call('POST', '/api/soldout', { id: 1, soldOut: true })).status, 200);
+    const ev = readLog(s.dir, 'audit');
+    const up = ev.find(e => e.action === 'menu.item.updated'), so = ev.find(e => e.action === 'menu.soldout');
+    assert.deepEqual([up.name, up.role, up.itemName, up.after.price], ['ผู้จัดการแดง', 'owner', 'ผัดกะเพราหมูสับ', 70]);
+    assert.deepEqual([so.name, so.itemName], ['ผู้จัดการแดง', 'ผัดกะเพราหมูสับ']);
+    await s.stop();
+  });
+
+  test('ครัวสั่งอาหารแทนลูกค้าโดยไม่มีรหัส QR ไม่ได้ แต่เปลี่ยนสถานะอาหารและตั้งเมนูหมดได้', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const k = await device(s, '520022');
+    assert.equal((await k.call('POST', '/api/order', { table: 1, items: [{ id: 1, qty: 1 }] })).status, 403);
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const o = await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] });
+    assert.equal((await k.call('POST', '/api/ticket', { id: o.json.tickets[0], from: 'new', status: 'cooking' })).status, 200);
+    assert.equal((await k.call('POST', '/api/soldout', { id: 2, soldOut: true })).status, 200);
+    assert.equal((await k.call('POST', '/api/ticket/void', { id: o.json.tickets[0] })).status, 403, 'ครัวยกเลิกออเดอร์เองไม่ได้');
+    await s.stop();
+  });
+
+  test('เปลี่ยน PIN, เปลี่ยนบทบาท, ปิดบัญชี, สั่งออกทุกเครื่อง: เครื่องที่คนนั้นเข้าอยู่หลุดทันที', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const { cashier } = await withStaff(s);
+    const ok = async d => (await d.call('GET', '/api/state')).status;
+    let d = await device(s, '520011');
+    await s.call('POST', '/api/staff', { id: cashier.id, name: 'สมใจ', role: 'cashier', pin: '530011' });
+    assert.equal(await ok(d), 401, 'เปลี่ยน PIN แล้วเครื่องเดิมหลุด');
+    assert.equal((await device(s, '520011')).status, 401, 'PIN เก่าใช้ไม่ได้');
+    d = await device(s, '530011'); assert.equal(await ok(d), 200);
+    await s.call('POST', '/api/staff', { id: cashier.id, name: 'สมใจ', role: 'kitchen' });
+    assert.equal(await ok(d), 401, 'ลดบทบาทแล้วเครื่องเดิมหลุด (ไม่ใช้สิทธิ์เก่าค้าง)');
+    d = await device(s, '530011'); assert.equal(d.me.role, 'kitchen');
+    await s.call('POST', '/api/staff/logout-all', { id: cashier.id });
+    assert.equal(await ok(d), 401, 'สั่งออกทุกเครื่องแล้วหลุด');
+    d = await device(s, '530011');
+    await s.call('POST', '/api/staff', { id: cashier.id, name: 'สมใจ', role: 'kitchen', active: false });
+    assert.equal(await ok(d), 401, 'ปิดบัญชีแล้วหลุด');
+    assert.equal((await device(s, '530011')).status, 401, 'ปิดบัญชีแล้วเข้าไม่ได้');
+    await s.call('POST', '/api/staff', { id: cashier.id, name: 'สมใจ', role: 'kitchen', active: true });
+    assert.equal((await device(s, '530011')).status, 200, 'เปิดบัญชีกลับมาเข้าได้');
+    const ev = readLog(s.dir, 'audit').filter(e => e.action.startsWith('staff.'));
+    assert.ok(ev.some(e => e.action === 'staff.updated' && e.pinChanged === true) && ev.some(e => e.action === 'staff.sessions_revoked'));
+    assert.equal((await s.call('GET', '/api/state')).status, 200, 'เจ้าของไม่หลุดตาม');
+    await s.stop();
+  });
+
+  test('PIN ต้องเป็นตัวเลข 6-8 หลัก ห้ามซ้ำคนอื่นหรือซ้ำ PIN เจ้าของ และ PIN หรือ hash ไม่หลุดทาง API หรือ log', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const add = (pin, name) => s.call('POST', '/api/staff', { name: name || 'ทดสอบ', role: 'cashier', pin });
+    assert.equal((await add('12345')).status, 400);
+    assert.equal((await add('12a456')).status, 400);
+    assert.equal((await add(PIN)).status, 400, 'ซ้ำ PIN เจ้าของ');
+    assert.equal((await add('777777', 'คนแรก')).status, 200);
+    assert.equal((await add('777777', 'คนที่สอง')).status, 400, 'ซ้ำ PIN คนอื่น');
+    assert.equal((await s.call('POST', '/api/staff', { name: 'ไม่มี PIN', role: 'cashier' })).status, 400);
+    assert.equal((await s.call('POST', '/api/staff', { id: 'owner', name: 'x', role: 'kitchen' })).status, 400, 'แก้บัญชีเจ้าของผ่านหน้าเว็บไม่ได้');
+    const list = await s.call('GET', '/api/staff');
+    const text = JSON.stringify(list.json) + JSON.stringify((await s.call('GET', '/api/state')).json) + allLogText(s.dir);
+    const data = JSON.parse(fs.readFileSync(path.join(s.dir, 'data.json'), 'utf8'));
+    assert.ok(!text.includes('777777') && !text.includes(data.staff[0].pinHash), 'PIN หรือ hash หลุด');
+    assert.ok(!fs.readFileSync(path.join(s.dir, 'data.json'), 'utf8').includes('777777'), 'data.json ไม่เก็บ PIN ตรงๆ');
+    await s.stop();
+  });
+
+  test('กู้คืนข้อมูล: พนักงานในไฟล์สำรองกลับมา และเครื่องที่กดกู้คืนยังเข้าระบบอยู่', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const file = (await getBackup(s, (await s.call('POST', '/api/backup', {})).json.backup.name)).buf;
+    await s.call('POST', '/api/staff', { name: 'เด็กใหม่', role: 'kitchen', pin: '540033' });
+    assert.equal((await restoreRaw(s, file)).status, 200);
+    assert.equal((await s.call('GET', '/api/state')).status, 200, 'เจ้าของยังเข้าระบบอยู่');
+    const names = (await s.call('GET', '/api/staff')).json.list.map(a => a.name);
+    assert.deepEqual(names, ['เจ้าของร้าน', 'สมใจ', 'ช่างต้ม']);
+    assert.equal((await device(s, '520011')).status, 200, 'PIN ของพนักงานในไฟล์สำรองใช้ได้');
+    assert.equal((await device(s, '540033')).status, 401, 'คนที่เพิ่มหลังวันสำรองไม่อยู่แล้ว');
+    await s.stop();
+  });
+});

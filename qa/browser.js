@@ -156,6 +156,61 @@ const cases = {
     return ok.done();
   },
 
+  /* พนักงานรายคน: เจ้าของเพิ่มพนักงานจากหน้าเว็บ แต่ละบทบาทเห็นเฉพาะส่วนของตัวเอง เปลี่ยนสิทธิ์แล้วเครื่องที่เข้าอยู่หลุด */
+  async roles(browser) {
+    const ok = checker('roles'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const owner = await staffPage(browser, s, null, errors);
+    await tab(owner, 'settings'); await owner.waitForSelector('[data-a="stnew"]');
+    for (const [name, role, pin] of [['สมใจ', 'cashier', '520011'], ['ช่างต้ม', 'kitchen', '520022']]) {
+      await owner.click('[data-a="stnew"]');
+      await owner.fill('#sf-name', name); await owner.selectOption('#sf-role', role); await owner.fill('#sf-pin', pin);
+      await owner.click('[data-a="stsave"]');
+      await owner.waitForFunction(n => document.querySelector('#stf').textContent.includes(n), name);
+    }
+    ok(/สมใจ[\s\S]*แคชเชียร์[\s\S]*ช่างต้ม[\s\S]*ครัว/.test(await owner.textContent('#stf')), 'เจ้าของเพิ่มแคชเชียร์และครัวจากหน้าตั้งค่า');
+    await owner.click('#stf [data-a="stedit"][data-id="s1"]');
+    await (await owner.$('#stf')).screenshot({ path: path.join(__dirname, 'out', 'staff-panel.png') });
+    await owner.click('#stf [data-a="stcancel"]');
+    const o1 = await overflow(await (async () => { const p = await staffPage(browser, s, MOBILE, errors); await tab(p, 'settings'); await p.waitForSelector('#stf .status-line'); return p; })());
+    ok(!o1, 'ส่วนพนักงานที่ 390px ไม่เลื่อนแนวนอน', o1 || undefined);
+    // เข้าสู่ระบบด้วย PIN ของแต่ละคน
+    const login = async pin => {
+      const ctx = await browser.newContext(Object.assign({ baseURL: s.B }, MOBILE)); const p = await ctx.newPage(); watch(p, errors, 'pin' + pin);
+      await p.goto('/staff'); await p.fill('#pin', pin); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab'); return p;
+    };
+    const kitchen = await login('520022');
+    const kt = (await kitchen.$$eval('#tabs .tab', b => b.map(x => x.dataset.v))).join(',');
+    ok(kt === 'kitchen,menu' && /ช่างต้ม \(ครัว\)/.test(await kitchen.textContent('#brand')), 'ครัวเห็นแค่แท็บครัวกับเมนูหมด และหัวจอบอกชื่อ', kt);
+    await s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await kitchen.waitForSelector('#v-kitchen .card');
+    ok(!(await kitchen.$('#v-kitchen [data-a="void"]')), 'ครัวไม่มีปุ่มยกเลิกออเดอร์');
+    await kitchen.click('#v-kitchen [data-a="adv"]'); await sleep(300);
+    await tab(kitchen, 'menu'); await kitchen.waitForSelector('[data-a="sold"]');
+    ok(!(await kitchen.$('[data-a="eopen"]')) && !(await kitchen.$('[data-a="enew"]')) && !(await kitchen.$('#c-new')), 'ครัวแก้เมนูไม่ได้ เห็นแค่ปุ่มตั้งเมนูหมด');
+    await kitchen.click('[data-a="sold"][data-id="2"]'); await sleep(300);
+    ok((await s.call('GET', '/api/state')).json.settings.soldOut.includes(2), 'ครัวตั้งเมนูหมดได้');
+    const cashier = await login('520011');
+    ok((await cashier.$$eval('#tabs .tab', b => b.map(x => x.dataset.v))).join(',') === 'kitchen,tables,menu,report', 'แคชเชียร์เห็นครัว โต๊ะ เมนูหมด สรุปยอด (ไม่มีตั้งค่า)');
+    await tab(cashier, 'tables'); await cashier.click('[data-a="sel"][data-id="3"]');
+    await cashier.click('[data-a="pay"][data-m="cash"]'); await cashier.waitForSelector('#cash-in');
+    await cashier.keyboard.type('100'); await cashier.keyboard.press('Enter'); await cashier.waitForSelector('[data-a="donesale"]');
+    await tab(cashier, 'report'); await cashier.waitForSelector('.kpis');
+    ok(!(await cashier.$('a[href^="/api/export.csv"]')) && !/ประวัติการแก้ไข/.test(await cashier.textContent('#v-report')), 'แคชเชียร์ดูสรุปยอดได้ แต่ไม่เห็น CSV และประวัติการแก้ไข');
+    // เจ้าของเห็นว่าใครรับเงิน
+    const paid = (await s.call('GET', '/api/audit')).json.events.find(e => e.action === 'bill.paid');
+    ok(paid && paid.name === 'สมใจ' && paid.role === 'cashier', 'log บอกว่าสมใจ (แคชเชียร์) เป็นคนรับเงิน', paid && paid.name);
+    // ปิดบัญชีครัวจากหน้าเว็บ: จอครัวหลุดไปหน้าใส่ PIN
+    await owner.click('#stf [data-a="sttoggle"][data-id="s2"]');
+    await s.call('POST', '/api/order', { table: 4, key: keys[4], items: [{ id: 1, qty: 1 }] }, { staff: false });   // ให้จอครัวโหลดข้อมูลใหม่
+    await kitchen.waitForSelector('#login:not([hidden])', { timeout: 8000 }).catch(() => {});
+    ok(await kitchen.isVisible('#login'), 'ปิดบัญชีแล้ว จอครัวที่เปิดอยู่หลุดไปหน้าใส่ PIN');
+    ok(errors.filter(e => !/net::ERR/.test(e)).length === 0, 'ไม่มี error ในหน้าเว็บ', errors);
+    await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
   /* ระหว่างพนักงานเลือกไฟล์ (หน้าต่างเลือกไฟล์เปิดอยู่) มีออเดอร์เข้า หน้าจอ re-render: ไฟล์ที่เลือกต้องไม่หาย */
   async 'file-picker'(browser) {
     const ok = checker('file-picker'); const errors = [];
