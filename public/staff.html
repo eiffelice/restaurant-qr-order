@@ -12,7 +12,7 @@
   --bg:#f8fafc; --surface:#ffffff; --surface2:#f1f5f9; --ink:#111827; --muted:#4b5563; --line:#e2e8f0; --line-strong:#7c8796;
   --accent:#84cc16; --accent-ink:#111827; --accent-soft:#ecfccb; --accent-text:#3f6212; --focus:#4d7c0f;
   --nav:#111827; --nav-ink:#f9fafb;
-  --ok:#15803d; --ok-bg:#dcfce7; --warn:#92400e; --warn-bg:#fef3c7; --warn-line:var(--warn-line); --crit:#b91c1c; --crit-bg:#fee2e2; --danger:#dc2626; --danger-ink:#ffffff;
+  --ok:#15803d; --ok-bg:#dcfce7; --warn:#92400e; --warn-bg:#fef3c7; --warn-line:#d97706; --crit:#b91c1c; --crit-bg:#fee2e2; --danger:#dc2626; --danger-ink:#ffffff;
   --r-sm:8px; --r:12px; --r-lg:16px; --ctl:44px;
   --font:'Inter','Noto Sans Thai','IBM Plex Sans Thai','Leelawadee UI','Sarabun','Thonburi',system-ui,-apple-system,'Segoe UI',sans-serif;
   --paper:#fdfdfb; --paper-ink:#1c1f1e; --paper-line:#bfc6c3; --paper-muted:#5a625f;
@@ -150,7 +150,6 @@ table.list td.r,table.list th.r{text-align:right}
 label.f{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--muted)}
 input.in,select.in{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-sm);padding:8px 12px;min-height:var(--ctl);width:100%}
 .toggles{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0}
-.soldgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13rem,1fr));gap:6px}
 .sold{display:flex;justify-content:space-between;gap:8px;align-items:center;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;text-align:left}
 .sold[aria-pressed="true"]{background:var(--crit-bg);border-color:var(--crit);color:var(--crit)}
 .qrsheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:12px}
@@ -403,7 +402,7 @@ function beep(kind){
 /* ใครได้ยินอะไร (ข้อความบนจอขึ้นให้ทุกคนเหมือนเดิม): ครัวสนใจออเดอร์ใหม่ของจุดที่ดูอยู่ หน้าร้านสนใจการเรียก ขอบิล และอาหารพร้อมเสิร์ฟ เจ้าของได้ยินทุกเรื่อง */
 function hears(kind){var r=role();if(r==='owner')return true;if(r==='kitchen')return kind==='order';return kind!=='order';}
 function stationOk(k){return S.kStation==='all'||k.station===S.kStation;}
-function alertSound(kind){if(hears(kind))beep(kind);}
+
 
 function rawApi(path,body){
   return fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'})

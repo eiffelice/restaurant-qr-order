@@ -54,14 +54,15 @@ function req(s, method, p, raw, headers) {
   const app = makeApp(); const s = start(app.code, { PORT: String(6500 + Math.floor(Math.random() * 300)) }); await s.ready; await s.login();
   const cash = (await s.call('POST', '/api/staff', { name: 'ฟัซ', role: 'cashier', pin: '611111' })).json;
   const kit = (await s.call('POST', '/api/staff', { name: 'ฟัซครัว', role: 'kitchen', pin: '622222' })).json;
-  // cookie ของแคชเชียร์/ครัว (login ผ่าน lib ใช้ cookie เจ้าของ จึงเรียกตรง)
+  const wai = (await s.call('POST', '/api/staff', { name: 'ฟัซเสิร์ฟ', role: 'waiter', pin: '633333' })).json;
+  // cookie ของแคชเชียร์/พนักงานเสิร์ฟ/ครัว (login ผ่าน lib ใช้ cookie เจ้าของ จึงเรียกตรง)
   const cookieOf = pin => new Promise(resolve => {
     const d = JSON.stringify({ pin });
     const r = http.request(s.B + '/api/login', { method: 'POST', agent: false, headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(d) } }, res => { res.resume(); res.on('end', () => resolve((res.headers['set-cookie'] || [''])[0].split(';')[0])); });
     r.end(d);
   });
-  const roles = { owner: s.cookie, cashier: await cookieOf('611111'), kitchen: await cookieOf('622222'), guest: '' };
-  ok(cash && kit && roles.cashier && roles.kitchen, 'เตรียมบัญชีทดสอบ');
+  const roles = { owner: s.cookie, cashier: await cookieOf('611111'), waiter: await cookieOf('633333'), kitchen: await cookieOf('622222'), guest: '' };
+  ok(cash && kit && wai && roles.cashier && roles.waiter && roles.kitchen, 'เตรียมบัญชีทดสอบ');
   const keys = (await s.call('GET', '/api/state')).json.keys;
   const { api } = require(path.join(app.code, 'lib', 'routes.js'));
   // endpoint ที่ทำให้บัญชีทดสอบหลุดเอง ข้ามไป (ไม่ใช่ช่องโหว่ แต่ทำให้ fuzz ต่อไม่ได้)

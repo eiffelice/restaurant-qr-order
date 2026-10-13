@@ -1829,3 +1829,21 @@ describe('บทบาทพนักงานเสิร์ฟ: ดูแล�
     await s.stop();
   });
 });
+
+describe('กู้คืนไฟล์สำรองที่รูปของร้านหายไป', () => {
+  test('ไฟล์สำรองอ้างถึงรูป QR รับเงิน โลโก้ ภาพพื้นหลัง แต่ไม่มีไฟล์ติดมา: ล้างทิ้ง ใบแจ้งยอดกลับไปใช้ QR จากเบอร์ (ไม่แสดงรูปเสีย)', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const up = (kind) => fetch(s.B + '/api/settings/' + kind, { method: 'POST', headers: { 'content-type': 'image/jpeg', cookie: s.cookie }, body: JPG }).then(r => r.json());
+    const q = await up('payqr'), l = await up('logo'), c = await up('cover');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    const data = (await getBackup(s, bk.name)).json;
+    delete data.images[q.payqr]; delete data.images[l.logo]; delete data.images[c.cover];
+    const r = await restoreRaw(s, Buffer.from(JSON.stringify(data)), 'application/json');
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    await s.login();
+    const st = (await s.call('GET', '/api/state')).json.settings;
+    assert.deepEqual([st.payQr, st.logo, st.cover], ['', '', '']);
+    await s.stop();
+  });
+});
+
