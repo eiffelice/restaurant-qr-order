@@ -1,14 +1,14 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN } = require('./lib');
+const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto } = require('./lib');
 
 const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const MOBILE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -202,7 +202,7 @@ const cases = {
     const paid = (await s.call('GET', '/api/audit')).json.events.find(e => e.action === 'bill.paid');
     ok(paid && paid.name === 'สมใจ' && paid.role === 'cashier', 'log บอกว่าสมใจ (แคชเชียร์) เป็นคนรับเงิน', paid && paid.name);
     // ปิดบัญชีครัวจากหน้าเว็บ: จอครัวหลุดไปหน้าใส่ PIN
-    await owner.click('#stf [data-a="sttoggle"][data-id="s2"]');
+    await owner.click('#stf [data-a="sttoggle"][data-id="s2"]'); await owner.waitForSelector('#confirm-dlg[open]'); await owner.click('#cf-ok');
     await s.call('POST', '/api/order', { table: 4, key: keys[4], items: [{ id: 1, qty: 1 }] }, { staff: false });   // ให้จอครัวโหลดข้อมูลใหม่
     await kitchen.waitForSelector('#login:not([hidden])', { timeout: 8000 }).catch(() => {});
     ok(await kitchen.isVisible('#login'), 'ปิดบัญชีแล้ว จอครัวที่เปิดอยู่หลุดไปหน้าใส่ PIN');
@@ -286,10 +286,11 @@ const cases = {
     await cust.click('[data-a="cat"][data-id="' + cat.id + '"]');
     await cust.click('[data-a="inc"][data-id="' + it.id + '"]');
     await cust.click('[data-a="open"]'); await cust.click('[data-a="notes"]'); await sleep(300);
-    await cust.click('[data-a="zoom"]').catch(() => {});
+    await cust.click('[data-a="close"]'); await cust.click('.item .open[data-id="' + it.id + '"]'); await cust.waitForSelector('#detail:not([hidden])');
+    await cust.click('[data-a="dtab"][data-t="notes"]').catch(() => {}); await sleep(200);   // หน้ารายละเอียด: ชื่อ คำอธิบาย หมวด หมายเหตุ
     const custX = await cust.evaluate(() => window.__xss || 0);
     ok(staffX === 0, 'หน้าพนักงานทุกแท็บ: ไม่มี script จาก payload ทำงาน', staffX);
-    ok(custX === 0, 'หน้าลูกค้า เมนู ตะกร้า หมายเหตุ: ไม่มี script จาก payload ทำงาน', custX);
+    ok(custX === 0, 'หน้าลูกค้า เมนู ตะกร้า หมายเหตุ หน้ารายละเอียด: ไม่มี script จาก payload ทำงาน', custX);
     ok(shopShown, 'payload แสดงเป็นข้อความธรรมดา');
     ok(!errors.some(e => /dialog/.test(e)), 'ไม่มี alert/dialog', errors.filter(e => /dialog/.test(e)));
     // ตัวควบคุม: ถ้าใส่ payload แบบไม่ escape ตัวตรวจต้องจับได้ (พิสูจน์ว่าเทสต์นี้ไม่ผ่านเพราะตรวจไม่เป็น)
@@ -376,7 +377,7 @@ const cases = {
     await s.call('POST', '/api/settings', { shop: 'เปลี่ยนชั่วคราว' });
     await staff.setInputFiles('#rs-file', bkFile);
     await staff.waitForSelector('[data-a="rsgo"]');
-    await staff.click('[data-a="rsgo"]'); await staff.click('[data-a="rsgo"]');
+    await staff.click('[data-a="rsgo"]'); await staff.waitForSelector('#confirm-dlg[open]'); await staff.click('#cf-ok');
     await until(async () => /กู้คืนข้อมูลแล้ว/.test(await toastText(staff)), 10000, 'กู้คืนจากหน้าเว็บ');
     if (staff) { const c = (await staff.context().cookies()).find(x => x.name === 'st'); if (c) s.cookie = 'st=' + c.value; }
     ok((await s.call('GET', '/api/state')).json.settings.shop === 'ร้านป้าแดง', 'สำรองแล้วกู้คืนจากหน้าเว็บ ข้อมูลกลับมา');
@@ -416,6 +417,316 @@ const cases = {
     const real = errors.filter(e => !/ERR_CONNECTION_REFUSED|Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error ทั้งวัน (ไม่นับการเชื่อมต่อไม่ได้ช่วงเซิร์ฟเวอร์ดับ)', real);
     await browser.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* หน้าลูกค้าแบบใหม่: หน้ารายละเอียด, หมายเหตุแยกแถว, ปุ่มย้อนกลับ, เมนูหมดระหว่างเปิด, ไม่มีรูป, XSS, ตะกร้าแบบเดิม, ธีม/โลโก้ */
+  async customer(browser) {
+    const ok = checker('customer'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const img = async (id, hue) => s.call('POST', '/api/menu/image?id=' + id, await fakePhoto(browser, hue), { headers: { 'content-type': 'image/png' } });
+    await img(1, 20); await img(3, 35);
+    const X = '<img src=x onerror="window.__xss=(window.__xss||0)+1">';
+    const xi = (await s.call('POST', '/api/menu/item', { name: 'ข้าว' + X, price: 49.5, cat: 1, station: 'hot', desc: 'อร่อย' + X })).json.item;
+    const c = await customerPage(browser, s, 4, keys[4], errors);
+    await c.evaluate(() => { window.__xss = 0; });
+
+    // 0) ทุกหมวดเรียงต่อกัน: เห็นทุกจานโดยไม่ต้องเลือกหมวด (เดิมแสดงทีละหมวด ลูกค้าคิดว่าเมนูหาย)
+    const vis = (await s.call('GET', '/api/menu', undefined, { staff: false })).json.items.length;
+    ok(await c.$$eval('.item', x => x.length) === vis, 'เห็นทุกจานในหน้าเดียว ' + vis + ' จาน', await c.$$eval('.item', x => x.length));
+    const lastCat = await c.$$eval('nav.cats .cat', x => +x[x.length - 1].dataset.id);
+    await c.click('nav.cats .cat[data-id="' + lastCat + '"]'); await sleep(1300);
+    const secTop = await c.$eval('#sec-' + lastCat, e => e.getBoundingClientRect().top);
+    ok(secTop < 200 && await c.getAttribute('nav.cats .cat[data-id="' + lastCat + '"]', 'aria-pressed') === 'true', 'แตะปุ่มหมวดสุดท้าย: เลื่อนไปหมวดนั้น ปุ่มถูกเลือก', secTop);
+    await c.evaluate(() => window.scrollTo(0, 0)); await sleep(500);
+    ok(await c.$eval('nav.cats .cat', b => b.getAttribute('aria-pressed')) === 'true', 'เลื่อนกลับบนสุด: ปุ่มหมวดแรกถูกเลือกตามตำแหน่ง');
+
+    // 1) แตะการ์ด → หน้ารายละเอียด → เลือกหมายเหตุ → เพิ่มจำนวน → ใส่ตะกร้า
+    await c.click('.item .open[data-id="1"]');
+    await c.waitForSelector('#detail:not([hidden])');
+    ok(await c.evaluate(() => document.activeElement && document.activeElement.dataset.a === 'dback'), 'เปิดหน้ารายละเอียดแล้วโฟกัสอยู่ที่ปุ่มกลับ');
+    await c.click('[data-a="dtab"][data-t="notes"]');
+    await c.click('[data-a="dnote"][data-n="ไม่เผ็ด"]');
+    await c.click('[data-a="dinc"]');
+    ok(/฿120/.test(await c.textContent('[data-a="dadd"]')), 'ปุ่มเพิ่มรายการแสดงราคารวมตามจำนวน (2 × 60)', await c.textContent('[data-a="dadd"]'));
+    await c.click('[data-a="dadd"]');
+    await c.waitForSelector('#detail', { state: 'hidden' });
+    await sleep(200);
+    ok(await c.evaluate(() => document.activeElement && document.activeElement.matches('.item .open[data-id="1"]')), 'ปิดแล้วโฟกัสกลับไปที่การ์ดเดิม');
+    // ใส่ตะกร้าเร็ว (ปุ่ม + บนการ์ด) = แถวไม่มีหมายเหตุ แยกจากแถว "ไม่เผ็ด"
+    await c.click('.item [data-a="inc"][data-id="1"]');
+    const st0 = await c.evaluate(t => JSON.parse(localStorage.getItem('cart-' + t)), 4);
+    ok(st0.lines.length === 2 && st0.lines.some(l => l.note.join() === 'ไม่เผ็ด' && l.qty === 2) && st0.lines.some(l => !l.note.length && l.qty === 1), 'เมนูเดียวกันหมายเหตุต่างกัน = คนละแถวในตะกร้า', st0.lines);
+    // ใส่ "ไม่เผ็ด" อีก 1 จาน: รวมกับแถวเดิม ไม่เพิ่มแถว
+    await c.click('.item .open[data-id="1"]'); await c.click('[data-a="dtab"][data-t="notes"]'); await c.click('[data-a="dnote"][data-n="ไม่เผ็ด"]'); await c.click('[data-a="dadd"]');
+    const st1 = await c.evaluate(t => JSON.parse(localStorage.getItem('cart-' + t)), 4);
+    ok(st1.lines.length === 2 && st1.lines.find(l => l.note.length).qty === 3, 'หมายเหตุเหมือนกัน = รวมแถวเดิม', st1.lines);
+
+    // 1b) คีย์บอร์ด: เปิดหน้ารายละเอียดค้างไว้ข้ามรอบ poll (5 วินาที) โฟกัสต้องไม่หลุด
+    await c.click('.item .open[data-id="2"]'); await c.click('[data-a="dtab"][data-t="notes"]');
+    await c.focus('[data-a="dnote"][data-n="เผ็ดน้อย"]'); await sleep(6500);
+    ok(await c.evaluate(() => document.activeElement && document.activeElement.dataset.n === 'เผ็ดน้อย'), 'เปิดหน้ารายละเอียดค้างข้ามรอบ poll: โฟกัสอยู่ที่ปุ่มเดิม');
+    await c.keyboard.press('Enter');
+    ok(await c.getAttribute('[data-a="dnote"][data-n="เผ็ดน้อย"]', 'aria-pressed') === 'true' && await c.evaluate(() => document.activeElement.dataset.n === 'เผ็ดน้อย'), 'กด Enter เลือกหมายเหตุ แล้วโฟกัสยังอยู่ที่ปุ่มเดิม');
+    await c.keyboard.press('Escape');
+
+    // 2) ปุ่มย้อนกลับของมือถือ (history.back) ปิดหน้ารายละเอียด/ตะกร้า ไม่ออกจากหน้าเว็บ
+    const url0 = c.url();
+    await c.click('.item .open[data-id="2"]'); await c.waitForSelector('#detail:not([hidden])');
+    await c.goBack(); await c.waitForSelector('#detail', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    ok(await c.isHidden('#detail') && c.url() === url0, 'ปุ่ม back ปิดหน้ารายละเอียด ยังอยู่หน้าเดิม');
+    await c.click('[data-a="open"]'); await c.waitForSelector('#sheetbg:not([hidden])');
+    await c.goBack(); await c.waitForSelector('#sheetbg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    ok(await c.isHidden('#sheetbg') && c.url() === url0, 'ปุ่ม back ปิดตะกร้า ยังอยู่หน้าเดิม');
+    await c.click('.item .open[data-id="2"]'); await c.keyboard.press('Escape');
+    ok(await c.isHidden('#detail'), 'Esc ปิดหน้ารายละเอียด');
+    await c.goBack().catch(() => {}); await sleep(300);
+    ok(c.url() !== url0 || await c.isVisible('.item'), 'ปิดด้วยปุ่มในหน้าแล้ว history ไม่ค้าง (back ครั้งเดียวออกจากหน้าได้ตามปกติ)');
+    if (c.url() !== url0) { await c.goto(url0); await c.waitForSelector('.item'); }
+
+    // 3) ส่งออเดอร์: ครัวได้หมายเหตุแยกจาน
+    await c.click('[data-a="open"]'); await c.click('[data-a="send"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.length > 0, 8000);
+    const items = (await s.call('GET', '/api/state')).json.tickets.flatMap(k => k.items).filter(i => i.id === 1);
+    ok(items.length === 2 && items.some(i => i.qty === 3 && i.note.join() === 'ไม่เผ็ด') && items.some(i => i.qty === 1 && !i.note.length), 'ครัวได้ 2 แถว: ไม่เผ็ด ×3 และปกติ ×1', items);
+
+    // 4) เมนูหมดระหว่างเปิดหน้ารายละเอียด: ปุ่มเปลี่ยนเป็น "หมดแล้ว" เอง
+    await c.click('.item .open[data-id="3"]'); await c.waitForSelector('#detail:not([hidden])');
+    await s.call('POST', '/api/soldout', { id: 3, soldOut: true });
+    await c.waitForFunction(() => { const b = document.querySelector('[data-a="dadd"]'); return b && b.disabled && /หมดแล้ว/.test(b.textContent); }, null, { timeout: 9000 }).catch(() => {});
+    const outBtn = await c.$eval('[data-a="dadd"]', b => ({ dis: b.disabled, t: b.textContent }));
+    ok(outBtn.dis && /หมดแล้ว/.test(outBtn.t) && await c.$('.hero.out'), 'เมนูหมดระหว่างเปิด: ปุ่ม "หมดแล้ว" กดไม่ได้ รูปเป็นสีเทา', outBtn);
+    await c.click('[data-a="dback"]');
+    await s.call('POST', '/api/soldout', { id: 3, soldOut: false });
+
+    // 5) เมนูไม่มีรูป: การ์ดและหน้ารายละเอียดใช้พื้นสีจาง + ชื่อหมวด
+    // ชื่อหมวดอยู่ที่หัวข้อหมวดเหนือการ์ด (ไม่ซ้ำในทุกใบ) การ์ดใช้พื้นจางตามโทนหมวด + ไอคอนจาน
+    const noimg = await c.$eval('.item .open[data-id="2"]', b => ({ ph: !!b.querySelector('.noimg[class*="tn"] svg'), head: b.closest('.sec').querySelector('h2').textContent }));
+    ok(noimg.ph && noimg.head.trim().length > 0, 'การ์ดไม่มีรูป: พื้นจางตามหมวด + ไอคอน และมีชื่อหมวดเป็นหัวข้อ', noimg);
+    await c.click('.item .open[data-id="2"]'); await c.waitForSelector('.hero.noimg');
+    ok(true, 'หน้ารายละเอียดไม่มีรูป: hero แบบพื้นจาง');
+    await c.click('[data-a="dback"]');
+
+    // 6) XSS ในชื่อ/คำอธิบายเมนู: การ์ด หน้ารายละเอียด ตะกร้า
+    await c.click('[data-a="cat"][data-id="1"]').catch(() => {});
+    await c.click('.item .open[data-id="' + xi.id + '"]'); await c.waitForSelector('#detail:not([hidden])'); await sleep(300);
+    const shown = await c.textContent('#detail');
+    await c.click('[data-a="dadd"]'); await c.click('[data-a="open"]'); await sleep(300);
+    const xs = await c.evaluate(() => window.__xss || 0);   // หน้าอาจถูกโหลดใหม่ในขั้นก่อน (ตัวแปรหาย = ไม่มีอะไรทำงาน)
+    ok(xs === 0 && shown.includes('<img src=x'), 'ชื่อ/คำอธิบายที่เป็น HTML แสดงเป็นข้อความ ไม่ทำงาน', { xss: xs, shown: shown.slice(0, 120) });
+    await c.click('[data-a="close"]');
+
+    // 7) ตะกร้าแบบเดิมที่ลูกค้าเปิดค้างไว้ตอนอัปเดต: แปลงเอง และ reqId เดิมกันสั่งซ้ำ
+    const rid = 'abcdef0123456789abcd';
+    const first = await s.call('POST', '/api/order', { table: 5, key: keys[5], items: [{ id: 1, qty: 2, note: ['เผ็ดน้อย'] }], reqId: rid }, { staff: false });
+    const c5 = await customerPage(browser, s, 5, keys[5], errors);
+    await c5.evaluate(r => { localStorage.setItem('cart-5', JSON.stringify({ cart: { 1: { qty: 2, note: ['เผ็ดน้อย'], open: false } }, memo: '', reqId: r })); }, rid);
+    await c5.reload(); await c5.waitForSelector('.item');
+    ok(/2 จาน/.test(await c5.textContent('[data-a="open"]')), 'ตะกร้ารูปแบบเดิมแปลงเป็นแบบใหม่ ของไม่หาย');
+    await c5.click('[data-a="open"]'); await c5.click('[data-a="send"]'); await sleep(800);
+    const t5 = (await s.call('GET', '/api/state')).json.tickets.filter(k => k.table === 5);
+    ok(first.status === 200 && t5.length === 1, 'reqId เดิมจากตะกร้าแบบเดิม: ไม่เกิดออเดอร์ซ้ำ', t5.length);
+
+    // 7b) ใส่จานเดียวกันหมายเหตุเดียวกันรวมเกิน 20: ส่วนเกินเป็นแถวใหม่ ไม่หายเงียบๆ / เกินลิมิตต่อครั้งเตือนก่อนกดสั่ง
+    await c.evaluate(t => localStorage.removeItem('cart-' + t), 4); await c.reload(); await c.waitForSelector('.item');
+    for (const n of [15, 10]) {
+      await c.click('.item .open[data-id="2"]'); await c.waitForSelector('#detail:not([hidden])');
+      for (let i = 1; i < n; i++) await c.click('[data-a="dinc"]');
+      await c.click('[data-a="dadd"]'); await c.waitForSelector('#detail', { state: 'hidden' });
+    }
+    const st2 = await c.evaluate(t => JSON.parse(localStorage.getItem('cart-' + t)).lines, 4);
+    ok(st2.reduce((n, l) => n + l.qty, 0) === 25 && st2.every(l => l.qty <= 20), 'ใส่ 15 + 10 จาน: ได้ครบ 25 (แถวละไม่เกิน 20)', st2);
+    for (const n of [20, 20]) {
+      await c.click('.item .open[data-id="4"]'); for (let i = 1; i < n; i++) await c.click('[data-a="dinc"]'); await c.click('[data-a="dadd"]'); await c.waitForSelector('#detail', { state: 'hidden' });
+    }
+    await c.click('[data-a="open"]'); await sleep(200);
+    ok(/ไม่เกิน 60 จาน/.test(await c.textContent('#sheet')) && await c.$eval('[data-a="send"]', b => b.disabled), 'เกิน 60 จาน: เตือนในตะกร้าและปุ่มสั่งกดไม่ได้ (ไม่ต้องรอเซิร์ฟเวอร์ปฏิเสธ)');
+    await c.click('[data-a="close"]');
+    await c.evaluate(t => localStorage.removeItem('cart-' + t), 4); await c.reload(); await c.waitForSelector('.item');
+
+    // 8) ร้านปิดรับ QR: ปุ่มหลักกดไม่ได้ พร้อมข้อความเดิม
+    await s.call('POST', '/api/settings', { acceptOrders: false });
+    await c.click('.item .open[data-id="1"]').catch(() => {});
+    await c.waitForFunction(() => { const b = document.querySelector('[data-a="dadd"]'); return b && b.disabled; }, null, { timeout: 9000 }).catch(() => {});
+    ok(await c.$eval('[data-a="dadd"]', b => b.disabled) && /ปิดรับออเดอร์/.test(await c.textContent('#detail')), 'ร้านปิดรับ: ปุ่มใส่ตะกร้ากดไม่ได้ มีข้อความบอก');
+    await c.click('[data-a="dback"]');
+    await s.call('POST', '/api/settings', { acceptOrders: true });
+
+    // 9) ธีมร้าน: เปลี่ยนสีและโลโก้แล้วหน้าลูกค้าที่เปิดอยู่เปลี่ยนตามเอง
+    await s.call('POST', '/api/settings', { accent: '#dc2626' });
+    await s.call('POST', '/api/settings/logo', await fakePhoto(browser, 200, 256), { headers: { 'content-type': 'image/png' } });
+    await c.waitForSelector('header .logo', { timeout: 9000 }).catch(() => {});
+    await sleep(500);
+    const capBg = await c.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+    ok(await c.$('header .logo') && capBg === '#dc2626', 'เปลี่ยนสี/โลโก้แล้วหน้าลูกค้าที่เปิดอยู่เปลี่ยนตาม', capBg);
+    const lp = await (await browser.newContext({ baseURL: s.B })).newPage();
+    await lp.goto('/staff'); await lp.waitForSelector('#login-logo:not([hidden])', { timeout: 5000 }).catch(() => {});
+    ok(await lp.isVisible('#login-logo') && (await lp.textContent('#login-shop')).length > 0, 'หน้าใส่รหัสเข้าสู่ระบบแสดงโลโก้และชื่อร้าน');
+    await lp.context().close();
+
+    // 10) ไม่มีแถบเลื่อนแนวนอน 360 / 768 px ทุกจอ
+    for (const w of [360, 768]) {
+      const p = await customerPage(browser, s, 6, keys[6], errors, { viewport: { width: w, height: 800 } });
+      const bad = [];
+      const chk = async n => { const o = await overflow(p); if (o) bad.push(n + ' ' + JSON.stringify(o)); };
+      await chk('เมนู'); await p.click('.item .open[data-id="1"]'); await chk('รายละเอียด');
+      await p.click('[data-a="dtab"][data-t="notes"]'); await chk('หมายเหตุ'); await p.click('[data-a="dadd"]');
+      await p.click('[data-a="open"]'); await p.click('[data-a="notes"]'); await chk('ตะกร้า');
+      ok(!bad.length, w + 'px: เมนู รายละเอียด ตะกร้า ไม่เลื่อนแนวนอน', bad);
+      await p.context().close();
+    }
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await c.context().close(); await c5.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* ธีมร้านจากหน้าตั้งค่า: เลือกสี บันทึก อัปโหลดโลโก้ สีขาวไม่รับ เครื่องอื่นเปลี่ยนสีแล้วหน้านี้ตาม */
+  async theme(browser) {
+    const ok = checker('theme'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'settings'); await p.waitForSelector('[data-a="tpreset"]');
+    const accent = () => p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+    const before = await accent();
+    await p.click('[data-a="tpreset"][data-c="#dc2626"]'); await sleep(400);
+    ok(await p.evaluate(() => getComputedStyle(document.querySelector('#t-prev')).getPropertyValue('--accent').trim()) === '#dc2626' && await accent() === before, 'เลือกสี: ตัวอย่างเปลี่ยน หน้าจริงยังไม่เปลี่ยนจนกดบันทึก');
+    await p.click('[data-a="tsave"]');
+    await p.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() === '#dc2626', null, { timeout: 8000 }).catch(() => {});
+    ok(await accent() === '#dc2626', 'บันทึกสี: หน้าพนักงานใช้สีใหม่ทันที');
+    // สีเกือบขาว: ระบบไม่รับ ปุ่มบันทึกกดไม่ได้
+    await p.evaluate(() => { const i = document.querySelector('#t-color'); i.value = '#fafafa'; i.dispatchEvent(new Event('input', { bubbles: true })); });
+    await p.waitForFunction(() => /อ่อนเกินไป/.test(document.querySelector('#theme .err').textContent), null, { timeout: 5000 }).catch(() => {});
+    ok(/อ่อนเกินไป/.test(await p.textContent('#theme .err')) && await p.$eval('[data-a="tsave"]', b => b.disabled), 'สีเกือบขาว: แจ้งเหตุผล กดบันทึกไม่ได้');
+    await p.click('[data-a="treset"]'); await sleep(300);
+    // โลโก้: เลือกไฟล์ (input อยู่นอกส่วนที่วาดใหม่)
+    await p.setInputFiles('#logo-file', { name: 'logo.png', mimeType: 'image/png', buffer: await fakePhoto(browser, 140, 300) });
+    await p.waitForSelector('#brand-logo:not([hidden])', { timeout: 8000 }).catch(() => {});
+    ok(await p.isVisible('#brand-logo'), 'อัปโหลดโลโก้: แสดงที่แถบเมนูหน้าพนักงาน');
+    ok(await p.$('.qcard .qlogo'), 'โลโก้อยู่บนแผ่น QR ติดโต๊ะ');
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="2"]'); await sleep(300);
+    ok(await p.$('.receipt .rlogo'), 'โลโก้อยู่บนใบแจ้งยอด/ใบเสร็จ');
+    // อีกเครื่องเปลี่ยนสี: หน้าที่เปิดค้างไว้ตามเอง ไม่แสดงสีเก่าเหมือนยังไม่บันทึก
+    await tab(p, 'settings'); await p.waitForSelector('[data-a="tpreset"]');
+    await s.call('POST', '/api/settings', { accent: '#1d4ed8' });
+    await p.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() === '#1d4ed8', null, { timeout: 8000 }).catch(() => {});
+    await sleep(500);
+    ok(await accent() === '#1d4ed8' && await p.getAttribute('[data-a="tpreset"][data-c="#1d4ed8"]', 'aria-pressed') === 'true' && !(await p.$('[data-a="treset"]')), 'อีกเครื่องเปลี่ยนสี: หน้านี้ตาม และไม่ขึ้นว่ายังไม่บันทึก');
+    // ตัวควบคุม: เปลี่ยนสีกลับเป็นตั้งต้น
+    await s.call('POST', '/api/settings', { accent: '' });
+    await p.waitForFunction(b => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() === b, before, { timeout: 8000 }).catch(() => {});
+    ok(await accent() === before, 'กลับเป็นสีตั้งต้น');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* ยืนยันก่อนลบ + ลบโต๊ะ: หน้าต่างบอกว่าลบอะไร โฟกัสเริ่มที่ "ไม่ลบ" Esc/ไม่ลบ = ไม่มีอะไรหาย */
+  async confirm(browser) {
+    const ok = checker('confirm'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const X = '<img src=x onerror="window.__xss=1">';
+    const it = (await s.call('POST', '/api/menu/item', { name: 'ทดสอบ' + X, price: 10, cat: 1, station: 'hot' })).json.item;
+    const p = await staffPage(browser, s, null, errors);
+    // ลบโต๊ะ
+    await tab(p, 'tables'); await p.waitForSelector('[data-a="deltable"]');
+    ok(/ลบโต๊ะ 12/.test(await p.textContent('[data-a="deltable"]')), 'มีปุ่มลบโต๊ะเลขสุดท้าย (โต๊ะ 12)');
+    await p.click('[data-a="deltable"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(await p.evaluate(() => document.activeElement.id === 'cf-no'), 'เปิดหน้าต่างแล้วโฟกัสที่ "ไม่ลบ" (กด Enter พลาดก็ไม่ลบ)');
+    ok(/QR โต๊ะ 12/.test(await p.textContent('#cf-b')), 'หน้าต่างบอกผลที่ตามมา (QR โต๊ะ 12 ใช้ไม่ได้)');
+    await p.keyboard.press('Enter'); await sleep(400);
+    ok((await s.call('GET', '/api/state')).json.settings.tables === 12, 'กด Enter ตอนโฟกัส "ไม่ลบ": ไม่ลบ');
+    await p.click('[data-a="deltable"]'); await p.waitForSelector('#confirm-dlg[open]'); await p.keyboard.press('Escape'); await sleep(400);
+    ok((await s.call('GET', '/api/state')).json.settings.tables === 12, 'กด Esc: ไม่ลบ');
+    await p.click('[data-a="deltable"]'); await p.waitForSelector('#confirm-dlg[open]'); await p.click('#cf-ok');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.tables === 11, 5000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.settings.tables === 11, 'ยืนยัน: เหลือ 11 โต๊ะ');
+    // โต๊ะสุดท้ายมีออเดอร์ค้าง: ไม่เปิดหน้าต่าง บอกเหตุผล
+    await s.call('POST', '/api/order', { table: 11, key: keys[11], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await sleep(800);
+    await p.click('[data-a="deltable"]'); await sleep(300);
+    ok(!(await p.$('#confirm-dlg[open]')) && /ยังมีออเดอร์/.test(await toastText(p)), 'โต๊ะที่ยังมีออเดอร์ ลบไม่ได้ บอกเหตุผล');
+    // เพิ่มโต๊ะกลับ: QR แผ่นเดิมใช้ได้
+    await p.click('[data-a="addtable"]'); await sleep(600);
+    const k12 = (await s.call('GET', '/api/state')).json.keys[12];
+    ok(k12 === keys[12], 'เพิ่มโต๊ะ 12 กลับ: รหัส QR เดิม แผ่นเดิมใช้ต่อได้');
+    // ลบเมนู: ชื่อเมนูในหน้าต่างเป็นข้อความธรรมดา
+    await tab(p, 'menu'); await p.click('[data-a="eopen"][data-id="' + it.id + '"]'); await sleep(300);
+    await p.click('[data-a="edel"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok((await p.textContent('#cf-h')).includes('<img src=x') && !(await p.evaluate(() => window.__xss)), 'ชื่อเมนูในหน้าต่างยืนยันแสดงเป็นข้อความ ไม่ทำงาน');
+    await p.click('#cf-no'); await sleep(300);
+    ok((await s.call('GET', '/api/state')).json.menu.items.some(m => m.id === it.id), 'กด "ไม่ลบ": เมนูยังอยู่');
+    await p.click('[data-a="edel"]'); await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.menu.items.some(m => m.id === it.id), 5000).catch(() => {});
+    ok(!(await s.call('GET', '/api/state')).json.menu.items.some(m => m.id === it.id), 'ยืนยัน: ลบเมนูแล้ว');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* QR ติดโต๊ะ: พิมพ์รวม A4 หน้าละ 6 ใบ, พิมพ์ทีละโต๊ะ, PNG ทีละโต๊ะ (อ่านจุดในรูปกลับมาตรงกับ QR จริง), zip ทุกโต๊ะ */
+  async qrfiles(browser) {
+    const ok = checker('qrfiles'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { baseUrl: 'http://192.168.1.50:3000', tables: 7 });
+    await s.call('POST', '/api/settings/logo', await fakePhoto(browser, 200, 200), { headers: { 'content-type': 'image/png' } });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const ctx = await browser.newContext({ baseURL: s.B, acceptDownloads: true });
+    const p = await ctx.newPage(); watch(p, errors, 'staff');
+    await p.goto('/staff'); await p.fill('#pin', PIN); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
+    await tab(p, 'settings'); await p.waitForSelector('[data-a="qrpng"][data-t="5"]');
+    // PNG โต๊ะ 5
+    const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-a="qrpng"][data-t="5"]')]);
+    const png = fs.readFileSync(await dl.path());
+    ok(dl.suggestedFilename() === 'QR-โต๊ะ-5.png' && png.slice(1, 4).toString() === 'PNG' && png.readUInt32BE(16) === 1200 && png.readUInt32BE(20) === 1600, 'ดาวน์โหลด PNG โต๊ะ 5: ชื่อไฟล์ถูก ขนาด 1200×1600', dl.suggestedFilename());
+    // อ่านรูปกลับ: ทุกจุดของ QR ตรงกับข้อมูล QR ของ URL โต๊ะ 5 (ใช้ qrcode.js ตัวเดียวกับที่หน้าเว็บใช้)
+    const match = await p.evaluate(async ([b64, url]) => {
+      const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+      const q = qrcode(0, 'M'); q.addData(url); q.make();
+      const n = q.getModuleCount(), box = { x: 150, y: 520, size: 900, margin: 4 }, m = box.size / (n + box.margin * 2);
+      let bad = 0;
+      for (let r = 0; r < n; r++) for (let cc = 0; cc < n; cc++) {
+        const px = x.getImageData(Math.floor(box.x + (cc + box.margin + .5) * m), Math.floor(box.y + (r + box.margin + .5) * m), 1, 1).data;
+        if ((px[0] < 128) !== q.isDark(r, cc)) bad++;
+      }
+      return { n, bad };
+    }, [png.toString('base64'), 'http://192.168.1.50:3000/order?t=5&k=' + keys[5]]);
+    ok(match.bad === 0 && match.n > 20, 'QR ในรูปตรงกับ URL โต๊ะ 5 ทุกจุด (' + match.n + '×' + match.n + ')', match);
+    // zip ทุกโต๊ะ
+    const [dz] = await Promise.all([p.waitForEvent('download', { timeout: 30000 }), p.click('[data-a="qrzip"]')]);
+    const zip = fs.readFileSync(await dz.path());
+    const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    const count = zip.readUInt16LE(eocd + 10), cdOff = zip.readUInt32LE(eocd + 16);
+    const entries = []; let o = cdOff;
+    for (let i = 0; i < count; i++) {
+      const nl = zip.readUInt16LE(o + 28), lo = zip.readUInt32LE(o + 42), crc = zip.readUInt32LE(o + 16), size = zip.readUInt32LE(o + 20);
+      const name = zip.slice(o + 46, o + 46 + nl).toString('utf8');
+      const data = zip.slice(lo + 30 + zip.readUInt16LE(lo + 26), lo + 30 + zip.readUInt16LE(lo + 26) + size);
+      entries.push({ name, crcOk: require('node:zlib').crc32(data) === crc, png: data.slice(1, 4).toString() === 'PNG' });
+      o += 46 + nl;
+    }
+    ok(count === 7 && entries.every(e => e.crcOk && e.png) && entries[0].name === 'QR-โต๊ะ-01.png' && entries[6].name === 'QR-โต๊ะ-07.png', 'zip ทุกโต๊ะ: 7 ไฟล์ PNG ชื่อภาษาไทยถูก CRC ถูก', entries.map(e => e.name));
+    // พิมพ์: ปิด window.print แล้วจำลองหน้าพิมพ์
+    await p.evaluate(() => { window.print = () => {}; });
+    await p.click('[data-a="printqr"]'); await p.emulateMedia({ media: 'print' }); await sleep(200);
+    const all = await p.$$eval('.qcard', cs => cs.filter(c => getComputedStyle(c).display !== 'none').map(c => { const r = c.getBoundingClientRect(); return { t: c.dataset.t, x: Math.round(r.x), y: Math.round(r.y), act: getComputedStyle(c.querySelector('.qact')).display }; }));
+    ok(all.length === 7 && all[0].y === all[1].y && all[0].x !== all[1].x && all.every(c => c.act === 'none'), 'พิมพ์รวม: 7 ใบ 2 คอลัมน์ ไม่มีปุ่มติดไปในกระดาษ', all.slice(0, 3));
+    await p.emulateMedia({ media: 'screen' }); await p.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await p.click('[data-a="qrprint"][data-t="3"]'); await p.emulateMedia({ media: 'print' }); await sleep(200);
+    const one = await p.$$eval('.qcard', cs => cs.filter(c => getComputedStyle(c).display !== 'none').map(c => c.dataset.t));
+    ok(one.length === 1 && one[0] === '3', 'พิมพ์ทีละโต๊ะ: เห็นแค่โต๊ะ 3', one);
+    await p.emulateMedia({ media: 'screen' }); await p.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    ok(!(await p.$('.qcard.pick')) && !(await p.evaluate(() => document.body.className.includes('pm-'))), 'พิมพ์เสร็จ: หน้าจอกลับเป็นปกติ');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await ctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

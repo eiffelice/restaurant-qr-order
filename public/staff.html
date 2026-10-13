@@ -47,7 +47,7 @@ button.pill{border:0}
 .view[hidden]{display:none}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;min-width:0}
 .btn{border:1px solid var(--line-strong);background:var(--surface);border-radius:var(--r-sm);padding:9px 16px;min-height:var(--ctl);font-weight:600;text-decoration:none;color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:6px;text-align:center}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent-line,var(--accent));color:var(--accent-ink)}
 .btn.danger{background:var(--danger);border-color:var(--danger);color:var(--danger-ink)}
 .btn.block{display:flex;width:100%;padding:12px 16px;min-height:48px}
 .btn.sm{padding:5px 12px;min-height:36px;font-size:.85rem}
@@ -184,6 +184,27 @@ select.in{appearance:auto}
 .login[hidden]{display:none}
 .login form{width:100%;max-width:20rem;display:flex;flex-direction:column;gap:12px}
 .err{color:var(--crit);font-weight:600;min-height:1.4em}
+.logo{display:block;object-fit:contain;border-radius:var(--r-sm)}
+.login .logo{width:96px;height:96px;margin:0 auto 4px;background:var(--surface);border:1px solid var(--line);padding:6px}
+.login .shopname{text-align:center;font-weight:700;font-size:1.15rem;overflow-wrap:anywhere}
+.brand-row{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-row .logo{width:40px;height:40px;flex:none;background:var(--surface);border:1px solid var(--line);padding:2px}
+.theme-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:16px;align-items:start}
+.logo-box{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.logo-box .logo,.logo-box .ph{width:96px;height:96px;border:1px dashed var(--line-strong);background:var(--surface2);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.8rem;text-align:center;padding:4px}
+.swatches{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.swatch{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line-strong);background:var(--surface);border-radius:99px;padding:4px 12px 4px 4px;min-height:40px;font-size:.85rem;font-weight:600}
+.swatch i{width:30px;height:30px;border-radius:50%;border:1px solid rgba(0,0,0,.15);flex:none}
+.swatch[aria-pressed="true"]{outline:3px solid var(--focus);outline-offset:1px}
+.tpick{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tpick input[type=color]{width:56px;height:44px;border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface);padding:2px;cursor:pointer}
+.tprev{border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+.tprev .btn.primary{align-self:flex-start}
+.receipt .rlogo{display:block;max-width:40mm;max-height:18mm;margin:0 auto 6px;object-fit:contain;filter:grayscale(1)}
+.qcard .qlogo{max-width:5rem;max-height:3rem;object-fit:contain}
+.qcard .qact{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;justify-content:center}
+.qcard .qact .btn{color:var(--ink)}
+@page qrsheet{size:A4;margin:10mm}
 dialog.dlg{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);color:var(--ink);padding:18px;width:min(28rem,calc(100% - 32px))}
 dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 .dlg h3{margin:0 0 6px}
@@ -192,6 +213,9 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 .dlg .reasons input{margin:0 6px 0 0}
 .dlg .row{display:flex;gap:8px;margin-top:12px}
 .dlg .row .btn{flex:1}
+.dlg .cf-b{margin:8px 0 4px;padding-left:20px}
+.dlg .cf-b li{margin:4px 0;overflow-wrap:anywhere}
+.tbl.del{border-style:dashed;color:var(--crit)} .tbl.del .s{color:var(--crit)}
 /* desktop: sidebar ซ้าย 248px + พื้นที่ทำงาน ใช้ markup เดิม (#tabs) */
 @media (min-width:1024px){
   body{padding-left:calc(248px + 28px);padding-right:28px}
@@ -219,12 +243,27 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
   body.pm-receipt{padding:0}
   body.pm-qr .panel{border:0;padding:0}
   body.pm-qr .view{padding-top:0}
+  body.pm-qr .qrsheet{page:qrsheet;display:grid;grid-template-columns:repeat(2,1fr);gap:0}
+  body.pm-qr .qcard{border:1px dashed #9ca3af;border-radius:0;height:92mm;padding:5mm;justify-content:center;break-inside:avoid;page-break-inside:avoid}
+  body.pm-qr .qcard svg{width:58mm;max-width:none;height:58mm}
+  body.pm-qr .qcard .tn{font-size:26pt}
+  body.pm-qr .qcard .sh,body.pm-qr .qcard .hint{font-size:11pt;color:#222}
+  body.pm-qr .qcard .qlogo{max-height:14mm;max-width:40mm}
+  body.pm-qr .qact{display:none!important}
+  body.pm-qr.pm-one .qcard:not(.pick){display:none}
+  body.pm-qr.pm-one .qrsheet{grid-template-columns:1fr}
+  body.pm-qr.pm-one .qcard.pick{height:auto;min-height:150mm;width:120mm;margin:0 auto}
+  body.pm-qr.pm-one .qcard.pick svg{width:95mm;height:95mm}
+  body.pm-qr.pm-one .qcard.pick .tn{font-size:40pt}
 }
 </style>
+<link rel="stylesheet" href="/theme.css" id="theme-css">
 </head>
 <body>
 <div class="login" id="login" hidden>
   <form id="loginform">
+    <img class="logo" id="login-logo" alt="" hidden>
+    <div class="shopname" id="login-shop"></div>
     <h2 style="font-size:1.4rem">เข้าสู่ระบบพนักงาน</h2>
     <label class="f" for="pin">รหัสพนักงาน<input class="in" id="pin" type="password" inputmode="numeric" autocomplete="current-password"></label>
     <div class="err" id="loginerr"></div>
@@ -235,7 +274,7 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 <div class="wrap">
   <header class="top">
     <div class="top-row">
-      <div class="brand" id="brand">ออเดอร์ไว</div>
+      <div class="brand-row"><img class="logo" id="brand-logo" alt="" hidden><div class="brand" id="brand">ออเดอร์ไว</div></div>
       <div class="top-right">
         <button class="pill warn" id="sound" type="button" hidden>เสียงแจ้งเตือนปิดอยู่ · แตะเพื่อเปิด</button>
         <span class="pill crit" id="closedpill" hidden>ปิดรับออเดอร์ QR</span>
@@ -255,6 +294,15 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 <div id="toast" role="status"></div>
 <!-- อยู่นอกส่วนที่ re-render: ถ้ามีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ input จะไม่ถูกแทนที่ ไฟล์ที่เลือกจึงไม่หาย -->
 <input type="file" id="e-file" accept="image/*" hidden>
+<input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp" hidden>
+<!-- ยืนยันก่อนลบ/แทนที่ข้อมูล: บอกว่าลบอะไร ย้อนได้ไหม ปุ่มที่โฟกัสก่อนคือ "ไม่ลบ" กด Enter พลาดก็ไม่ลบ -->
+<dialog class="dlg" id="confirm-dlg" aria-labelledby="cf-h" aria-describedby="cf-b">
+  <form method="dialog" id="cf-form">
+    <h3 id="cf-h"></h3>
+    <ul class="cf-b" id="cf-b"></ul>
+    <div class="row"><button type="button" class="btn" id="cf-no">ไม่ลบ</button><button type="submit" class="btn danger" id="cf-ok">ยืนยันลบ</button></div>
+  </form>
+</dialog>
 <!-- ยกเลิกออเดอร์: อยู่นอกส่วนที่ re-render เหตุผลที่พิมพ์ค้างไว้จึงไม่หายเมื่อมีออเดอร์ใหม่เข้า -->
 <dialog class="dlg" id="void-dlg" aria-labelledby="void-h">
   <form method="dialog" id="void-form">
@@ -337,6 +385,25 @@ function armed(key){return S.confirm===key;}
 function arm(key,ms){S.confirm=key;clearTimeout(confirmTimer);confirmTimer=setTimeout(function(){S.confirm=null;render();},ms||4000);render();}
 function disarm(){S.confirm=null;clearTimeout(confirmTimer);}
 
+/* หน้าต่างยืนยันก่อนลบ: confirmBox({title, lines, ok, no}) → Promise<true|false>
+   ข้อความทั้งหมดใส่ด้วย textContent (ชื่อเมนู/หมวด/พนักงาน มาจากผู้ใช้) */
+var cfDone=null;
+function confirmBox(o){
+  if(cfDone)cfDone(false);
+  return new Promise(function(resolve){
+    var dlg=$('#confirm-dlg');
+    $('#cf-h').textContent=o.title;
+    var ul=$('#cf-b');ul.textContent='';
+    (o.lines||[]).forEach(function(t){var li=document.createElement('li');li.textContent=t;ul.appendChild(li);});
+    $('#cf-ok').textContent=o.ok||'ยืนยันลบ';$('#cf-no').textContent=o.no||'ไม่ลบ';
+    cfDone=function(v){cfDone=null;if(dlg.open)dlg.close();resolve(v);};
+    dlg.showModal();$('#cf-no').focus();
+  });
+}
+$('#cf-form').addEventListener('submit',function(e){e.preventDefault();if(cfDone)cfDone(true);});
+$('#cf-no').addEventListener('click',function(){if(cfDone)cfDone(false);});
+$('#confirm-dlg').addEventListener('close',function(){if(cfDone)cfDone(false);});   // Esc
+
 /* ยกเลิกออเดอร์: ต้องมีเหตุผลเสมอ ถ้าครัวเริ่มทำแล้วและไม่ใช่เจ้าของ ต้องมี PIN เจ้าของ (เซิร์ฟเวอร์ตรวจซ้ำ) */
 var voidId=null;
 function needPin(k){return k&&k.status!=='new'&&!isOwner();}
@@ -400,6 +467,49 @@ function baseUrl(){
   var h=location.hostname;
   return (h==='localhost'||h==='127.0.0.1'||h==='[::1]')?S.d.lan:location.origin;
 }
+/* ไฟล์ QR ติดโต๊ะ: PNG 1200×1600 (ประมาณ 10×13.5 ซม. ที่ 300 dpi) วาดด้วย canvas ไม่ใช้อะไรจากเน็ต
+   ตำแหน่ง QR คงที่ (QR_BOX) สคริปต์ QA อ่านจุดในรูปกลับมาเทียบกับข้อมูล QR ได้ */
+var QR_BOX={x:150,y:520,size:900,margin:4};
+function loadImg(src){return new Promise(function(res){var i=new Image();i.onload=function(){res(i);};i.onerror=function(){res(null);};i.src=src;});}
+function qrPng(t){
+  var s=S.d.settings;
+  return (s.logo?loadImg('/img/'+s.logo):Promise.resolve(null)).then(function(logo){
+    var W=1200,H=1600,c=document.createElement('canvas');c.width=W;c.height=H;
+    var x=c.getContext('2d'),F="'Noto Sans Thai','Leelawadee UI','Sarabun','Thonburi',system-ui,sans-serif";
+    x.fillStyle='#ffffff';x.fillRect(0,0,W,H);
+    x.setLineDash([18,14]);x.strokeStyle='#9ca3af';x.lineWidth=4;x.strokeRect(20,20,W-40,H-40);x.setLineDash([]);
+    x.fillStyle='#111111';x.textAlign='center';x.textBaseline='middle';
+    var y=110;
+    if(logo){var lh=150,lw=Math.min(500,logo.naturalWidth*lh/logo.naturalHeight);x.drawImage(logo,(W-lw)/2,50,lw,lh);y=240;}
+    x.font='600 52px '+F;x.fillText(s.shop,W/2,y,W-160);
+    x.font='700 150px '+F;x.fillText('โต๊ะ '+t,W/2,y+150,W-160);
+    var q=qrcode(0,'M');q.addData(orderUrl(t));q.make();
+    var n=q.getModuleCount(),m=QR_BOX.size/(n+QR_BOX.margin*2);
+    for(var r=0;r<n;r++)for(var cc=0;cc<n;cc++)if(q.isDark(r,cc))x.fillRect(Math.floor(QR_BOX.x+(cc+QR_BOX.margin)*m),Math.floor(QR_BOX.y+(r+QR_BOX.margin)*m),Math.ceil(m),Math.ceil(m));
+    x.font='600 56px '+F;x.fillText('สแกนเพื่อสั่งอาหาร',W/2,QR_BOX.y+QR_BOX.size+70,W-160);
+    return new Promise(function(res,rej){c.toBlob(function(b){b?res(b):rej(new Error('สร้างรูปไม่สำเร็จ'));},'image/png');});
+  });
+}
+function saveFile(blob,name){var a=document.createElement('a'),u=URL.createObjectURL(blob);a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(u);},4000);}
+// zip แบบไม่บีบอัด (PNG บีบอัดอยู่แล้ว) ชื่อไฟล์ภาษาไทยใช้ UTF-8 (flag 0x0800)
+var CRC=null;
+function crc32(b){if(!CRC){CRC=new Uint32Array(256);for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;CRC[n]=c>>>0;}}var x=0xFFFFFFFF;for(var i=0;i<b.length;i++)x=CRC[(x^b[i])&255]^(x>>>8);return (x^0xFFFFFFFF)>>>0;}
+function makeZip(files){
+  var parts=[],cen=[],off=0,enc=new TextEncoder();
+  files.forEach(function(f){
+    var nm=enc.encode(f.name),d=f.data,crc=crc32(d),h=new DataView(new ArrayBuffer(30));
+    h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint32(14,crc,true);h.setUint32(18,d.length,true);h.setUint32(22,d.length,true);h.setUint16(26,nm.length,true);
+    parts.push(new Uint8Array(h.buffer),nm,d);
+    var e=new DataView(new ArrayBuffer(46));
+    e.setUint32(0,0x02014b50,true);e.setUint16(4,20,true);e.setUint16(6,20,true);e.setUint16(8,0x0800,true);e.setUint32(16,crc,true);e.setUint32(20,d.length,true);e.setUint32(24,d.length,true);e.setUint16(28,nm.length,true);e.setUint32(42,off,true);
+    cen.push(new Uint8Array(e.buffer),nm);
+    off+=30+nm.length+d.length;
+  });
+  var csize=cen.reduce(function(n,p){return n+p.length;},0),z=new DataView(new ArrayBuffer(22));
+  z.setUint32(0,0x06054b50,true);z.setUint16(8,files.length,true);z.setUint16(10,files.length,true);z.setUint32(12,csize,true);z.setUint32(16,off,true);
+  return new Blob(parts.concat(cen,[new Uint8Array(z.buffer)]),{type:'application/zip'});
+}
+function qrLocalWarn(){if(/localhost|127\.0\.0\.1/.test(baseUrl())){toast('QR ชี้ไปที่ localhost มือถือลูกค้าเปิดไม่ได้ ตั้ง "ที่อยู่เว็บที่ใส่ใน QR" ก่อน');return true;}return false;}
 function orderUrl(t){return baseUrl()+'/order?t='+t+'&k='+S.d.keys[t];}
 
 /* ---------- data ---------- */
@@ -434,6 +544,8 @@ function load(){
     if(S.sel&&S.sel>S.d.settings.tables)S.sel=null;
     detectNew();
     $('#brand').textContent=S.d.settings.shop+' · '+S.d.me.name+' ('+(S.d.roles[S.d.me.role]||S.d.me.role)+')';
+    setLogo($('#brand-logo'),S.d.settings.logo);
+    applyTheme(S.d.settings.accent);
     $('#closedpill').hidden=S.d.settings.acceptOrders;
     if(S.tab==='report')loadReport();
     render();
@@ -524,7 +636,7 @@ function renderKitchen(){
 
 function receiptHtml(o){
   var s=S.d.settings;
-  var h='<div class="shop">'+esc(s.shop)+'</div>';
+  var h=(s.logo?'<img class="rlogo" src="/img/'+esc(s.logo)+'" alt="">':'')+'<div class="shop">'+esc(s.shop)+'</div>';
   if(s.address)h+='<div class="sub">'+esc(s.address)+'</div>';
   if(s.phone)h+='<div class="sub">โทร '+esc(s.phone)+'</div>';
   if(s.taxId)h+='<div class="sub">เลขประจำตัวผู้เสียภาษี '+esc(s.taxId)+'</div>';
@@ -582,6 +694,7 @@ function renderTables(){
   }
   // เพิ่มโต๊ะได้จากตรงนี้เลย (ลดโต๊ะ ตั้งชื่อร้าน และพิมพ์ QR อยู่ที่แท็บตั้งค่า)
   if(isOwner()&&n<60)h+='<button class="tbl add" data-a="addtable"><span class="n" aria-hidden="true">+</span><span class="s">เพิ่มโต๊ะ</span></button>';
+  if(isOwner()&&n>1)h+='<button class="tbl del" data-a="deltable" aria-label="ลบโต๊ะ '+n+'"><span class="n" aria-hidden="true">−</span><span class="s">ลบโต๊ะ '+n+'</span></button>';
   h+='</div>';
   if(S.lastSale){
     var ls=S.lastSale;
@@ -715,19 +828,99 @@ function renderSettings(){
     '<span class="row" style="gap:10px">ค่าบริการ 10% เริ่มต้น <button class="sw" id="s-svc" data-a="tog" aria-pressed="'+s.svc+'">'+(s.svc?'เปิด':'ปิด')+'</button></span>'+
     '<span class="row" style="gap:10px">VAT 7% เริ่มต้น <button class="sw" id="s-vat" data-a="tog" aria-pressed="'+s.vat+'">'+(s.vat?'เปิด':'ปิด')+'</button></span></div>'+
     '<button class="btn primary" data-a="savesettings">บันทึกการตั้งค่า</button></div>';
+  h+='<div class="panel np" id="theme"></div>';
   h+='<div class="panel np" id="stf"></div>';
   h+='<div class="panel np" id="bk"></div>';
-  h+='<div class="panel"><div class="sec-title np"><h3>QR ประจำโต๊ะ</h3><button class="btn" data-a="printqr">พิมพ์ QR ทุกโต๊ะ</button></div>';
+  h+='<div class="panel"><div class="sec-title np"><h3>QR ประจำโต๊ะ</h3><span class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-a="printqr">พิมพ์ QR ทุกโต๊ะ (A4 หน้าละ 6 ใบ)</button><button class="btn" data-a="qrzip">ดาวน์โหลดทุกโต๊ะ (.zip)</button></span></div>';
   var b=baseUrl();
   if(/localhost|127\.0\.0\.1/.test(b))h+='<div class="banner warn np">QR ชี้ไปที่ localhost ซึ่งมือถือลูกค้าเปิดไม่ได้ ใส่ที่อยู่เครื่องในช่อง "ที่อยู่เว็บที่ใส่ใน QR"</div>';
   h+='<div class="muted np" style="font-size:.85rem;margin-bottom:10px">QR ชี้ไปที่ '+esc(b)+(d.lanAll&&d.lanAll.length>1?' · ที่อยู่อื่นของเครื่องนี้: '+d.lanAll.slice(1).map(esc).join(', '):'')+'<br>ลองสแกน QR โต๊ะ 1 ด้วยมือถือที่ต่อ WiFi ร้านก่อนพิมพ์ทุกโต๊ะ</div><div class="qrsheet">';
   for(var t=1;t<=s.tables;t++){
-    h+='<div class="qcard"><div class="sh">'+esc(s.shop)+'</div><div class="tn">โต๊ะ '+t+'</div>'+qrSvg(orderUrl(t),'QR โต๊ะ '+t)+'<div class="hint">สแกนเพื่อสั่งอาหาร</div></div>';
+    h+='<div class="qcard" data-t="'+t+'">'+(s.logo?'<img class="qlogo" src="/img/'+esc(s.logo)+'" alt="">':'')+'<div class="sh">'+esc(s.shop)+'</div><div class="tn">โต๊ะ '+t+'</div>'+qrSvg(orderUrl(t),'QR โต๊ะ '+t)+'<div class="hint">สแกนเพื่อสั่งอาหาร</div><div class="qact np"><button class="btn sm" data-a="qrprint" data-t="'+t+'" aria-label="พิมพ์ QR โต๊ะ '+t+'">พิมพ์</button><button class="btn sm" data-a="qrpng" data-t="'+t+'" aria-label="ดาวน์โหลดรูป QR โต๊ะ '+t+'">ดาวน์โหลด PNG</button></div></div>';
   }
   h+='</div></div></div>';
   $('#v-settings').innerHTML=h;
   renderStaff();
   renderBackups();
+  renderTheme();
+}
+
+/* ---------- ธีมร้าน: โลโก้และสีปุ่ม ----------
+   สีทั้งหมดคำนวณที่เซิร์ฟเวอร์ (lib/theme.js) หน้านี้แค่ขอผล /api/theme/preview มาแสดงตัวอย่าง */
+var themeApplied=null;
+function setLogo(img,name){if(name){img.src='/img/'+name;img.hidden=false;}else{img.removeAttribute('src');img.hidden=true;}}
+function applyTheme(accent){
+  if(themeApplied===null){themeApplied=accent;return;}       // ครั้งแรก: /theme.css ใน <head> ตรงอยู่แล้ว
+  if(accent===themeApplied)return;
+  themeApplied=accent;$('#theme-css').href='/theme.css?v='+Date.now();
+}
+function themeBusy(){var a=document.activeElement;return !!(a&&a.closest&&a.closest('#theme')&&a.tagName==='INPUT');}
+function renderTheme(){
+  var el=$('#theme');if(!el)return;
+  var s=S.d.settings,T=S.theme||(S.theme={pick:s.accent||'',base:s.accent||'',prev:null,presets:[],err:'',saving:false});
+  // อีกเครื่องเปลี่ยนสีแล้ว และเครื่องนี้ยังไม่ได้เลือกสีอื่นค้างไว้: ตามค่าใหม่ ไม่แสดงสีเก่าเหมือนยังไม่บันทึก
+  if((s.accent||'')!==T.base){if(T.pick===T.base){T.pick=s.accent||'';T.err='';previewTheme(T.pick);}T.base=s.accent||'';}
+  if(!T.presets.length&&!T.loading){T.loading=true;previewTheme(T.pick);}
+  var cur=T.pick||'';
+  var h='<div class="sec-title"><h3>หน้าตาร้าน</h3><span class="muted small">โลโก้และสีปุ่ม ใช้ทั้งหน้าลูกค้า หน้าพนักงาน ใบเสร็จ และแผ่น QR</span></div><div class="theme-grid">';
+  h+='<div class="stack" style="gap:8px"><b>โลโก้ร้าน</b><div class="logo-box">'+(s.logo?'<img class="logo" src="/img/'+esc(s.logo)+'" alt="โลโก้ร้านปัจจุบัน">':'<div class="ph">ยังไม่มีโลโก้</div>')+
+    '<div class="stack" style="gap:6px"><label class="btn" for="logo-file">'+(s.logo?'เปลี่ยนโลโก้':'เลือกรูปโลโก้')+'</label>'+
+    (s.logo?'<button class="btn'+(armed('logodel')?' danger':'')+'" data-a="logodel">'+(armed('logodel')?'ยืนยันเอาโลโก้ออก':'เอาโลโก้ออก')+'</button>':'')+'</div></div>'+
+    '<span class="muted small">PNG พื้นใส หรือ JPG สี่เหลี่ยมจัตุรัส ระบบย่อเหลือ 512 px ให้เอง</span></div>';
+  h+='<div class="stack" style="gap:6px"><b>สีปุ่มหลัก</b><div class="swatches" role="group" aria-label="ชุดสีสำเร็จรูป">'+T.presets.map(function(p){
+    return '<button class="swatch" data-a="tpreset" data-c="'+esc(p.color)+'" aria-pressed="'+(cur===p.color)+'"><i style="background:'+esc(p.color||'#84cc16')+'"></i>'+esc(p.name)+'</button>';
+  }).join('')+'</div>'+
+    '<div class="tpick"><label class="f" for="t-color" style="flex-direction:row;align-items:center;gap:10px">เลือกสีเอง<input type="color" id="t-color" value="'+esc(cur||'#84cc16')+'"></label><code class="small">'+esc(cur||'สีตั้งต้น')+'</code></div>'+
+    '<div class="tprev" id="t-prev"><span class="muted small">ตัวอย่าง</span><button class="btn primary" type="button" tabindex="-1">สั่งอาหาร ฿120</button><span><span class="pill acc">กำลังทำ</span> <span style="color:var(--accent-text);font-weight:600">+ เพิ่มหมายเหตุ</span></span></div>'+
+    '<div class="err" role="alert">'+esc(T.err)+'</div>'+
+    '<div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap"><button class="btn primary" data-a="tsave"'+(T.saving||T.err||cur===(s.accent||'')?' disabled':'')+'>บันทึกสี</button>'+
+    (cur!==(s.accent||'')?'<button class="btn" data-a="treset">ยกเลิก</button>':'')+'</div></div></div>';
+  el.innerHTML=h;
+  paintPreview();
+}
+function paintPreview(){
+  var p=$('#t-prev'),T=S.theme;if(!p||!T)return;
+  var dark=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches;
+  var v=T.prev&&T.prev.ok&&T.pick?T.prev[dark?'dark':'light']:null;
+  ['accent','accent-line','accent-ink','accent-soft','accent-text','focus'].forEach(function(k){if(v)p.style.setProperty('--'+k,v[k]);else p.style.removeProperty('--'+k);});
+}
+function previewTheme(color){
+  api('/api/theme/preview'+(color?'?accent='+encodeURIComponent(color):'')).then(function(r){
+    var T=S.theme;if(!T||T.pick!==color)return;           // เลือกสีอื่นไปแล้ว
+    T.loading=false;
+    if(r.j.presets)T.presets=r.j.presets;
+    T.prev=r.j;T.err=r.ok&&r.j.ok===false?r.j.error:'';
+    if(themeBusy()){
+      // กำลังลากเลือกสี: อัปเดตเฉพาะตัวอย่าง ไม่วาดทับช่องเลือกสี
+      paintPreview();var e=document.querySelector('#theme .err');if(e)e.textContent=T.err;
+      var sv=document.querySelector('[data-a="tsave"]');if(sv)sv.disabled=!!T.err||T.saving||T.pick===(S.d.settings.accent||'');
+    }
+    else renderTheme();
+  },function(){});
+}
+function pickTheme(color){var T=S.theme;T.pick=color;T.err='';previewTheme(color);if(!themeBusy())renderTheme();}
+function resizeLogo(file){
+  return new Promise(function(resolve,reject){
+    var url=URL.createObjectURL(file),img=new Image();
+    img.onload=function(){
+      var max=512,w=img.naturalWidth,h=img.naturalHeight,k=Math.min(1,max/Math.max(w,h));
+      w=Math.max(1,Math.round(w*k));h=Math.max(1,Math.round(h*k));
+      var c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);
+      c.toBlob(function(b){b?resolve(b):reject(new Error('แปลงรูปไม่สำเร็จ'));},'image/png');   // PNG เก็บพื้นใส
+    };
+    img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('เปิดไฟล์รูปนี้ไม่ได้ ลองใช้ไฟล์ PNG หรือ JPG'));};
+    img.src=url;
+  });
+}
+function uploadLogo(file){
+  resizeLogo(file).then(function(blob){
+    return fetch('/api/settings/logo',{method:'POST',headers:{'Content-Type':'image/png'},body:blob,credentials:'same-origin'})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,status:r.status,j:j};},function(){return {ok:false,status:r.status,j:{}};});});
+  }).then(function(r){
+    if(!r.ok){toast(r.j.error||'อัปโหลดโลโก้ไม่สำเร็จ');if(r.status===401)showLogin();return;}
+    toast('เปลี่ยนโลโก้แล้ว');load();
+  },function(err){toast(err.message||'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');});
 }
 
 /* ---------- menu manager ---------- */
@@ -965,18 +1158,19 @@ function render(){
   }
   else if(S.tab==='menu'){if(!menuBusy())renderMenu();}
   else if(S.tab==='report')renderReport();
-  else if(!S.dirty&&!staffBusy())renderSettings();
+  else if(!S.dirty&&!staffBusy()&&!themeBusy())renderSettings();
 }
 
 /* ---------- events ---------- */
-function printMode(mode){
-  document.body.classList.add('pm-'+mode);
-  var done=function(){document.body.classList.remove('pm-'+mode);window.removeEventListener('afterprint',done);};
+function printMode(mode,extra){
+  document.body.classList.add('pm-'+mode);if(extra)document.body.classList.add(extra);
+  var done=function(){document.body.classList.remove('pm-'+mode);if(extra)document.body.classList.remove(extra);document.querySelectorAll('.qcard.pick').forEach(function(c){c.classList.remove('pick');});window.removeEventListener('afterprint',done);};
   window.addEventListener('afterprint',done);
   setTimeout(function(){window.print();},50);
 }
 document.addEventListener('input',function(e){
   if(e.target.closest&&e.target.closest('#stf')){S.sf={for:S.stEdit,name:($('#sf-name')||{}).value||'',role:($('#sf-role')||{}).value||'cashier'};return;}
+  if(e.target.id==='t-color'){pickTheme(e.target.value.toLowerCase());return;}
   if(e.target.closest&&e.target.closest('#v-settings')&&e.target.tagName==='INPUT'&&e.target.type!=='file'){S.dirty=true;}
   if(e.target.id==='m-q'){S.q=e.target.value;renderMenuGrid();}
   if(e.target.id==='cash-in'){S.cash=e.target.value.replace(/[^\d.]/g,'');if(e.target.value!==S.cash)e.target.value=S.cash;var pb=document.querySelector('[data-a="pay"][data-m="cash"]');if(pb)updateCash(+pb.dataset.due);}
@@ -994,6 +1188,7 @@ document.addEventListener('change',function(e){
     },function(err){if(S.edit){S.edit.err=err.message;renderMenu();}});
   }
   if(e.target.id==='rs-file'&&f)pickRestore(f);
+  if(e.target.id==='logo-file'&&f)uploadLogo(f);
 });
 document.addEventListener('keydown',function(e){
   if(e.key!=='Enter')return;
@@ -1060,6 +1255,16 @@ document.addEventListener('click',function(e){
       acceptOrders:$('#s-open').getAttribute('aria-pressed')==='true',svc:$('#s-svc').getAttribute('aria-pressed')==='true',vat:$('#s-vat').getAttribute('aria-pressed')==='true'},'บันทึกแล้ว')
       .then(function(r){if(r&&r.ok){S.dirty=false;if(document.activeElement)document.activeElement.blur();load();}});
   }
+  else if(a==='tpreset'){pickTheme(b.dataset.c);}
+  else if(a==='treset'){pickTheme(S.d.settings.accent||'');}
+  else if(a==='tsave'){
+    var T=S.theme;T.saving=true;renderTheme();
+    act('/api/settings',{accent:T.pick},'บันทึกสีแล้ว').then(function(r){T.saving=false;if(r&&!r.ok)T.err=r.j.error||'';if(r&&r.ok)load();else renderTheme();});
+  }
+  else if(a==='logodel'){
+    confirmBox({title:'เอาโลโก้ร้านออก?',lines:['โลโก้จะหายจากหน้าลูกค้า หน้าเข้าสู่ระบบ ใบเสร็จ และแผ่น QR','ไฟล์โลโก้ถูกลบจากเครื่อง ถ้าต้องการใช้อีกต้องอัปโหลดใหม่'],ok:'เอาโลโก้ออก'})
+      .then(function(ok){if(ok)act('/api/settings/logo/delete',{},'เอาโลโก้ออกแล้ว').then(function(r){if(r&&r.ok)load();});});
+  }
   else if(a==='openorders'){act('/api/settings',{acceptOrders:true},'เปิดรับออเดอร์ผ่าน QR แล้ว');}
   else if(a==='sold'){act('/api/soldout',{id:id,soldOut:b.dataset.on==='true'});}
   /* menu manager */
@@ -1070,8 +1275,10 @@ document.addEventListener('click',function(e){
   else if(a==='etog'){var h2=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',h2);b.textContent=h2?'ซ่อนอยู่':'แสดง';}
   else if(a==='eimgdel'){syncEditor();if(S.edit.preview)URL.revokeObjectURL(S.edit.preview);S.edit.preview='';S.edit.blob=null;S.edit.removeImage=true;renderMenu();}
   else if(a==='edel'){
-    if(!armed('delitem:'+id)){syncEditor();arm('delitem:'+id);return;}
-    disarm();act('/api/menu/item/delete',{id:id},'ลบเมนูแล้ว').then(function(r){if(r&&r.ok){closeEditor();load();}});
+    syncEditor();
+    var dm=S.d.menu.items.filter(function(x){return x.id===id;})[0];
+    confirmBox({title:'ลบเมนู "'+(dm?dm.name:'')+'"?',lines:['เมนูและรูปถูกลบถาวร ย้อนกลับไม่ได้','ออเดอร์และยอดขายที่ผ่านมายังอยู่ครบ','ถ้าแค่หมดชั่วคราว ใช้ "ตั้งเป็นหมด" ถ้าเป็นเมนูตามฤดูกาล ใช้ "ซ่อน" แทน'],ok:'ลบเมนู'})
+      .then(function(ok){if(ok)act('/api/menu/item/delete',{id:id},'ลบเมนูแล้ว').then(function(r){if(r&&r.ok){closeEditor();load();}});});
   }
   else if(a==='catfilter'){S.mCat=S.mCat===id?null:id;renderMenu();}
   else if(a==='catmove'){act('/api/menu/category/move',{id:id,dir:+b.dataset.d});}
@@ -1083,8 +1290,9 @@ document.addEventListener('click',function(e){
     act('/api/menu/category',{name:nv},'เพิ่มหมวด "'+nv.trim()+'" แล้ว').then(function(r){if(r&&r.ok){$('#c-new').value='';if(document.activeElement)document.activeElement.blur();load();}});
   }
   else if(a==='catdel'){
-    if(!armed('delcat:'+id)){arm('delcat:'+id);return;}
-    disarm();act('/api/menu/category/delete',{id:id},'ลบหมวดแล้ว').then(function(r){if(r&&r.ok&&S.mCat===id)S.mCat=null;});
+    var dc=S.d.menu.categories.filter(function(x){return x.id===id;})[0];
+    confirmBox({title:'ลบหมวด "'+(dc?dc.name:'')+'"?',lines:['ลบได้เฉพาะหมวดที่ไม่มีเมนูเหลือแล้ว','ถ้าต้องการใช้อีกต้องสร้างหมวดใหม่'],ok:'ลบหมวด'})
+      .then(function(ok){if(ok)act('/api/menu/category/delete',{id:id},'ลบหมวดแล้ว').then(function(r){if(r&&r.ok&&S.mCat===id)S.mCat=null;});});
   }
   else if(a==='notessave'){
     var notes=$('#n-notes').value.split(/[,\n]/).map(function(x){return x.trim();}).filter(Boolean);
@@ -1094,10 +1302,34 @@ document.addEventListener('click',function(e){
   else if(a==='bknow'){b.disabled=true;act('/api/backup',{},'สำรองข้อมูลแล้ว').then(function(){loadBackups();});}
   else if(a==='rscancel'){S.rs=null;disarm();renderBackups();}
   else if(a==='rsgo'){
-    if(!armed('restore')){S.confirm='restore';clearTimeout(confirmTimer);confirmTimer=setTimeout(function(){S.confirm=null;renderBackups();},6000);renderBackups();return;}
-    disarm();doRestore();
+    confirmBox({title:'กู้คืนข้อมูลจากไฟล์สำรองนี้?',lines:['ข้อมูลปัจจุบันทั้งหมดถูกแทนที่: เมนู รูป ออเดอร์ที่เปิดอยู่ ตั้งค่า พนักงาน และรหัส QR','ระบบสำรองข้อมูลปัจจุบันไว้ให้ก่อนเสมอ (กู้กลับได้จากรายการไฟล์สำรอง)','ระหว่างกู้คืนลูกค้าสั่งไม่ได้ไม่กี่วินาที และทุกเครื่องต้องเข้าสู่ระบบใหม่'],ok:'กู้คืนข้อมูล',no:'ไม่กู้คืน'})
+      .then(function(ok){if(ok)doRestore();});
   }
-  else if(a==='printqr'){printMode('qr');}
+  else if(a==='printqr'){qrLocalWarn();printMode('qr');}
+  else if(a==='qrprint'){
+    qrLocalWarn();
+    var qc=document.querySelector('.qcard[data-t="'+b.dataset.t+'"]');if(qc)qc.classList.add('pick');
+    printMode('qr','pm-one');
+  }
+  else if(a==='qrpng'){
+    qrLocalWarn();
+    qrPng(+b.dataset.t).then(function(bl){saveFile(bl,'QR-โต๊ะ-'+b.dataset.t+'.png');},function(e){toast(e.message);});
+  }
+  else if(a==='qrzip'){
+    qrLocalWarn();b.disabled=true;var tot=S.d.settings.tables,list=[],i=0;
+    var nextQr=function(){
+      if(++i>tot){saveFile(makeZip(list),'QR-'+S.d.settings.shop.replace(/[\\/:*?"<>|]/g,'')+'-'+tot+'-โต๊ะ.zip');b.disabled=false;toast('ดาวน์โหลด QR '+tot+' โต๊ะแล้ว');return;}
+      b.textContent='กำลังสร้าง '+i+'/'+tot+'…';
+      qrPng(i).then(function(bl){return bl.arrayBuffer();}).then(function(ab){list.push({name:'QR-โต๊ะ-'+String(i).padStart(2,'0')+'.png',data:new Uint8Array(ab)});nextQr();},function(e){b.disabled=false;toast(e.message);render();});
+    };
+    nextQr();
+  }
+  else if(a==='deltable'){
+    var lt=S.d.settings.tables;
+    if(S.d.tickets.some(function(k){return k.table===lt;})||S.d.calls[lt]){toast('โต๊ะ '+lt+' ยังมีออเดอร์หรือการเรียกค้างอยู่ ปิดบิลหรือรับทราบก่อนลบ');return;}
+    confirmBox({title:'ลบโต๊ะ '+lt+'?',lines:['ลบได้เฉพาะโต๊ะเลขสุดท้าย เลขโต๊ะอื่นไม่เปลี่ยน','QR โต๊ะ '+lt+' ที่ติดอยู่จะสั่งอาหารไม่ได้ ควรเก็บแผ่น QR ออกจากโต๊ะ','ถ้าเพิ่มโต๊ะกลับมาภายหลัง QR แผ่นเดิมกลับมาใช้ได้'],ok:'ลบโต๊ะ '+lt})
+      .then(function(ok){if(ok)act('/api/settings',{tables:lt-1},'ลบโต๊ะ '+lt+' แล้ว').then(function(r){if(r&&r.ok&&S.sel===lt)S.sel=null;});});
+  }
   else if(a==='addtable'){var nt=S.d.settings.tables+1;act('/api/settings',{tables:nt},'เพิ่มโต๊ะ '+nt+' แล้ว พิมพ์ QR ของโต๊ะใหม่ได้ที่แท็บตั้งค่า');}
   else if(a==='stnew'){S.stEdit='new';S.stErr='';S.sf=null;renderStaff();var n1=$('#sf-name');if(n1)n1.focus();}
   else if(a==='stedit'){S.stEdit=b.dataset.id;S.stErr='';S.sf=null;renderStaff();}
@@ -1112,6 +1344,11 @@ document.addEventListener('click',function(e){
   }
   else if(a==='sttoggle'){
     var sa=S.staff.filter(function(x){return x.id===b.dataset.id;})[0];
+    if(sa&&sa.active){
+      confirmBox({title:'ปิดบัญชี '+sa.name+'?',lines:['คนนี้เข้าสู่ระบบไม่ได้อีก และเครื่องที่เข้าอยู่จะหลุดทันที','ประวัติการทำงานยังอยู่ เปิดบัญชีกลับได้ภายหลัง'],ok:'ปิดบัญชี',no:'ไม่ปิด'})
+        .then(function(ok){if(ok)act('/api/staff',{id:sa.id,name:sa.name,role:sa.role,active:false},'ปิดบัญชี '+sa.name+' แล้ว').then(loadStaff);});
+      return;
+    }
     if(sa)act('/api/staff',{id:sa.id,name:sa.name,role:sa.role,active:!sa.active},sa.active?'ปิดบัญชี '+sa.name+' แล้ว':'เปิดบัญชี '+sa.name+' แล้ว').then(loadStaff);
   }
   else if(a==='stout'){
@@ -1120,6 +1357,8 @@ document.addEventListener('click',function(e){
   else if(a==='logout'){api('/api/logout',{}).then(function(){S.d=null;showLogin();});}
 });
 setInterval(function(){if(S.d&&S.tab==='kitchen')renderKitchen();},20000);
+// หน้าเข้าสู่ระบบ: โลโก้และชื่อร้าน (ดูได้ก่อนเข้าสู่ระบบ ไม่มีข้อมูลลับ)
+api('/api/brand').then(function(r){if(!r.ok)return;setLogo($('#login-logo'),r.j.logo);$('#login-logo').alt=r.j.logo?'โลโก้ '+r.j.shop:'';$('#login-shop').textContent=r.j.shop||'';},function(){});
 load();
 })();
 </script>

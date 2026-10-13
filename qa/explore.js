@@ -102,7 +102,8 @@ async function main() {
   await c2.route('**/api/order', r => r.abort('connectionrefused'));
   await c2.click('[data-a="send"]'); await sleep(500);
   const err = await c2.textContent('#sheet .err').catch(() => '');
-  const cartKept = await c2.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('cart-2')).cart).length);
+  // ตะกร้าแบบใหม่เก็บเป็นแถว (lines) แบบเดิมเป็น object (cart) นับได้ทั้งสองแบบ
+  const cartKept = await c2.evaluate(() => { const c = JSON.parse(localStorage.getItem('cart-2')); return c.lines ? c.lines.length : Object.keys(c.cart).length; });
   ok(/ส่งไม่สำเร็จ/.test(err) && cartKept === 1, 'เน็ต/เซิร์ฟเวอร์ล่มตอนกดสั่ง: บอกให้ลองใหม่ ตะกร้ายังอยู่', err);
 
   await browser.close(); await s.stop(); rmrf(app.base);

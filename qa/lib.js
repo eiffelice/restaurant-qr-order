@@ -117,4 +117,21 @@ function checker(title) {
   return ok;
 }
 
-module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker };
+// รูปอาหารจำลอง (วาดด้วย canvas ในเบราว์เซอร์ ไม่โหลดจากเน็ต) สำหรับอัปโหลดเป็นรูปเมนูหรือโลโก้
+async function fakePhoto(browser, hue, size) {
+  const p = await (await browser.newContext()).newPage();
+  const b64 = await p.evaluate(([h, n]) => {
+    const c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d');
+    const g = x.createRadialGradient(n * .45, n * .4, n * .05, n / 2, n / 2, n * .7);
+    g.addColorStop(0, 'hsl(' + h + ',85%,72%)'); g.addColorStop(.55, 'hsl(' + (h + 15) + ',70%,45%)'); g.addColorStop(1, 'hsl(' + (h + 25) + ',40%,18%)');
+    x.fillStyle = g; x.fillRect(0, 0, n, n);
+    x.fillStyle = 'rgba(255,255,255,.85)'; x.beginPath(); x.arc(n * .5, n * .55, n * .28, 0, 7); x.fill();
+    x.fillStyle = 'hsl(' + h + ',80%,40%)'; x.beginPath(); x.arc(n * .5, n * .55, n * .2, 0, 7); x.fill();
+    for (let i = 0; i < 14; i++) { x.fillStyle = 'hsl(' + (90 + i * 7) + ',60%,' + (30 + i % 3 * 8) + '%)'; x.beginPath(); x.arc(n * (.38 + (i * 37 % 25) / 100), n * (.45 + (i * 53 % 22) / 100), n * .025, 0, 7); x.fill(); }
+    return c.toDataURL('image/png').split(',')[1];
+  }, [hue, size || 600]);
+  await p.context().close();
+  return Buffer.from(b64, 'base64');
+}
+
+module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker, fakePhoto };
