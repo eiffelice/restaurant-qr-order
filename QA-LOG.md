@@ -11,7 +11,7 @@
 |---|---|
 | commit ล่าสุด | `main` = `7064644` · งานหน้าลูกค้าใหม่ + ธีมร้านอยู่ใน branch `feat/customer-ui-redesign` (PR รอรีวิว ยังไม่ merge) |
 | `npm test` | 85/85 ผ่าน (~30 วินาที ไม่ต้องติดตั้งอะไร) |
-| เบราว์เซอร์จริง (`qa/browser.js all`) | 149/149 ผ่าน (pay-race 3, reqid-reload 2, cash 10, roles 11, file-picker 3, xss 7, day 27, customer 29, theme 9, confirm 12, qrfiles 7, antiprank 13, acceptance 16) |
+| เบราว์เซอร์จริง (`qa/browser.js all`) | 153/153 ผ่าน (pay-race 3, reqid-reload 2, cash 10, roles 11, file-picker 3, xss 7, day 27, customer 29, theme 9, confirm 12, qrfiles 7, antiprank 13, themeretry 4, acceptance 16) |
 | สคริปต์ QA อื่น | repro 8/8, money 26/26, time 8/8, windows 10/10, a11y 6/6, audit-load 2/2, explore 9/9, perf 5/5 · ภาพหน้าจอ 74 ภาพ `node qa/shots.js` |
 | เครื่องที่ทดสอบ | Windows 11 Pro 26200, Node 24.19.0, Microsoft Edge 155 |
 | สำเนาโค้ดก่อนเริ่ม QA | `D:\restaurant-qr-order.backup-20261012` (ใช้กับ `QA_FROM=` เพื่อพิสูจน์ว่าบั๊กมีในโค้ดเดิม) |
@@ -62,6 +62,7 @@
 | 31 | กลาง | กด + ด้วยคีย์บอร์ดแล้วโฟกัสเด้งไปบนสุด และปุ่มตะกร้าอยู่หลังทุกจานในลำดับ Tab | customer.html (`renderAll()`, `.bar` ก่อนรายการ) | `qa/a11y.js` |
 | 32 | ต่ำ | ปุ่ม + บนการ์ดไปเพิ่มแถว "ไม่เผ็ด" แทนจานปกติ (บั๊กในงานรอบนี้) | customer.html (`cardCtl()`) | browser `customer` |
 | 33 | ต่ำ | อีกเครื่องเปลี่ยนสีร้าน หน้าตั้งค่าที่เปิดค้างแสดงสีเก่าเหมือนยังไม่บันทึก (บั๊กในงานรอบนี้) | staff.html (`renderTheme()`) | browser `theme` |
+| 37 | ต่ำ | โหลดไฟล์สีร้าน (/theme.css) ล้มชั่วคราว (เซิร์ฟเวอร์รีสตาร์ท/เน็ตสะดุด) หน้าไม่ลองใหม่ ค้างสีตั้งต้นจนรีเฟรช (ผู้ใช้เห็นใน DevTools: "failed to load a stylesheet") Chromium มี sheet เปล่าให้แม้โหลดล้ม จึงต้องเช็ก cssRules | customer.html, staff.html (`loadTheme()`, `sheetOk()`) | browser `themeretry` |
 | 36 | กลาง | regex PIN ใน `ownerByPin` เสีย (shell ตัด backslash) พนักงานบทบาทเจ้าของที่ไม่ใช่ STAFF_PIN อนุมัติยกเลิกออเดอร์ไม่ได้ (บั๊กในงานรอบก่อน) | routes.js | `พนักงานบทบาทเจ้าของ (ไม่ใช่ STAFF_PIN)…` |
 | 35 | กลาง (ความปลอดภัย) | ช่อง PIN เจ้าของอนุมัติยกเลิกออเดอร์ไม่นับเพดานรวมทุก IP แคชเชียร์ตั้ง IP เองหลายเครื่องเดา PIN เจ้าของได้ไม่จำกัด (ทดสอบ: 40/40 ครั้งผ่าน) ได้ PIN = สิทธิ์เจ้าของ | routes.js (`pinLocked()`) | `PIN อนุมัติยกเลิกออเดอร์ผิด นับรวมเพดาน…` |
 | 34 | ต่ำ | ชี้เมาส์บนแท็บที่เลือกอยู่ (แถบซ้าย) ตัวขาวบนพื้นสว่าง | staff.html | `qa/a11y.js` |

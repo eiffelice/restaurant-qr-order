@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -790,6 +790,30 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await c.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* ไฟล์สีร้าน (/theme.css) โหลดไม่สำเร็จชั่วคราว (เซิร์ฟเวอร์รีสตาร์ท/เน็ตสะดุด): หน้าต้องลองใหม่เอง ไม่ค้างสีตั้งต้น */
+  async themeretry(browser) {
+    const ok = checker('themeretry'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { accent: '#dc2626' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const accent = pg => pg.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+    for (const who of ['customer', 'staff']) {
+      const ctx = await browser.newContext(Object.assign({ baseURL: s.B }, who === 'customer' ? MOBILE : {}));
+      let failed = 0;
+      await ctx.route('**/theme.css*', r => { if (failed++ === 0) return r.abort('connectionrefused'); return r.continue(); });   // ครั้งแรกล้ม
+      const p = await ctx.newPage();
+      if (who === 'customer') { await p.goto('/order?t=1&k=' + keys[1]); await p.waitForSelector('.item'); }
+      else { await p.goto('/staff'); await p.fill('#pin', PIN); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab'); }
+      const first = await accent(p);
+      await p.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() === '#dc2626', null, { timeout: 9000 }).catch(() => {});
+      ok(failed >= 2 && await accent(p) === '#dc2626', who + ': โหลดสีร้านครั้งแรกล้ม แล้วลองใหม่เองจนได้สีร้าน', { first, after: await accent(p), tries: failed });
+      ok(await p.evaluate(() => document.querySelectorAll('link[rel=stylesheet]').length) === 1, who + ': ไม่มีไฟล์สีซ้อนค้าง');
+      await ctx.close();
+    }
+    await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

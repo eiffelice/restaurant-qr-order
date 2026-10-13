@@ -905,12 +905,26 @@ function renderSettings(){
 
 /* ---------- ธีมร้าน: โลโก้และสีปุ่ม ----------
    สีทั้งหมดคำนวณที่เซิร์ฟเวอร์ (lib/theme.js) หน้านี้แค่ขอผล /api/theme/preview มาแสดงตัวอย่าง */
+/* โหลดสีร้าน (/theme.css): โหลดไฟล์ใหม่ให้เสร็จก่อนแล้วค่อยเอาอันเก่าออก (สีไม่กะพริบ)
+   โหลดไม่สำเร็จ (เซิร์ฟเวอร์รีสตาร์ท/เน็ตสะดุด) ลองใหม่ทุก 5 วินาที ระหว่างนั้นใช้สีที่มีอยู่ */
+var themeTry=null;
+function loadTheme(v){
+  clearTimeout(themeTry);
+  var old=document.getElementById('theme-css'),l=document.createElement('link');
+  l.rel='stylesheet';l.href='/theme.css?v='+encodeURIComponent(v);
+  l.onload=function(){document.querySelectorAll('link[rel=stylesheet]').forEach(function(x){if(x!==l)x.parentNode.removeChild(x);});l.id='theme-css';};
+  l.onerror=function(){if(l.parentNode)l.parentNode.removeChild(l);themeTry=setTimeout(function(){loadTheme(v);},5000);};
+  document.head.appendChild(l);
+}
+// ไฟล์ใน <head> โหลดเสร็จ (หรือล้ม) ก่อนสคริปต์นี้ทำงานเสมอ โหลดล้มแล้ว Chromium ยังมี sheet เปล่าให้ แต่อ่าน cssRules ไม่ได้
+function sheetOk(l){try{return !!(l&&l.sheet&&l.sheet.cssRules);}catch(e){return false;}}
+if(!sheetOk(document.getElementById('theme-css')))loadTheme(Date.now());
 var themeApplied=null;
 function setLogo(img,name){if(name){img.src='/img/'+name;img.hidden=false;}else{img.removeAttribute('src');img.hidden=true;}}
 function applyTheme(accent){
   if(themeApplied===null){themeApplied=accent;return;}       // ครั้งแรก: /theme.css ใน <head> ตรงอยู่แล้ว
   if(accent===themeApplied)return;
-  themeApplied=accent;$('#theme-css').href='/theme.css?v='+Date.now();
+  themeApplied=accent;loadTheme(Date.now());
 }
 function themeBusy(){var a=document.activeElement;return !!(a&&a.closest&&a.closest('#theme')&&a.tagName==='INPUT');}
 function renderTheme(){

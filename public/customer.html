@@ -209,6 +209,20 @@ function newReqId(){
   try{crypto.getRandomValues(a);}catch(e){for(var i=0;i<a.length;i++)a[i]=Math.floor(Math.random()*256);}
   return Array.prototype.map.call(a,function(x){return ('0'+x.toString(16)).slice(-2);}).join('');
 }
+/* โหลดสีร้าน (/theme.css): โหลดไฟล์ใหม่ให้เสร็จก่อนแล้วค่อยเอาอันเก่าออก (สีไม่กะพริบ)
+   โหลดไม่สำเร็จ (เซิร์ฟเวอร์รีสตาร์ท/เน็ตสะดุด) ลองใหม่ทุก 5 วินาที ระหว่างนั้นใช้สีที่มีอยู่ */
+var themeTry=null;
+function loadTheme(v){
+  clearTimeout(themeTry);
+  var old=document.getElementById('theme-css'),l=document.createElement('link');
+  l.rel='stylesheet';l.href='/theme.css?v='+encodeURIComponent(v);
+  l.onload=function(){document.querySelectorAll('link[rel=stylesheet]').forEach(function(x){if(x!==l)x.parentNode.removeChild(x);});l.id='theme-css';};
+  l.onerror=function(){if(l.parentNode)l.parentNode.removeChild(l);themeTry=setTimeout(function(){loadTheme(v);},5000);};
+  document.head.appendChild(l);
+}
+// ไฟล์ใน <head> โหลดเสร็จ (หรือล้ม) ก่อนสคริปต์นี้ทำงานเสมอ โหลดล้มแล้ว Chromium ยังมี sheet เปล่าให้ แต่อ่าน cssRules ไม่ได้
+function sheetOk(l){try{return !!(l&&l.sheet&&l.sheet.cssRules);}catch(e){return false;}}
+if(!sheetOk(document.getElementById('theme-css')))loadTheme(Date.now());
 function cartChanged(){reqId=null;saveCart();}
 function closedForGuests(){return STAT&&!STAT.open&&!STAT.staff;}
 // เหตุผลที่สั่งไม่ได้ (ปิดเอง / นอกเวลา / ยังไม่เปิดโต๊ะ) ข้อความมาจากเซิร์ฟเวอร์ที่เดียว
@@ -468,7 +482,7 @@ function applyStat(s){
       menuLoading=true;
       api('/api/menu').then(function(r){
         menuLoading=false;
-        if(r.ok){M=r.j;s.menuVersion=M.version;STAT=null;$('#theme-css').href='/theme.css?v='+M.version;applyStat(s);}   // adopt whatever version we got, so this never loops
+        if(r.ok){M=r.j;s.menuVersion=M.version;STAT=null;loadTheme(M.version);applyStat(s);}   // adopt whatever version we got, so this never loops
       },function(){menuLoading=false;});
     }
     return;
