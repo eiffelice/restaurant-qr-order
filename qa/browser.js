@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1094,6 +1094,47 @@ const cases = {
     ok(real.length === 0, 'console ไม่มี error', real);
     for (const p of [k, w, o]) await p.context().close();
     await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* พิมพ์ใบเสร็จ (กระดาษความร้อน 80 มม.): ใบสั้นได้หน้าเดียวไม่ซ้ำ ใบยาวไหลต่อหน้าไม่ทับกัน มีแต่ใบเสร็จ ไม่มีส่วนอื่นของหน้าจอ */
+  async print(browser) {
+    const ok = checker('print'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { promptpay: '0812345678' });
+    const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] }, { staff: false });
+    for (let r = 0; r < 2; r++) await s.call('POST', '/api/order', { table: 2, key: keys[2], items: st0.menu.items.slice(r * 11, r * 11 + 11).map(m => ({ id: m.id, qty: 1, note: ['ไม่เผ็ด'] })) }, { staff: false });
+    const p = await staffPage(browser, s, null, errors);
+    await p.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+    const pdfOf = async t => {
+      await tab(p, 'tables'); await sleep(200);
+      await p.click('[data-a="sel"][data-id="' + t + '"]'); await p.waitForSelector('.view:not([hidden]) .receipt .grand'); await sleep(200);
+      const before = await p.evaluate(() => window.__printed);
+      await p.click('[data-a="printr"]');
+      await p.waitForFunction(n => window.__printed > n, before, { timeout: 5000 }).catch(() => {});
+      await p.emulateMedia({ media: 'print' });
+      const info = await p.evaluate(() => {
+        const pa = document.querySelector('#print-area'), mm = px => Math.round(px * 25.4 / 96);
+        const shown = [...document.body.children].filter(e => e !== pa && getComputedStyle(e).display !== 'none').map(e => e.id || e.className);
+        const r = pa.getBoundingClientRect();
+        return { h: mm(r.height), w: mm(pa.querySelector('.receipt').getBoundingClientRect().width), shown, fixed: [...pa.querySelectorAll('*')].some(e => getComputedStyle(e).position === 'fixed'), grand: pa.querySelectorAll('.grand').length };
+      });
+      const buf = await p.pdf({ width: '80mm', height: '200mm', margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+      info.pages = (buf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+      await p.emulateMedia({ media: 'screen' });
+      return info;
+    };
+    const a = await pdfOf(1);
+    ok(a.pages === 1 && a.grand === 1, 'ใบเสร็จสั้น: หน้าเดียว ไม่พิมพ์ซ้ำ (เดิมออกมา 2 ใบ)', a);
+    ok(!a.shown.length && !a.fixed, 'ตอนพิมพ์มีแต่ใบเสร็จ ส่วนอื่นของหน้าจอไม่กินกระดาษ', a);
+    ok(a.w >= 70 && a.w <= 74, 'กว้างพอดีพื้นที่พิมพ์กระดาษ 80 มม. (72 มม.)', a.w);
+    const b = await pdfOf(2);
+    ok(b.h > 200 && b.pages === Math.ceil(b.h / 200) && b.grand === 1, 'ใบเสร็จยาวเกินหน้า: ไหลต่อหน้าตามความยาวจริง ไม่ทับกัน (เดิมหัวใบเสร็จพิมพ์ทับยอดรวม)', b);
+    ok(!(await p.evaluate(() => document.body.className.includes('pm-receipt'))) && !(await p.evaluate(() => document.querySelector('#print-area').innerHTML)), 'พิมพ์เสร็จ: กลับหน้าจอปกติ ล้างสำเนาใบเสร็จ');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

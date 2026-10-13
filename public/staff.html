@@ -213,6 +213,10 @@ select.in{appearance:auto}
 .qcard .qact{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;justify-content:center}
 .qcard .qact .btn{color:var(--ink)}
 @page qrsheet{size:A4;margin:10mm}
+/* ใบเสร็จพิมพ์จากสำเนาใน #print-area (ลูกตรงของ body) ส่วนอื่นซ่อนแบบไม่กินที่ ใบเสร็จไหลต่อหน้าตามปกติ
+   เดิมซ่อนด้วย visibility + position:fixed: ส่วนที่ซ่อนยังกินความยาวกระดาษ ใบสั้นพิมพ์ออกมา 2 ใบซ้ำ ใบยาวหน้าถัดไปพิมพ์หัวใบเสร็จทับยอดรวม */
+@page receipt{margin:0}
+#print-area{display:none}
 dialog.dlg{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);color:var(--ink);padding:18px;width:min(28rem,calc(100% - 32px))}
 dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 .dlg h3{margin:0 0 6px}
@@ -243,9 +247,12 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 #toast.on{opacity:1}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
 @media print{
-  body.pm-receipt *{visibility:hidden}
-  body.pm-receipt .view:not([hidden]) .receipt,body.pm-receipt .view:not([hidden]) .receipt *{visibility:visible}
-  body.pm-receipt .view:not([hidden]) .receipt{position:fixed;left:0;top:0;width:80mm;max-width:none;box-shadow:none;border-radius:0;padding:4mm}
+  body.pm-receipt>*:not(#print-area){display:none!important}
+  body.pm-receipt{background:#fff}
+  body.pm-receipt #print-area{display:block;page:receipt}
+  /* กว้าง 72 มม. = พื้นที่พิมพ์จริงของเครื่องพิมพ์ความร้อน 80 มม. ส่วนใหญ่ (กระดาษ 58 มม. เลือกย่อในหน้าต่างพิมพ์) */
+  body.pm-receipt #print-area .receipt{width:72mm;max-width:none;margin:0 auto;box-shadow:none;border:0;border-radius:0;padding:3mm 0;background:#fff}
+  body.pm-receipt #print-area tr,body.pm-receipt #print-area .qr{break-inside:avoid;page-break-inside:avoid}
   body.pm-qr .top,body.pm-qr .np{display:none!important}
   body.pm-qr{background:#fff;padding:0}
   body.pm-receipt{padding:0}
@@ -300,6 +307,7 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
   <section class="view" id="v-settings" hidden></section>
 </div>
 <div id="toast" role="status"></div>
+<div id="print-area" aria-hidden="true"></div>
 <!-- อยู่นอกส่วนที่ re-render: ถ้ามีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ input จะไม่ถูกแทนที่ ไฟล์ที่เลือกจึงไม่หาย -->
 <input type="file" id="e-file" accept="image/*" hidden>
 <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp" hidden>
@@ -1398,10 +1406,20 @@ function render(){
 
 /* ---------- events ---------- */
 function printMode(mode,extra){
+  var pa=$('#print-area');
+  if(mode==='receipt'){
+    var src=document.querySelector('.view:not([hidden]) .receipt');
+    if(!src){toast('ไม่พบใบเสร็จที่จะพิมพ์');return;}
+    pa.innerHTML='';pa.appendChild(src.cloneNode(true));
+  }
   document.body.classList.add('pm-'+mode);if(extra)document.body.classList.add(extra);
-  var done=function(){document.body.classList.remove('pm-'+mode);if(extra)document.body.classList.remove(extra);document.querySelectorAll('.qcard.pick').forEach(function(c){c.classList.remove('pick');});window.removeEventListener('afterprint',done);};
+  var done=function(){document.body.classList.remove('pm-'+mode);if(extra)document.body.classList.remove(extra);pa.innerHTML='';document.querySelectorAll('.qcard.pick').forEach(function(c){c.classList.remove('pick');});window.removeEventListener('afterprint',done);};
   window.addEventListener('afterprint',done);
-  setTimeout(function(){window.print();},50);
+  // รอรูปในสำเนา (โลโก้ / รูป QR รับเงิน) โหลดเสร็จก่อนสั่งพิมพ์ ไม่อย่างนั้นได้ช่องว่างแทนรูป QR (รอไม่เกิน 3 วินาที)
+  var wait=Array.prototype.slice.call(pa.querySelectorAll('img')).filter(function(i){return !i.complete;}).map(function(i){
+    return new Promise(function(r){i.addEventListener('load',r);i.addEventListener('error',r);setTimeout(r,3000);});
+  });
+  Promise.all(wait).then(function(){setTimeout(function(){window.print();},50);});
 }
 document.addEventListener('input',function(e){
   if(e.target.closest&&e.target.closest('#stf')){S.sf={for:S.stEdit,name:($('#sf-name')||{}).value||'',role:($('#sf-role')||{}).value||'cashier'};return;}
