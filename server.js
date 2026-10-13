@@ -33,6 +33,7 @@ if (C.TRUST_PROXY && (C.PIN === '1234' || C.PIN.length < 6)) {
 }
 
 const store = require('./lib/store');
+const theme = require('./lib/theme');
 const backup = require('./lib/backup');
 const { api, clients, requireStaff, lanUrl, lanCandidates } = require('./lib/routes');
 
@@ -92,6 +93,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET') {
       if (url.pathname === '/') { res.writeHead(302, { Location: '/staff' }); return res.end(); }
       if (url.pathname === '/favicon.ico') { res.writeHead(204); return res.end(); }
+      // สีร้านที่เจ้าของตั้ง (สร้างจาก settings.accent ที่ตรวจแล้วเท่านั้น) หน้าเว็บโหลดต่อท้าย <style> ของหน้า
+      if (url.pathname === '/theme.css') {
+        res.writeHead(200, Object.assign({ 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-cache' }, SEC));
+        return res.end(theme.css(store.state.D.settings.accent));
+      }
       if (url.pathname.startsWith('/img/')) {
         const name = url.pathname.slice(5);
         const file = path.join(C.IMG_DIR, name);

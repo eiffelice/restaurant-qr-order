@@ -851,7 +851,7 @@ describe('จาก QA: เงินและข้อมูลไม่หา�
 
 describe('จาก QA: สิทธิ์และการเดารหัส', () => {
   test('ทุก endpoint ของพนักงานตอบ 401 เมื่อไม่มี cookie (endpoint ที่เพิ่มในอนาคตถูกตรวจด้วย)', async () => {
-    const PUBLIC = ['POST /api/login', 'POST /api/logout', 'GET /api/menu', 'GET /api/table', 'POST /api/order', 'POST /api/call'];
+    const PUBLIC = ['POST /api/login', 'POST /api/logout', 'GET /api/menu', 'GET /api/table', 'POST /api/order', 'POST /api/call', 'GET /api/brand'];
     const all = Object.keys(require('../lib/routes').api);
     PUBLIC.forEach(k => assert.ok(all.includes(k), 'รายการ public ไม่ตรงกับ api: ' + k));
     const s = start(makeApp()); await s.ready;
@@ -1115,7 +1115,7 @@ describe('พนักงานรายคนและบทบาท', () => {
 
   test('สิทธิ์ตามบทบาท ตรวจทุก endpoint อัตโนมัติ (endpoint ที่ไม่ได้ประกาศสิทธิ์ = เจ้าของเท่านั้น)', async () => {
     const { api, PERM } = require('../lib/routes');
-    const PUBLIC = ['POST /api/login', 'POST /api/logout', 'GET /api/menu', 'GET /api/table', 'POST /api/order', 'POST /api/call'];
+    const PUBLIC = ['POST /api/login', 'POST /api/logout', 'GET /api/menu', 'GET /api/table', 'POST /api/order', 'POST /api/call', 'GET /api/brand'];
     const s = start(makeApp()); await s.ready; await s.login();
     await withStaff(s);
     const who = { cashier: await device(s, '520011'), kitchen: await device(s, '520022') };
@@ -1303,6 +1303,95 @@ describe('ตามเกณฑ์ตรวจรับ: สถานะออ�
     r = await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 2 }], expect: 150, reqId: 'aa11bb22cc33' });
     assert.equal(r.status, 200, 'ยอดตรงกับที่เห็น สั่งได้ (reqId เดิมใช้ต่อได้ เพราะครั้งก่อนไม่ถูกบันทึก)');
     assert.equal((await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] })).status, 200, 'หน้าเก่าที่ไม่ส่ง expect ยังสั่งได้');
+    await s.stop();
+  });
+});
+
+describe('ธีมร้าน: สีปุ่มและโลโก้', () => {
+  const logoUp = (s, buf, type, cookie) => fetch(s.B + '/api/settings/logo', { method: 'POST', headers: { 'content-type': type || 'image/jpeg', cookie: cookie === undefined ? s.cookie : cookie }, body: buf })
+    .then(async r => ({ status: r.status, json: await r.json().catch(() => null) }));
+
+  test('สีที่เจ้าของเลือก: ระบบคำนวณสีตัวหนังสือให้ผ่าน WCAG AA ทุกสีตัวอย่าง ทั้ง light และ dark', () => {
+    const T = require('../lib/theme');
+    for (const p of T.PRESETS.filter(x => x.color).concat([{ color: '#ffff00' }, { color: '#000000' }, { color: '#84cc16' }])) {
+      const d = T.derive(p.color);
+      assert.ok(d.ok, p.color);
+      for (const [m, bgs] of [['light', ['#ffffff', '#f8fafc']], ['dark', ['#111827', '#0b0f17']]]) {
+        const v = d[m];
+        assert.ok(T.contrast(v.accent, v['accent-ink']) >= 4.5, p.color + ' ' + m + ' ตัวหนังสือบนปุ่ม');
+        for (const bg of bgs.concat(v['accent-soft'])) assert.ok(T.contrast(v['accent-text'], bg) >= 4.5, p.color + ' ' + m + ' ตัวหนังสือสีเน้นบน ' + bg);
+        for (const bg of bgs) assert.ok(T.contrast(v.focus, bg) >= 3, p.color + ' ' + m + ' กรอบโฟกัส');
+      }
+    }
+    assert.equal(T.derive('#ffffff').ok, false, 'สีขาวกลืนกับพื้น ไม่รับ');
+    assert.equal(T.derive('red').ok, false);
+    assert.ok(!T.css('').includes('--accent'), 'ไม่ตั้งสี = ใช้สีตั้งต้นในหน้า');
+  });
+
+  test('ตั้งสีปุ่ม: เจ้าของเท่านั้น สีผิดรูปแบบหรือขาวเกินไม่รับ /theme.css เปลี่ยนตาม และลง audit', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    assert.equal((await c.call('POST', '/api/settings', { accent: '#dc2626' })).status, 403);
+    assert.equal((await s.call('POST', '/api/settings', { accent: 'red;}body{display:none' })).status, 400);
+    assert.equal((await s.call('POST', '/api/settings', { accent: '#fafafa' })).status, 400);
+    assert.equal((await s.call('POST', '/api/settings', { accent: '#DC2626' })).status, 200);
+    let css = await (await fetch(s.B + '/theme.css')).text();
+    assert.match(css, /--accent:#dc2626/);
+    assert.match(css, /prefers-color-scheme:dark/);
+    assert.equal((await s.call('GET', '/api/state')).json.settings.accent, '#dc2626');
+    const p = await s.call('GET', '/api/theme/preview?accent=%23ea580c');
+    assert.ok(p.json.ok && p.json.light['accent-ink'] && p.json.presets.length >= 6);
+    assert.equal((await c.call('GET', '/api/theme/preview?accent=%23ea580c')).status, 403);
+    assert.equal((await s.call('POST', '/api/settings', { accent: '' })).status, 200);
+    css = await (await fetch(s.B + '/theme.css')).text();
+    assert.ok(!css.includes('--accent'), 'กลับเป็นสีตั้งต้น');
+    const ev = readLog(s.dir, 'audit').filter(e => e.action === 'settings.changed' && e.after && 'accent' in e.after);
+    assert.deepEqual(ev.map(e => e.after.accent), ['#dc2626', '']);
+    await s.stop();
+  });
+
+  test('โลโก้: อัปโหลดตรวจจาก magic bytes, แสดงในหน้าเข้าสู่ระบบ/หน้าลูกค้า, เปลี่ยนแล้วไฟล์เก่าถูกลบ, อยู่ในไฟล์สำรอง', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    assert.equal((await logoUp(s, JPG, 'image/jpeg', c.cookie)).status, 403, 'แคชเชียร์เปลี่ยนโลโก้ไม่ได้');
+    assert.equal((await logoUp(s, JPG, 'image/jpeg', '')).status, 401);
+    assert.equal((await logoUp(s, Buffer.from('<svg onload=alert(1)>'), 'image/png')).status, 400, 'ไม่ใช่รูปจริง');
+    const v0 = (await s.guest('GET', '/api/menu')).json.version;
+    const a = await logoUp(s, JPG);
+    assert.equal(a.status, 200);
+    assert.match(a.json.logo, /^logo-[a-f0-9]{8}\.jpg$/);
+    assert.equal((await s.guest('GET', '/api/brand')).json.logo, a.json.logo, 'หน้าเข้าสู่ระบบเห็นโลโก้โดยไม่ต้องเข้าสู่ระบบ');
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.equal(m.logo, a.json.logo);
+    assert.ok(m.version > v0, 'หน้าลูกค้ารู้ว่าต้องโหลดใหม่');
+    assert.equal((await fetch(s.B + '/img/' + a.json.logo)).status, 200);
+    const b = await logoUp(s, JPG);
+    assert.ok(!fs.existsSync(path.join(s.dir, 'images', a.json.logo)), 'โลโก้เก่าถูกลบ');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    assert.ok((await getBackup(s, bk.name)).json.images[b.json.logo], 'โลโก้อยู่ในไฟล์สำรอง');
+    assert.equal((await s.call('POST', '/api/settings/logo/delete', {})).status, 200);
+    assert.equal((await s.guest('GET', '/api/brand')).json.logo, '');
+    assert.equal((await restoreRaw(s, (await getBackup(s, bk.name)).buf)).status, 200);
+    assert.equal((await s.guest('GET', '/api/brand')).json.logo, b.json.logo, 'กู้คืนแล้วโลโก้กลับมา');
+    assert.equal((await fetch(s.B + '/img/' + b.json.logo)).status, 200);
+    const ev = readLog(s.dir, 'audit').map(e => e.action);
+    assert.ok(ev.includes('settings.logo.updated') && ev.includes('settings.logo.removed'));
+    await s.stop();
+  });
+
+  test('data.json ที่มีสีหรือชื่อไฟล์โลโก้แปลกปลอม ถูกล้างเป็นค่าตั้งต้น ไม่หลุดไปใน CSS หรือ path', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.stop();
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    d.settings.accent = '#fff;}*{display:none}'; d.settings.logo = '../data.json';
+    d.menu.items[0].image = 'logo-0123abcd.png';
+    fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready; await s.login();
+    const st2 = (await s.call('GET', '/api/state')).json;
+    assert.deepEqual([st2.settings.accent, st2.settings.logo, st2.menu.items[0].image], ['', '', '']);
+    assert.ok(!(await (await fetch(s.B + '/theme.css')).text()).includes('display'));
     await s.stop();
   });
 });
