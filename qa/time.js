@@ -34,6 +34,24 @@ async function main() {
   ok(/2026-10-31/.test(csvOct) && !/2026-11/.test(csvOct) && /2026-11-01/.test(csvNov), 'CSV แยกเดือนถูก และไม่ระบุเดือนได้เดือนปัจจุบัน (พ.ย.)');
   ok(b.no === a.no + 1, 'เลขบิลต่อเนื่องข้ามเดือน', [a.no, b.no]);
   await s.stop(); rmrf(app.base);
+
+  // ปิดรับ QR ตามเวลา ร้านเปิด 17:00–02:00 (ข้ามเที่ยงคืน): นาฬิกาเดินผ่าน 02:00 และ 17:00 จริง
+  const hoursAt = async (h, m, sec, label, before, after) => {
+    const app2 = makeApp();
+    const s2 = start(app2.code, { FAKE_NOW: new Date(2026, 10, 2, h, m, sec).toISOString() }, ['-r', path.join(__dirname, 'fake-time.js')]);
+    await s2.ready; await s2.login();
+    await s2.call('POST', '/api/settings', { hours: { on: true, open: '17:00', close: '02:00' } });
+    const k = (await s2.call('GET', '/api/state')).json.keys;
+    const order = () => s2.call('POST', '/api/order', { table: 1, key: k[1], items: [{ id: 1, qty: 1 }] }, { staff: false }).then(r => r.status);
+    const x = await order();
+    await sleep((60 - sec) * 1000 + 1500);
+    const y = await order();
+    ok(x === before && y === after, label, { ก่อน: x, หลัง: y });
+    await s2.stop(); rmrf(app2.base);
+  };
+  await hoursAt(1, 59, 55, 'ร้าน 17:00–02:00: 01:59 ยังสั่งได้ พอถึง 02:00 ปิดรับเอง', 200, 403);
+  await hoursAt(16, 59, 55, 'ร้าน 17:00–02:00: 16:59 ยังสั่งไม่ได้ พอถึง 17:00 เปิดรับเอง', 403, 200);
+  await hoursAt(23, 59, 55, 'ร้าน 17:00–02:00: ข้ามเที่ยงคืน 23:59 → 00:00 ยังรับต่อ', 200, 200);
   ok.done();
 }
 main().catch(e => { console.error(e); process.exit(2); });

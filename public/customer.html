@@ -211,6 +211,9 @@ function newReqId(){
 }
 function cartChanged(){reqId=null;saveCart();}
 function closedForGuests(){return STAT&&!STAT.open&&!STAT.staff;}
+// เหตุผลที่สั่งไม่ได้ (ปิดเอง / นอกเวลา / ยังไม่เปิดโต๊ะ) ข้อความมาจากเซิร์ฟเวอร์ที่เดียว
+function closedText(){return (STAT&&STAT.closedText)||'ร้านปิดรับออเดอร์ผ่าน QR ชั่วคราว ดูเมนูได้ แต่สั่งไม่ได้ กรุณาเรียกพนักงาน';}
+function closedShort(){var r=STAT&&STAT.closedReason;return r==='seat'?'รอพนักงานเปิดโต๊ะ':r==='hours'?'นอกเวลารับออเดอร์':'ร้านปิดรับออเดอร์ชั่วคราว';}
 
 function $(s){return document.querySelector(s);}
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -262,7 +265,7 @@ function cartTotal(){return lines.reduce(function(s,l){var m=item(l.id);return s
 
 function api(path, body){
   return fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'})
-    .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});});
+    .then(function(r){return r.json().then(function(j){return {ok:r.ok,status:r.status,j:j};});});
 }
 
 /* ---------- หน้ารายการเมนู ---------- */
@@ -288,7 +291,7 @@ function renderAll(){
   var fsel=fd&&fd.a?'#app [data-a="'+fd.a+'"]'+(fd.id?'[data-id="'+fd.id+'"]':'')+(fd.k?'[data-k="'+fd.k+'"]':''):null;
   var h='<header class="wrap"><div class="hd">'+(M.logo?'<img class="logo" src="/img/'+esc(M.logo)+'" alt="">':'')+
     '<div class="tx"><div class="shop">'+esc(M.shop)+'</div><div class="tno"><h1>โต๊ะ '+T+'</h1>'+(STAT&&STAT.staff?'<span class="pill acc">โหมดพนักงาน</span>':'')+'</div></div></div>'+
-    (closedForGuests()?'<div class="err">ร้านปิดรับออเดอร์ผ่าน QR ชั่วคราว ดูเมนูได้ แต่สั่งไม่ได้ กรุณาเรียกพนักงาน</div>':'')+'</header>';
+    (closedForGuests()?'<div class="err">'+esc(closedText())+' (ดูเมนูได้)</div>':'')+'</header>';
   ensureCat();
   h+='<nav class="cats" aria-label="หมวดอาหาร"><div class="wrap"><div class="in">'+M.categories.map(function(c){return '<button class="cat" data-a="cat" data-id="'+c.id+'" aria-pressed="'+(cat===c.id)+'">'+esc(c.name)+'</button>';}).join('')+'</div></div></nav>';
   // ปุ่มตะกร้าอยู่ล่างจอ (fixed) แต่ใน DOM อยู่ก่อนรายการ คีย์บอร์ด/โปรแกรมอ่านหน้าจอเข้าถึงได้ทันที ไม่ต้องผ่านทุกจาน
@@ -392,9 +395,9 @@ function renderDetail(){
     '<div class="cap-name">'+(cn?'<span class="tag">'+esc(cn)+'</span>':'')+'<h2 id="d-name">'+esc(m.name)+'</h2></div></div>';
   h+='<div class="buy"><div class="notch"><div class="price"><b>'+baht(m.price)+'</b><span>/ จาน</span></div>'+
     '<span class="step"><button data-a="ddec" aria-label="ลดจำนวน"'+(D.qty<=1||cant?' disabled':'')+'>'+IC.minus+'</button><b aria-live="polite">'+D.qty+'</b><button data-a="dinc" aria-label="เพิ่มจำนวน"'+(D.qty>=20||cant?' disabled':'')+'>'+IC.plus+'</button></span></div>'+
-    '<button class="cap" data-a="dadd"'+(cant?' disabled':'')+'><span class="lb">'+(out?'หมดแล้ว':closed?'ร้านปิดรับออเดอร์':'เพิ่มรายการ<br>'+baht(m.price*D.qty))+'</span><span class="arr">'+IC.arr+'</span></button></div>';
+    '<button class="cap" data-a="dadd"'+(cant?' disabled':'')+'><span class="lb">'+(out?'หมดแล้ว':closed?esc(closedShort()):'เพิ่มรายการ<br>'+baht(m.price*D.qty))+'</span><span class="arr">'+IC.arr+'</span></button></div>';
   h+='<div class="d-body">';
-  if(closed)h+='<div class="err">ร้านปิดรับออเดอร์ผ่าน QR ชั่วคราว ดูเมนูได้ แต่สั่งไม่ได้ กรุณาเรียกพนักงาน</div>';
+  if(closed)h+='<div class="err">'+esc(closedText())+'</div>';
   if(M.notes.length){
     h+='<div class="tabs" role="tablist" aria-label="ข้อมูลเมนู"><button role="tab" id="tab-desc" data-a="dtab" data-t="desc" aria-selected="'+(D.tab==='desc')+'" aria-controls="d-panel">รายละเอียด</button>'+
       '<button role="tab" id="tab-notes" data-a="dtab" data-t="notes" aria-selected="'+(D.tab==='notes')+'" aria-controls="d-panel">หมายเหตุ'+(D.note.length?' ('+D.note.length+')':'')+'</button></div>';
@@ -449,7 +452,7 @@ function renderSheet(){
     h+='<div class="total"><span>รวม</span><span>'+baht(cartTotal())+'</span></div>';
     var closed=closedForGuests(),over=cartCount()>MAX_QTY||lines.length>MAX_LINES;
     if(over)h+='<div class="err" role="alert">สั่งได้ครั้งละไม่เกิน '+MAX_QTY+' จาน ('+MAX_LINES+' รายการ) ลดจำนวนแล้วสั่งส่วนที่เหลือในครั้งถัดไป</div>';
-    h+='<button class="cap" data-a="send"'+(sending||closed||over?' disabled':'')+'><span class="lb">'+(closed?'ร้านปิดรับออเดอร์ชั่วคราว':(sending?'กำลังส่ง…':'สั่งอาหาร · '+baht(cartTotal())))+'</span><span class="arr">'+IC.arr+'</span></button>';
+    h+='<button class="cap" data-a="send"'+(sending||closed||over?' disabled':'')+'><span class="lb">'+(closed?esc(closedShort()):(sending?'กำลังส่ง…':'สั่งอาหาร · '+baht(cartTotal())))+'</span><span class="arr">'+IC.arr+'</span></button>';
     h+='<div class="small muted" style="text-align:center;margin-top:8px">ราคายังไม่รวมค่าบริการและภาษี (ถ้ามี)</div>';
   }
   var keep=document.activeElement&&document.activeElement.id==='memo';
@@ -470,7 +473,7 @@ function applyStat(s){
     }
     return;
   }
-  var before=STAT?(STAT.open+'|'+(STAT.soldOut||[]).join(',')):null;
+  var before=STAT?(STAT.open+'|'+STAT.closedReason+'|'+(STAT.soldOut||[]).join(',')):null;
   STAT=s;
   var out=s.soldOut||[],removed=[],gone=0;
   M.items.forEach(function(m){m.soldOut=out.indexOf(m.id)>=0;});
@@ -480,7 +483,7 @@ function applyStat(s){
     openNotes={};cartChanged();
     toast((removed.length?removed.join(', ')+' หมดแล้ว ':'')+(gone?'มีเมนูที่ไม่มีขายแล้ว ':'')+'นำออกจากรายการสั่งให้แล้ว');
   }
-  var after=s.open+'|'+out.join(',');
+  var after=s.open+'|'+s.closedReason+'|'+out.join(',');
   if(before!==after||removed.length||gone){
     renderAll();renderSheet();
     if(D)renderDetail();       // เมนูหมด/ร้านปิดรับ/เมนูเปลี่ยน ระหว่างเปิดหน้ารายละเอียด: ปุ่มเปลี่ยนทันที (ไม่วาดใหม่ทุกรอบ poll โฟกัสจะหลุด)
@@ -494,6 +497,8 @@ function refreshStatus(){
   api('/api/table?t='+T+'&k='+encodeURIComponent(K)).then(function(r){
     setOnline(true);
     if(r.ok)applyStat(r.j);
+    // ร้านเปลี่ยนรหัส QR โต๊ะนี้ (หรือลดโต๊ะ) ระหว่างเปิดหน้าค้างไว้: บอกให้สแกนใหม่ ไม่ค้างแสดงเมนูที่สั่งไม่ได้
+    else if(r.status===403||r.status===400){D=null;sheetOpen=false;document.body.classList.remove('lock');$('#detail').hidden=true;$('#sheetbg').hidden=true;$('.bar')&&$('.bar').remove();fatal(r.j.error||'QR นี้ใช้ไม่ได้แล้ว');}
   }).catch(function(){setOnline(false);});
 }
 window.addEventListener('offline',function(){$('#offline').hidden=false;});

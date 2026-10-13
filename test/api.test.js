@@ -1419,3 +1419,161 @@ describe('จาก security review: เดา PIN เจ้าของผ่�
     await s.stop();
   });
 });
+
+describe('กันออเดอร์ปลอมและการแกล้ง', () => {
+  const hhmm = m => { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+  const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+
+  test('พนักงานบทบาทเจ้าของ (ไม่ใช่ STAFF_PIN) ใส่ PIN อนุมัติยกเลิกออเดอร์ได้', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    await s.call('POST', '/api/staff', { name: 'หุ้นส่วน', role: 'owner', pin: '730001' });
+    const c = await device(s, '520011');
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const id = (await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] })).json.tickets[0];
+    await s.call('POST', '/api/ticket', { id, from: 'new', status: 'cooking' });
+    const r = await c.call('POST', '/api/ticket/void', { id, reason: 'ลูกค้าเปลี่ยนใจ', approvePin: '730001' });
+    assert.equal(r.status, 200, 'PIN ของหุ้นส่วนที่เป็นเจ้าของอนุมัติได้');
+    assert.equal(readLog(s.dir, 'audit').find(e => e.action === 'ticket.voided').approvedBy.name, 'หุ้นส่วน');
+    await s.stop();
+  });
+
+  test('ต้องเปิดโต๊ะก่อนสั่ง: QR โต๊ะว่างสั่งไม่ได้ เรียกพนักงานได้ เปิดโต๊ะแล้วสั่งได้ ปิดบิลแล้วโต๊ะปิดเอง', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const order = t => s.guest('POST', '/api/order', { table: t, key: keys[t], items: [{ id: 1, qty: 1 }] });
+    assert.equal((await order(2)).status, 200, 'โต๊ะ 2 มีลูกค้าก่อนเปิดใช้โหมดนี้');
+    assert.equal((await s.call('POST', '/api/settings', { requireSeat: true })).status, 200);
+    let r = await order(1);
+    assert.deepEqual([r.status, r.json.code], [403, 'seat'], 'โต๊ะว่างที่ยังไม่เปิด สั่งผ่าน QR ไม่ได้');
+    let tb = (await s.guest('GET', '/api/table?t=1&k=' + keys[1])).json;
+    assert.deepEqual([tb.open, tb.closedReason, tb.seated], [false, 'seat', false]);
+    assert.match(tb.closedText, /เรียกพนักงาน/);
+    assert.equal((await s.guest('POST', '/api/call', { table: 1, key: keys[1], kind: 'staff' })).status, 200, 'ยังเรียกพนักงานมาเปิดโต๊ะได้');
+    assert.equal((await order(2)).status, 200, 'โต๊ะที่มีออเดอร์อยู่แล้วสั่งเพิ่มได้ ไม่ต้องเปิดใหม่');
+    assert.equal((await s.call('POST', '/api/order', { table: 3, items: [{ id: 1, qty: 1 }] })).status, 200, 'พนักงานสั่งแทนได้เสมอ');
+    const k = await device(s, '520022');
+    assert.equal((await k.call('POST', '/api/table/seat', { table: 1, open: true })).status, 403, 'ครัวเปิดโต๊ะไม่ได้');
+    const c = await device(s, '520011');
+    assert.equal((await c.call('POST', '/api/table/seat', { table: 1, open: true })).status, 200, 'แคชเชียร์เปิดโต๊ะ');
+    assert.equal((await order(1)).status, 200, 'เปิดแล้วลูกค้าสั่งได้');
+    assert.equal((await c.call('POST', '/api/table/seat', { table: 1, open: false })).status, 409, 'ปิดโต๊ะที่ยังมีออเดอร์ไม่ได้');
+    assert.equal((await s.call('POST', '/api/settings', { tables: 1 })).status, 400, 'ลดโต๊ะที่เปิดอยู่ไม่ได้');
+    await payTable(s, 1);
+    r = await order(1);
+    assert.equal(r.status, 403, 'ปิดบิลแล้วโต๊ะปิดเอง ลูกค้าคนถัดไปต้องให้พนักงานเปิดใหม่');
+    assert.ok(!(await s.call('GET', '/api/state')).json.seated[1]);
+    await c.call('POST', '/api/table/seat', { table: 4, open: true });
+    assert.equal((await c.call('POST', '/api/table/seat', { table: 4, open: false })).status, 200, 'ปิดโต๊ะที่เปิดผิดได้');
+    assert.equal((await order(4)).status, 403);
+    const ev = readLog(s.dir, 'audit').map(e => e.action);
+    assert.ok(ev.includes('table.seated') && ev.includes('table.unseated'));
+    assert.ok(readLog(s.dir, 'security').some(e => e.action === 'order.closed' && e.reason === 'seat'), 'ความพยายามสั่งเข้าโต๊ะที่ยังไม่เปิดถูกบันทึก');
+    await s.stop();
+  });
+
+  test('ปิดรับ QR ตามเวลาร้าน: นอกเวลาสั่งไม่ได้ ในเวลาและช่วงข้ามเที่ยงคืนสั่งได้ พนักงานสั่งแทนได้เสมอ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const order = () => s.guest('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] });
+    const m = nowMin();
+    assert.equal((await s.call('POST', '/api/settings', { hours: { on: true, open: hhmm(m + 60), close: hhmm(m + 120) } })).status, 200);
+    let r = await order();
+    assert.deepEqual([r.status, r.json.code], [403, 'hours'], 'ยังไม่ถึงเวลาเปิด');
+    assert.match(r.json.error, new RegExp(hhmm(m + 60)));
+    const tb = (await s.guest('GET', '/api/table?t=1&k=' + keys[1])).json;
+    assert.deepEqual([tb.open, tb.closedReason], [false, 'hours']);
+    assert.equal((await s.call('GET', '/api/state')).json.qrClosed, 'hours', 'หน้าพนักงานรู้ว่านอกเวลา');
+    assert.equal((await s.call('POST', '/api/order', { table: 1, items: [{ id: 1, qty: 1 }] })).status, 200, 'พนักงานสั่งแทนได้');
+    await s.call('POST', '/api/settings', { hours: { on: true, open: hhmm(m - 60), close: hhmm(m + 60) } });
+    assert.equal((await order()).status, 200, 'ในเวลาเปิด');
+    await s.call('POST', '/api/settings', { hours: { on: true, open: hhmm(m - 60), close: hhmm(m - 120) } });
+    assert.equal((await order()).status, 200, 'ร้านเปิดข้ามเที่ยงคืน (เวลาปิดน้อยกว่าเวลาเปิด) ตอนนี้อยู่ในช่วงเปิด');
+    await s.call('POST', '/api/settings', { hours: { on: false, open: hhmm(m + 60), close: hhmm(m + 120) } });
+    assert.equal((await order()).status, 200, 'ปิดการตั้งเวลา = รับตลอด');
+    for (const bad of [{ on: true, open: '25:00', close: '10:00' }, { on: true, open: '10:00', close: '10:00' }, { on: 'yes', open: '10:00', close: '11:00' }, 'x'])
+      assert.equal((await s.call('POST', '/api/settings', { hours: bad })).status, 400, JSON.stringify(bad));
+    assert.ok(readLog(s.dir, 'audit').some(e => e.action === 'settings.changed' && e.after && e.after.hours), 'เปลี่ยนเวลาลง audit');
+    await s.stop();
+  });
+
+  test('เปลี่ยนรหัส QR โต๊ะเดียว: QR เก่าโต๊ะนั้นใช้ไม่ได้ทันที โต๊ะอื่นไม่กระทบ เจ้าของเท่านั้น และไม่บันทึกรหัสใน log', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const c = await device(s, '520011');
+    assert.equal((await c.call('POST', '/api/table/rekey', { table: 3 })).status, 403, 'แคชเชียร์เปลี่ยนไม่ได้');
+    assert.equal((await s.call('POST', '/api/table/rekey', { table: 3 })).status, 200);
+    const k2 = (await s.call('GET', '/api/state')).json.keys;
+    assert.notEqual(k2[3], keys[3]);
+    assert.equal(k2[4], keys[4], 'โต๊ะอื่นรหัสเดิม');
+    assert.equal((await s.guest('GET', '/api/table?t=3&k=' + keys[3])).status, 403, 'QR แผ่นเก่าใช้ไม่ได้');
+    assert.equal((await s.guest('GET', '/api/table?t=3&k=' + k2[3])).status, 200, 'QR แผ่นใหม่ใช้ได้');
+    const text = allLogText(s.dir);
+    assert.ok(text.includes('table.rekeyed') && !text.includes(keys[3]) && !text.includes(k2[3]), 'log บอกว่าเปลี่ยน แต่ไม่มีตัวรหัส');
+    await s.stop();
+  });
+});
+
+describe('ยืนยัน PIN ซ้ำก่อนทำเรื่องสำคัญ และอายุการเข้าสู่ระบบของเจ้าของ', () => {
+  test('เกิน REAUTH_SEC หลังเข้าสู่ระบบ: เปลี่ยน PromptPay จัดการพนักงาน ดาวน์โหลดไฟล์สำรอง กู้คืน เปลี่ยนรหัส QR ต้องใส่ PIN ซ้ำ', async () => {
+    const s = start(makeApp(), { REAUTH_SEC: '1.5' }); await s.ready; await s.login();
+    assert.equal((await s.call('POST', '/api/settings', { promptpay: '0811111111' })).status, 200, 'เพิ่งเข้าสู่ระบบ ทำได้เลย');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    const file = (await getBackup(s, bk.name)).buf;
+    await new Promise(r => setTimeout(r, 1700));
+    const need = async (r, what) => { assert.equal(r.status, 403, what); assert.equal(r.json && r.json.code, 'reauth', what); };
+    await need(await s.call('POST', '/api/settings', { promptpay: '0822222222' }), 'เปลี่ยน PromptPay');
+    await need(await s.call('POST', '/api/settings', { baseUrl: 'http://evil.example' }), 'เปลี่ยนที่อยู่ใน QR');
+    assert.equal((await s.call('POST', '/api/settings', { shop: 'ร้านใหม่' })).status, 200, 'แก้ชื่อร้านไม่ต้องยืนยัน');
+    await need(await s.call('POST', '/api/staff', { name: 'ใหม่', role: 'cashier', pin: '640001' }), 'เพิ่มพนักงาน');
+    await need(await s.call('POST', '/api/staff/logout-all', { id: 'owner' }), 'สั่งออกทุกเครื่อง');
+    await need(await s.call('POST', '/api/table/rekey', { table: 1 }), 'เปลี่ยนรหัส QR');
+    const dl = await fetch(s.B + '/api/backup/download?name=' + bk.name, { headers: { cookie: s.cookie } });
+    assert.equal(dl.status, 403, 'ดาวน์โหลดไฟล์สำรอง'); await dl.body?.cancel();
+    await need(await restoreRaw(s, file), 'กู้คืน');
+    assert.equal((await s.call('GET', '/api/state')).json.settings.promptpay, '0811111111', 'ไม่มีอะไรเปลี่ยน');
+    assert.equal((await s.call('GET', '/api/reauth')).json.fresh, false);
+    assert.equal((await s.call('POST', '/api/reauth', { pin: '000000' })).status, 400, 'PIN ผิด');
+    assert.equal((await s.call('POST', '/api/reauth', { pin: PIN })).status, 200);
+    assert.equal((await s.call('GET', '/api/reauth')).json.fresh, true);
+    assert.equal((await s.call('POST', '/api/settings', { promptpay: '0822222222' })).status, 200, 'ยืนยันแล้วทำได้');
+    assert.equal((await restoreRaw(s, file)).status, 200, 'กู้คืนได้');
+    assert.equal((await s.call('POST', '/api/settings', { promptpay: '0833333333' })).status, 200, 'หลังกู้คืนได้ cookie ใหม่ที่ยืนยันแล้วต่อ');
+    const sec = readLog(s.dir, 'security').map(e => e.action);
+    assert.ok(sec.includes('auth.reauth') && sec.includes('auth.reauth_failed'));
+    assert.ok(!allLogText(s.dir).includes(PIN));
+    await s.stop();
+  });
+
+  test('การยืนยัน PIN ผูกกับเครื่อง: เครื่องหนึ่งยืนยันแล้ว cookie ของอีกเครื่อง (หรือที่ถูกขโมย) ยังต้องยืนยันเอง', async () => {
+    const s = start(makeApp(), { REAUTH_SEC: '1.5' }); await s.ready;
+    const a = await device(s, PIN), b = await device(s, PIN);
+    assert.notEqual(a.cookie, b.cookie, 'แต่ละเครื่องได้ cookie ไม่ซ้ำกัน');
+    await new Promise(r => setTimeout(r, 1700));
+    assert.equal((await a.call('POST', '/api/reauth', { pin: PIN })).status, 200);
+    assert.equal((await a.call('POST', '/api/settings', { promptpay: '0811111111' })).status, 200);
+    assert.equal((await b.call('POST', '/api/settings', { promptpay: '0899999999' })).status, 403, 'อีกเครื่องยังต้องยืนยันเอง');
+    await s.stop();
+  });
+
+  test('เจ้าของหมดอายุการเข้าสู่ระบบตาม OWNER_SESSION_MIN แต่แคชเชียร์ยังอยู่ cookie แบบเดิมของเจ้าของใช้ไม่ได้ ของแคชเชียร์ยังใช้ได้', async () => {
+    const s = start(makeApp(), { OWNER_SESSION_MIN: '0.03' }); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    await new Promise(r => setTimeout(r, 2200));
+    assert.equal((await s.call('GET', '/api/state')).status, 401, 'เจ้าของหมดอายุ ต้องเข้าสู่ระบบใหม่');
+    assert.equal((await c.call('GET', '/api/state')).status, 200, 'แคชเชียร์ไม่หมดอายุ');
+    // cookie แบบเดิม <id>.<ลายเซ็น> (ก่อนเวอร์ชันนี้)
+    const D = JSON.parse(fs.readFileSync(path.join(s.dir, 'data.json'), 'utf8'));
+    const h = x => require('node:crypto').createHmac('sha256', D.secret).update(x).digest('hex');
+    const cs = D.staff.find(x => x.id === c.me.id);
+    const legacy = (id, ver, ph) => 'st=' + id + '.' + h('sess|' + id + '|' + ver + '|' + ph);
+    const get = ck => fetch(s.B + '/api/state', { headers: { cookie: ck } }).then(async r => { await r.body?.cancel(); return r.status; });
+    assert.equal(await get(legacy(cs.id, cs.ver, cs.pinHash)), 200, 'cookie แบบเดิมของแคชเชียร์ยังใช้ได้ (แท็บเล็ตครัวไม่หลุดตอนอัปเดต)');
+    assert.equal(await get(legacy('owner', D.ownerVer || 0, h('pin:' + PIN))), 401, 'cookie แบบเดิมของเจ้าของไม่มีวันหมดอายุ จึงไม่รับ');
+    await s.stop();
+  });
+});
+
