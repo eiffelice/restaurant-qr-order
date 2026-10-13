@@ -182,7 +182,8 @@ select.in{appearance:auto}
 .status-line{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;font-size:.9rem}
 .login{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px}
 .login[hidden]{display:none}
-.login form{width:100%;max-width:20rem;display:flex;flex-direction:column;gap:12px}
+.login form{width:100%;max-width:22rem;display:flex;flex-direction:column;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.12)}
+.login.has-cover{background:linear-gradient(rgba(0,0,0,.5),rgba(0,0,0,.5)),var(--cover) center/cover no-repeat}
 .err{color:var(--crit);font-weight:600;min-height:1.4em}
 .logo{display:block;object-fit:contain;border-radius:var(--r-sm)}
 .login .logo{width:96px;height:96px;margin:0 auto 4px;background:var(--surface);border:1px solid var(--line);padding:6px}
@@ -192,6 +193,8 @@ select.in{appearance:auto}
 .theme-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:16px;align-items:start}
 .logo-box{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .logo-box .logo,.logo-box .ph{width:96px;height:96px;border:1px dashed var(--line-strong);background:var(--surface2);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.8rem;text-align:center;padding:4px}
+.cover-box{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.cover-box .cv,.cover-box .ph{width:200px;aspect-ratio:16/9;border-radius:var(--r);object-fit:cover;border:1px dashed var(--line-strong);background:var(--surface2);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.8rem;text-align:center;padding:4px}
 .swatches{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 .swatch{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line-strong);background:var(--surface);border-radius:99px;padding:4px 12px 4px 4px;min-height:40px;font-size:.85rem;font-weight:600}
 .swatch i{width:30px;height:30px;border-radius:50%;border:1px solid rgba(0,0,0,.15);flex:none}
@@ -295,6 +298,7 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 <!-- อยู่นอกส่วนที่ re-render: ถ้ามีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ input จะไม่ถูกแทนที่ ไฟล์ที่เลือกจึงไม่หาย -->
 <input type="file" id="e-file" accept="image/*" hidden>
 <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp" hidden>
+<input type="file" id="cover-file" accept="image/png,image/jpeg,image/webp" hidden>
 <!-- ใส่ PIN ซ้ำก่อนทำเรื่องสำคัญ (เซิร์ฟเวอร์ตอบ 403 code reauth แล้ว api() เปิดหน้าต่างนี้ ยืนยันแล้วส่งคำขอเดิมซ้ำให้เอง) -->
 <dialog class="dlg" id="reauth-dlg" aria-labelledby="ra-h">
   <form method="dialog" id="ra-form">
@@ -934,11 +938,15 @@ function renderTheme(){
   if((s.accent||'')!==T.base){if(T.pick===T.base){T.pick=s.accent||'';T.err='';previewTheme(T.pick);}T.base=s.accent||'';}
   if(!T.presets.length&&!T.loading){T.loading=true;previewTheme(T.pick);}
   var cur=T.pick||'';
-  var h='<div class="sec-title"><h3>หน้าตาร้าน</h3><span class="muted small">โลโก้และสีปุ่ม ใช้ทั้งหน้าลูกค้า หน้าพนักงาน ใบเสร็จ และแผ่น QR</span></div><div class="theme-grid">';
+  var h='<div class="sec-title"><h3>หน้าตาร้าน</h3><span class="muted small">โลโก้ ภาพพื้นหลัง และสีปุ่ม ใช้ทั้งหน้าลูกค้า หน้าพนักงาน ใบเสร็จ และแผ่น QR</span></div><div class="theme-grid">';
   h+='<div class="stack" style="gap:8px"><b>โลโก้ร้าน</b><div class="logo-box">'+(s.logo?'<img class="logo" src="/img/'+esc(s.logo)+'" alt="โลโก้ร้านปัจจุบัน">':'<div class="ph">ยังไม่มีโลโก้</div>')+
     '<div class="stack" style="gap:6px"><label class="btn" for="logo-file">'+(s.logo?'เปลี่ยนโลโก้':'เลือกรูปโลโก้')+'</label>'+
     (s.logo?'<button class="btn'+(armed('logodel')?' danger':'')+'" data-a="logodel">'+(armed('logodel')?'ยืนยันเอาโลโก้ออก':'เอาโลโก้ออก')+'</button>':'')+'</div></div>'+
-    '<span class="muted small">PNG พื้นใส หรือ JPG สี่เหลี่ยมจัตุรัส ระบบย่อเหลือ 512 px ให้เอง</span></div>';
+    '<span class="muted small">PNG พื้นใส หรือ JPG สี่เหลี่ยมจัตุรัส ระบบย่อเหลือ 512 px ให้เอง</span>'+
+    '<b style="margin-top:10px">ภาพพื้นหลังหน้าลูกค้า</b><div class="cover-box">'+(s.cover?'<img class="cv" src="/img/'+esc(s.cover)+'" alt="ภาพพื้นหลังปัจจุบัน">':'<div class="ph">ยังไม่มีภาพ (ใช้สีร้านไล่สีแทน)</div>')+
+    '<div class="stack" style="gap:6px"><label class="btn" for="cover-file">'+(s.cover?'เปลี่ยนภาพพื้นหลัง':'เลือกภาพพื้นหลัง')+'</label>'+
+    (s.cover?'<button class="btn" data-a="coverdel">เอาภาพพื้นหลังออก</button>':'')+'</div></div>'+
+    '<span class="muted small">ภาพแนวนอน เช่น หน้าร้าน หรืออาหารเด่น แสดงเต็มที่หัวหน้าลูกค้า และจางๆ เป็นพื้นหลังทั้งหน้า (ตัวหนังสือยังอ่านชัด) ใช้เป็นพื้นหลังหน้าใส่รหัสพนักงานด้วย ระบบย่อเหลือ 1600 px ให้เอง</span></div>';
   h+='<div class="stack" style="gap:6px"><b>สีปุ่มหลัก</b><div class="swatches" role="group" aria-label="ชุดสีสำเร็จรูป">'+T.presets.map(function(p){
     return '<button class="swatch" data-a="tpreset" data-c="'+esc(p.color)+'" aria-pressed="'+(cur===p.color)+'"><i style="background:'+esc(p.color||'#84cc16')+'"></i>'+esc(p.name)+'</button>';
   }).join('')+'</div>'+
@@ -984,6 +992,30 @@ function resizeLogo(file){
     img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('เปิดไฟล์รูปนี้ไม่ได้ ลองใช้ไฟล์ PNG หรือ JPG'));};
     img.src=url;
   });
+}
+function resizeCover(file){
+  return new Promise(function(resolve,reject){
+    var url=URL.createObjectURL(file),img=new Image();
+    img.onload=function(){
+      var max=1600,w=img.naturalWidth,h=img.naturalHeight,k=Math.min(1,max/Math.max(w,h));
+      w=Math.max(1,Math.round(w*k));h=Math.max(1,Math.round(h*k));
+      var c=document.createElement('canvas');c.width=w;c.height=h;var x=c.getContext('2d');x.fillStyle='#ffffff';x.fillRect(0,0,w,h);x.drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);
+      c.toBlob(function(b){b?resolve(b):reject(new Error('แปลงรูปไม่สำเร็จ'));},'image/jpeg',0.82);
+    };
+    img.onerror=function(){URL.revokeObjectURL(url);reject(new Error('เปิดไฟล์รูปนี้ไม่ได้ ลองใช้ไฟล์ JPG หรือ PNG'));};
+    img.src=url;
+  });
+}
+function uploadCover(file){
+  toast('กำลังอัปโหลดภาพพื้นหลัง…');
+  resizeCover(file).then(function(blob){
+    return fetch('/api/settings/cover',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:blob,credentials:'same-origin'})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,status:r.status,j:j};},function(){return {ok:false,status:r.status,j:{}};});});
+  }).then(function(r){
+    if(!r.ok){toast(r.j.error||'อัปโหลดภาพไม่สำเร็จ');if(r.status===401)showLogin();return;}
+    toast('เปลี่ยนภาพพื้นหลังแล้ว หน้าลูกค้าที่เปิดอยู่จะเปลี่ยนตามภายใน 5 วินาที');load();
+  },function(err){toast(err.message||'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');});
 }
 function uploadLogo(file){
   resizeLogo(file).then(function(blob){
@@ -1263,6 +1295,7 @@ document.addEventListener('change',function(e){
   }
   if(e.target.id==='rs-file'&&f)pickRestore(f);
   if(e.target.id==='logo-file'&&f)uploadLogo(f);
+  if(e.target.id==='cover-file'&&f)uploadCover(f);
 });
 document.addEventListener('keydown',function(e){
   if(e.key!=='Enter')return;
@@ -1336,6 +1369,10 @@ document.addEventListener('click',function(e){
   else if(a==='tsave'){
     var T=S.theme;T.saving=true;renderTheme();
     act('/api/settings',{accent:T.pick},'บันทึกสีแล้ว').then(function(r){T.saving=false;if(r&&!r.ok)T.err=r.j.error||'';if(r&&r.ok)load();else renderTheme();});
+  }
+  else if(a==='coverdel'){
+    confirmBox({title:'เอาภาพพื้นหลังออก?',lines:['หน้าลูกค้าและหน้าใส่รหัสพนักงานจะกลับไปใช้สีร้านไล่สีแทน','ไฟล์ภาพถูกลบจากเครื่อง ถ้าต้องการใช้อีกต้องอัปโหลดใหม่'],ok:'เอาภาพออก'})
+      .then(function(ok){if(ok)act('/api/settings/cover/delete',{},'เอาภาพพื้นหลังออกแล้ว').then(function(r){if(r&&r.ok)load();});});
   }
   else if(a==='logodel'){
     confirmBox({title:'เอาโลโก้ร้านออก?',lines:['โลโก้จะหายจากหน้าลูกค้า หน้าเข้าสู่ระบบ ใบเสร็จ และแผ่น QR','ไฟล์โลโก้ถูกลบจากเครื่อง ถ้าต้องการใช้อีกต้องอัปโหลดใหม่'],ok:'เอาโลโก้ออก'})
@@ -1440,7 +1477,9 @@ document.addEventListener('click',function(e){
 });
 setInterval(function(){if(S.d&&S.tab==='kitchen')renderKitchen();},20000);
 // หน้าเข้าสู่ระบบ: โลโก้และชื่อร้าน (ดูได้ก่อนเข้าสู่ระบบ ไม่มีข้อมูลลับ)
-api('/api/brand').then(function(r){if(!r.ok)return;setLogo($('#login-logo'),r.j.logo);$('#login-logo').alt=r.j.logo?'โลโก้ '+r.j.shop:'';$('#login-shop').textContent=r.j.shop||'';},function(){});
+api('/api/brand').then(function(r){if(!r.ok)return;
+  if(r.j.cover){$('#login').style.setProperty('--cover','url("/img/'+String(r.j.cover).replace(/[^a-z0-9.-]/gi,'')+'")');$('#login').classList.add('has-cover');}
+  setLogo($('#login-logo'),r.j.logo);$('#login-logo').alt=r.j.logo?'โลโก้ '+r.j.shop:'';$('#login-shop').textContent=r.j.shop||'';},function(){});
 load();
 })();
 </script>

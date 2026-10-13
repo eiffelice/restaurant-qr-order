@@ -1577,3 +1577,63 @@ describe('ยืนยัน PIN ซ้ำก่อนทำเรื่อง�
   });
 });
 
+describe('ภาพพื้นหลังหน้าลูกค้าและเมนูขายดี', () => {
+  const up = (s, buf, type, cookie, kind) => fetch(s.B + '/api/settings/' + (kind || 'cover'), { method: 'POST', headers: { 'content-type': type || 'image/jpeg', cookie: cookie === undefined ? s.cookie : cookie }, body: buf })
+    .then(async r => ({ status: r.status, json: await r.json().catch(() => null) }));
+
+  test('ภาพพื้นหลัง: เจ้าของเท่านั้น ตรวจ magic bytes แสดงในเมนูและหน้าเข้าสู่ระบบ เปลี่ยนแล้วไฟล์เก่าถูกลบ อยู่ในไฟล์สำรอง', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    assert.equal((await up(s, JPG, 'image/jpeg', c.cookie)).status, 403, 'แคชเชียร์เปลี่ยนไม่ได้');
+    assert.equal((await up(s, JPG, 'image/jpeg', '')).status, 401);
+    assert.equal((await up(s, Buffer.from('<svg/>'), 'image/png')).status, 400, 'ไม่ใช่รูปจริง');
+    const v0 = (await s.guest('GET', '/api/menu')).json.version;
+    const a = await up(s, JPG);
+    assert.equal(a.status, 200);
+    assert.match(a.json.cover, /^cover-[a-f0-9]{8}\.jpg$/);
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.equal(m.cover, a.json.cover);
+    assert.ok(m.version > v0, 'หน้าลูกค้าที่เปิดอยู่รู้ว่าต้องโหลดใหม่');
+    assert.equal((await s.guest('GET', '/api/brand')).json.cover, a.json.cover, 'หน้าเข้าสู่ระบบใช้ภาพเดียวกัน');
+    assert.equal((await fetch(s.B + '/img/' + a.json.cover)).status, 200);
+    const b = await up(s, JPG);
+    assert.ok(!fs.existsSync(path.join(s.dir, 'images', a.json.cover)), 'ภาพเก่าถูกลบ');
+    assert.equal((await up(s, JPG, 'image/jpeg', undefined, 'logo')).status, 200);
+    const st = (await s.call('GET', '/api/state')).json.settings;
+    assert.ok(st.cover === b.json.cover && st.logo, 'ภาพพื้นหลังกับโลโก้แยกกัน ไม่ทับกัน');
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    assert.ok((await getBackup(s, bk.name)).json.images[b.json.cover], 'ภาพพื้นหลังอยู่ในไฟล์สำรอง');
+    assert.equal((await s.call('POST', '/api/settings/cover/delete', {})).status, 200);
+    assert.equal((await s.guest('GET', '/api/menu')).json.cover, '');
+    assert.ok(!fs.existsSync(path.join(s.dir, 'images', b.json.cover)));
+    const ev = readLog(s.dir, 'audit').map(e => e.action);
+    assert.ok(ev.includes('settings.cover.updated') && ev.includes('settings.cover.removed'));
+    await s.stop();
+  });
+
+  test('ชื่อไฟล์ภาพพื้นหลังแปลกปลอมใน data.json ถูกล้าง และรูปเมนูอ้างไฟล์ภาพพื้นหลังไม่ได้', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.stop();
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    d.settings.cover = '../data.json'; d.menu.items[0].image = 'cover-0123abcd.jpg';
+    fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready;
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.deepEqual([m.cover, m.items[0].image], ['', '']);
+    await s.stop();
+  });
+
+  test('เมนูขายดี: 3 เมนูที่ขายมากสุดใน 7 วันจากบิลจริง (อย่างน้อย 3 จาน) ไม่มีบิลก็ไม่มีป้าย', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.deepEqual((await s.guest('GET', '/api/menu')).json.popular, [], 'ยังไม่มียอดขาย ไม่มีป้ายขายดี');
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const sell = async (t, items) => { await s.call('POST', '/api/order', { table: t, key: keys[t], items }); await payTable(s, t); };
+    await sell(1, [{ id: 3, qty: 5 }, { id: 1, qty: 4 }, { id: 2, qty: 2 }]);
+    await sell(2, [{ id: 4, qty: 3 }, { id: 2, qty: 2 }, { id: 5, qty: 2 }]);
+    const pop = (await s.guest('GET', '/api/menu')).json.popular;
+    assert.deepEqual(pop, [3, 1, 2], 'เรียงตามจำนวนจาน (2 = 4 จานรวมสองบิล), เมนู 5 ขายแค่ 2 จาน ไม่ได้ป้าย');
+    await s.stop();
+  });
+});
+

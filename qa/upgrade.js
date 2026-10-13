@@ -46,7 +46,10 @@ const get = (s, p, cookie) => fetch(s.B + p, { headers: cookie ? { cookie } : {}
   if (!up) { rmrf(app.base); return ok.done(); }
   // ---------- ตรวจหลังอัปเดต ----------
   ok((await get(s, '/api/state', cashOld.cookie)).status === 200, 'แท็บเล็ตแคชเชียร์ที่เข้าอยู่ ไม่หลุด (cookie แบบเดิมยังใช้ได้)');
-  ok((await get(s, '/api/state', ownerOld.cookie)).status === 401, 'เจ้าของต้องเข้าสู่ระบบใหม่หนึ่งครั้ง (cookie แบบเดิมไม่มีวันหมดอายุ)');
+  // cookie แบบเดิม <id>.<sig> (ก่อนมีวันหมดอายุ) ต้องหลุด ถ้าเวอร์ชันเก่าออก <id>.<iat>.<sig> อยู่แล้ว ต้องไม่หลุด
+  const legacy = /^st=[^.;]+\.[^.;]+(;|$)/.test(ownerOld.cookie);
+  ok((await get(s, '/api/state', ownerOld.cookie)).status === (legacy ? 401 : 200),
+    legacy ? 'เจ้าของต้องเข้าสู่ระบบใหม่หนึ่งครั้ง (cookie แบบเดิมไม่มีวันหมดอายุ)' : 'เจ้าของที่เข้าอยู่ไม่หลุด (เวอร์ชันเก่ามีวันหมดอายุอยู่แล้ว)');
   await s.login();
   const after = (await s.call('GET', '/api/state')).json;
   ok(JSON.stringify(after.keys) === JSON.stringify(keys), 'รหัส QR ทุกโต๊ะเหมือนเดิม (QR ที่พิมพ์ติดโต๊ะใช้ต่อได้)');

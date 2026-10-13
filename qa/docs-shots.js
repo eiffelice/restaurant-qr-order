@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, rmrf, PIN, fakePhoto } = require('./lib');
+const { makeApp, start, sleep, rmrf, PIN, fakePhoto, fakeCover } = require('./lib');
 
 const OUT = path.join(__dirname, '..', 'docs', 'screenshots');
 const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
@@ -21,6 +21,7 @@ const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
   // ---------- ข้อมูลร้านตัวอย่าง ----------
   await s.call('POST', '/api/settings', { baseUrl: 'http://192.168.1.50:3000', shop: 'ครัวป้าแดง', address: '88/8 ถ.สุขุมวิท แขวงคลองตัน เขตคลองเตย กรุงเทพฯ', phone: '02-123-4567', promptpay: '0812345678', footer: 'ขอบคุณที่อุดหนุนค่ะ' });
   await s.call('POST', '/api/settings/logo', await fakePhoto(browser, 8, 300), png);
+  await s.call('POST', '/api/settings/cover', await fakeCover(browser, 20), { headers: { 'content-type': 'image/jpeg' } });
   const hues = { 1: 18, 2: 40, 3: 30, 4: 52, 6: 5, 7: 12, 11: 190, 12: 330 };
   for (const id of Object.keys(hues)) await s.call('POST', '/api/menu/image?id=' + id, await fakePhoto(browser, hues[id]), png);
   const m1 = st0.menu.items.find(i => i.id === 1);

@@ -1,14 +1,14 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto } = require('./lib');
+const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto, fakeCover } = require('./lib');
 
 const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const MOBILE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
@@ -814,6 +814,43 @@ const cases = {
       await ctx.close();
     }
     await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* ภาพพื้นหลังหน้าลูกค้า: อัปโหลดจากหน้าตั้งค่า หน้าลูกค้าที่เปิดอยู่เปลี่ยนตาม หน้าเข้าสู่ระบบใช้ภาพเดียวกัน เอาออกแล้วกลับเป็นไล่สี
+     + ป้ายขายดีจากยอดขายจริง + ท้ายหน้ามีที่อยู่/เบอร์โทร */
+  async cover(browser) {
+    const ok = checker('cover'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { address: '88/8 ถ.สุขุมวิท', phone: '02-123-4567' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 5, key: keys[5], items: [{ id: 3, qty: 4 }] }, { staff: false });
+    const sub = (await s.call('GET', '/api/state')).json.bills[5].sub;
+    await s.call('POST', '/api/pay', { table: 5, expectedSub: sub, method: 'cash' });
+    const c = await customerPage(browser, s, 2, keys[2], errors);
+    ok(!(await c.evaluate(() => document.body.classList.contains('has-cover'))) && await c.$('header.top .cov'), 'ยังไม่มีภาพ: หัวหน้าเป็นพื้นไล่สีจากสีร้าน');
+    ok(await c.$eval('.item:has(.open[data-id="3"]) .badge', e => e.textContent).catch(() => '') === 'ขายดี' && !(await c.$('.item:has(.open[data-id="1"]) .badge')), 'เมนูที่ขายได้ 4 จานมีป้าย "ขายดี" เมนูที่ยังไม่มียอดไม่มีป้าย');
+    ok(/02-123-4567/.test(await c.textContent('footer.foot')) && await c.getAttribute('footer.foot a', 'href') === 'tel:021234567', 'ท้ายหน้ามีที่อยู่และเบอร์โทร กดโทรได้');
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'settings'); await p.waitForSelector('label[for="cover-file"]');
+    await p.setInputFiles('#cover-file', { name: 'cover.jpg', mimeType: 'image/jpeg', buffer: await fakeCover(browser, 20) });
+    await until(async () => !!(await s.call('GET', '/api/state')).json.settings.cover, 8000).catch(() => {});
+    const cv = (await s.call('GET', '/api/state')).json.settings.cover;
+    ok(/^cover-/.test(cv || ''), 'อัปโหลดภาพพื้นหลังจากหน้าตั้งค่า (input อยู่นอกส่วนที่วาดใหม่)', cv);
+    await c.waitForFunction(() => document.body.classList.contains('has-cover'), null, { timeout: 9000 }).catch(() => {});
+    const bg = await c.evaluate(() => getComputedStyle(document.querySelector('header.top .cov')).backgroundImage);
+    ok(bg.includes(cv), 'หน้าลูกค้าที่เปิดอยู่เปลี่ยนเป็นภาพใหม่เอง (ไม่ต้องรีเฟรช)', bg.slice(0, 80));
+    ok(await c.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage.includes('cover-')), 'ภาพจางเป็นพื้นหลังทั้งหน้า');
+    const lp = await (await browser.newContext({ baseURL: s.B })).newPage();
+    await lp.goto('/staff'); await lp.waitForSelector('#login.has-cover', { timeout: 5000 }).catch(() => {});
+    ok(await lp.$('#login.has-cover'), 'หน้าใส่รหัสพนักงานใช้ภาพพื้นหลังของร้าน');
+    await lp.context().close();
+    await p.waitForSelector('[data-a="coverdel"]'); await p.click('[data-a="coverdel"]'); await p.waitForSelector('#confirm-dlg[open]'); await p.click('#cf-ok');
+    await c.waitForFunction(() => !document.body.classList.contains('has-cover'), null, { timeout: 9000 }).catch(() => {});
+    ok(!(await c.evaluate(() => document.body.classList.contains('has-cover'))), 'เอาภาพออก (ผ่านหน้าต่างยืนยัน): หน้าลูกค้ากลับเป็นไล่สี');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

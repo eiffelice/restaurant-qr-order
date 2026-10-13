@@ -38,20 +38,39 @@ svg{flex:none}
 .muted{color:var(--muted)} .small{font-size:.86rem}
 .center{text-align:center;padding:48px 8px}
 
-/* ---------- หัวหน้า ---------- */
-header{padding-block:calc(16px + env(safe-area-inset-top,0px)) 6px}
-.hd{display:flex;align-items:center;gap:12px}
-.hd .logo{width:52px;height:52px;flex:none;border-radius:14px;object-fit:contain;background:var(--surface);border:1px solid var(--line);padding:3px}
+/* ---------- หัวหน้าแบบหน้าปก: ภาพพื้นหลังของร้าน (หรือไล่สีจากสีร้านถ้าไม่มีภาพ) ---------- */
+.top{position:relative;overflow:hidden;min-height:clamp(190px,30vh,280px);display:flex;align-items:flex-end;border-radius:0 0 var(--r-hero) var(--r-hero);padding:calc(18px + env(safe-area-inset-top,0px)) 0 20px;margin-bottom:6px}
+.top .cov{position:absolute;inset:0;background:radial-gradient(120% 90% at 85% 0%,var(--accent-soft) 0,transparent 60%),linear-gradient(160deg,var(--accent-soft),var(--surface2));background:radial-gradient(120% 90% at 85% 0%,color-mix(in srgb,var(--accent) 35%,transparent) 0,transparent 60%),linear-gradient(160deg,var(--accent-soft),var(--surface2))}
+.top.has-cover .cov{background:var(--cover) center/cover no-repeat}
+.top.has-cover .cov::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.25) 0,rgba(0,0,0,.1) 35%,rgba(0,0,0,.72) 100%)}
+.top .wrap{position:relative;width:100%}
+.hd{display:flex;align-items:center;gap:14px}
+.hd .logo{width:68px;height:68px;flex:none;border-radius:50%;object-fit:cover;background:#ffffff;border:3px solid #ffffff;box-shadow:0 6px 18px rgba(0,0,0,.22)}
 .hd .tx{flex:1;min-width:0}
+.hd h1{margin:0;font-size:1.6rem;line-height:1.25;font-weight:700;letter-spacing:-.01em;overflow-wrap:anywhere}
+.hd .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.tchip{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:4px 14px;font-weight:700;background:var(--nav);color:var(--nav-ink)}
+.state{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:4px 12px;font-weight:600;font-size:.85rem;background:var(--ok-bg);color:var(--ok)}
+.state::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.state.off{background:var(--crit-bg);color:var(--crit)}
+.top.has-cover{color:#ffffff}
+.top.has-cover h1{text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.top.has-cover .tchip{background:#ffffff;color:#111827}
+.top .err{margin-bottom:0}
+/* ภาพพื้นหลังจางทั้งหน้า (ตัวหนังสืออยู่บนพื้นที่จางพอให้อ่านได้เสมอ) */
+body.has-cover::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--cover) center/cover no-repeat;opacity:.09;filter:saturate(.7) blur(2px);pointer-events:none}
+.foot{padding:26px 16px 8px;text-align:center;color:var(--muted);font-size:.86rem;line-height:1.6}
+.foot b{color:var(--ink)}
+.foot a{color:var(--accent-text);font-weight:600}
 .shop{font-size:.95rem;color:var(--muted);font-weight:600;overflow-wrap:anywhere;line-height:1.35}
-.tno{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.tno h1{margin:0;font-size:2.1rem;line-height:1.2;font-weight:700;letter-spacing:-.01em}
+
+
 .pill{display:inline-flex;align-items:center;border-radius:99px;padding:2px 10px;font-size:.8rem;font-weight:600;background:var(--surface2);color:var(--muted);white-space:nowrap}
 .pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.warn{background:var(--warn-bg);color:var(--warn)} .pill.acc{background:var(--accent-soft);color:var(--accent-text)} .pill.crit{background:var(--crit-bg);color:var(--crit)}
 .err{background:var(--crit-bg);color:var(--crit);border-radius:var(--r);padding:10px 12px;margin:10px 0;font-weight:500}
 
 /* ---------- หมวด: pill เลื่อนแนวนอน ติดด้านบน ---------- */
-nav.cats{position:sticky;top:0;z-index:4;background:var(--bg);padding-top:env(safe-area-inset-top,0px)}
+nav.cats{position:sticky;top:0;z-index:4;background:var(--bg);background:color-mix(in srgb,var(--bg) 84%,transparent);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);padding-top:env(safe-area-inset-top,0px)}
 nav.cats{box-shadow:0 1px 0 var(--line)}
 nav.cats .in{display:flex;gap:8px;overflow-x:auto;padding:10px 16px 12px;margin-inline:-16px;scrollbar-width:none;scroll-padding-inline:16px;-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
 nav.cats .in::-webkit-scrollbar{display:none}
@@ -60,7 +79,8 @@ nav.cats .in::-webkit-scrollbar{display:none}
 
 /* ---------- การ์ดเมนู 2 คอลัมน์ ---------- */
 .sec{scroll-margin-top:72px}
-.sec h2{font-size:1.2rem;margin:18px 0 10px;line-height:1.35;overflow-wrap:anywhere}
+.sec h2{font-size:1.2rem;margin:20px 0 12px;line-height:1.35;overflow-wrap:anywhere;display:flex;align-items:baseline;gap:4px;flex-wrap:wrap}
+.sec h2::before{content:"";flex:none;align-self:center;width:6px;height:1.1em;border-radius:3px;background:var(--accent);margin-right:8px}
 .sec h2 small{color:var(--muted);font-weight:500;font-size:.85rem;margin-left:6px}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px;padding-block:6px 14px}
 @media (min-width:700px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -74,7 +94,13 @@ nav.cats .in::-webkit-scrollbar{display:none}
 .tn0{--tb:var(--t0);--ti:var(--t0i)} .tn1{--tb:var(--t1);--ti:var(--t1i)} .tn2{--tb:var(--t2);--ti:var(--t2i)} .tn3{--tb:var(--t3);--ti:var(--t3i)} .tn4{--tb:var(--t4);--ti:var(--t4i)}
 .noimg b{font-size:1rem;line-height:1.35;overflow-wrap:anywhere}
 .item .nm{display:block;font-weight:600;font-size:1rem;line-height:1.4;margin-top:8px;overflow-wrap:anywhere;padding-right:2px}
-.item .pr{display:block;color:var(--muted);font-weight:600;font-size:.95rem}
+.item .pr{display:block;color:var(--accent-text);font-weight:700;font-size:1rem}
+.item .open .pic,.item .open .pic img{transition:transform .18s ease}
+.item .open:active .pic{transform:scale(.97)}
+@media (hover:hover){.item .open:hover .pic img{transform:scale(1.04)}}
+.pill.hot{background:var(--nav);color:var(--nav-ink)}
+.bump{animation:bump .35s ease-out}
+@keyframes bump{0%{transform:scale(1)}40%{transform:scale(1.18)}100%{transform:scale(1)}}
 .item .badge{position:absolute;left:8px;top:8px;z-index:1}
 .item.out .pic img,.item.out .noimg{filter:grayscale(1);opacity:.55}
 .item.out .nm,.item.out .pr{color:var(--muted)}
@@ -177,7 +203,7 @@ nav.cats .in::-webkit-scrollbar{display:none}
 #toast{position:fixed;left:16px;right:16px;margin:0 auto;width:fit-content;max-width:30rem;bottom:calc(6.8rem + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:16px;font-weight:600;z-index:30;opacity:0;pointer-events:none;transition:opacity .2s;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.25)}
 #toast.on{opacity:1}
 .offline{position:fixed;left:0;right:0;top:0;z-index:25;background:var(--warn-bg);color:var(--warn);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top,0px)) 16px 8px;text-align:center;font-weight:600;font-size:.92rem}
-@media (prefers-reduced-motion:reduce){#toast{transition:none}.detail,.sheet{animation:none}}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}.detail,.sheet,.bump{animation:none}.item .open .pic,.item .open .pic img{transition:none}}
 </style>
 <link rel="stylesheet" href="/theme.css" id="theme-css">
 </head>
@@ -290,22 +316,28 @@ function picHtml(m){
   // ชื่อหมวดอยู่ที่หัวข้อหมวดแล้ว ไม่ซ้ำในทุกใบ
   return '<span class="noimg '+tone(m.cat)+'" style="position:absolute;inset:0">'+IC.dish+'</span>';
 }
+var bumpId=null;          // จานที่เพิ่งกด + (ให้ปุ่ม/ตัวเลขเด้งหนึ่งครั้ง)
 function cardCtl(m){
   if(m.soldOut||closedForGuests())return '';
   // ปุ่มบนการ์ด = จานปกติ (ไม่มีหมายเหตุ) เสมอ ตัวเพิ่มลดแสดงเมื่อในตะกร้ามีเมนูนี้แถวเดียวและไม่มีหมายเหตุ
   var ls=linesOf(m.id),q=qtyOf(m.id);
-  if(ls.length===1&&!ls[0].note.length)return '<span class="ctl step"><button data-a="dec" data-id="'+m.id+'" aria-label="ลด '+esc(m.name)+'">'+IC.minus+'</button><b aria-live="polite">'+q+'</b><button data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+'"'+(q>=20?' disabled':'')+'>'+IC.plus+'</button></span>';
+  if(ls.length===1&&!ls[0].note.length)return '<span class="ctl step'+(bumpId===m.id?' bump':'')+'"><button data-a="dec" data-id="'+m.id+'" aria-label="ลด '+esc(m.name)+'">'+IC.minus+'</button><b aria-live="polite">'+q+'</b><button data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+'"'+(q>=20?' disabled':'')+'>'+IC.plus+'</button></span>';
   // มีแถวที่ใส่หมายเหตุ: ที่นี่เพิ่มจานปกติอย่างเดียว พร้อมตัวเลขรวม ลด/แก้ในตะกร้า
-  return '<button class="ctl add" data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+(q?' (มีในรายการสั่ง '+q+' จาน)':'')+'">'+IC.plus+(q?'<span class="n" aria-hidden="true">'+q+'</span>':'')+'</button>';
+  return '<button class="ctl add'+(bumpId===m.id?' bump':'')+'" data-a="inc" data-id="'+m.id+'" aria-label="เพิ่ม '+esc(m.name)+(q?' (มีในรายการสั่ง '+q+' จาน)':'')+'">'+IC.plus+(q?'<span class="n" aria-hidden="true">'+q+'</span>':'')+'</button>';
 }
 function renderAll(){
   if(!M){return;}
   // จำปุ่มที่โฟกัสอยู่ (เช่น + ที่เพิ่งกด) วาดใหม่แล้วคืนโฟกัส ไม่ให้เด้งกลับไปบนสุดของหน้า
   var ae=document.activeElement,fd=ae&&$('#app').contains(ae)&&ae.dataset?ae.dataset:null;
   var fsel=fd&&fd.a?'#app [data-a="'+fd.a+'"]'+(fd.id?'[data-id="'+fd.id+'"]':'')+(fd.k?'[data-k="'+fd.k+'"]':''):null;
-  var h='<header class="wrap"><div class="hd">'+(M.logo?'<img class="logo" src="/img/'+esc(M.logo)+'" alt="">':'')+
-    '<div class="tx"><div class="shop">'+esc(M.shop)+'</div><div class="tno"><h1>โต๊ะ '+T+'</h1>'+(STAT&&STAT.staff?'<span class="pill acc">โหมดพนักงาน</span>':'')+'</div></div></div>'+
-    (closedForGuests()?'<div class="err">'+esc(closedText())+' (ดูเมนูได้)</div>':'')+'</header>';
+  // หน้าปก: ภาพพื้นหลังของร้าน (ชื่อไฟล์ผ่าน COVER_RE ที่เซิร์ฟเวอร์แล้ว ใส่ใน CSS variable ผ่าน esc)
+  document.body.classList.toggle('has-cover',!!M.cover);
+  if(M.cover)document.body.style.setProperty('--cover','url("/img/'+M.cover.replace(/[^a-z0-9.-]/gi,'')+'")');else document.body.style.removeProperty('--cover');
+  var cl=closedForGuests();
+  var h='<header class="top'+(M.cover?' has-cover':'')+'"><div class="cov" aria-hidden="true"></div><div class="wrap"><div class="hd">'+(M.logo?'<img class="logo" src="/img/'+esc(M.logo)+'" alt="">':'')+
+    '<div class="tx"><h1>'+esc(M.shop)+'</h1><div class="meta"><span class="tchip">โต๊ะ '+T+'</span>'+
+    (STAT&&STAT.staff?'<span class="pill acc">โหมดพนักงาน</span>':'<span class="state'+(cl?' off':'')+'">'+(cl?esc(closedShort()):'เปิดรับออเดอร์')+'</span>')+'</div></div></div>'+
+    (cl?'<div class="err">'+esc(closedText())+' (ดูเมนูได้)</div>':'')+'</div></header>';
   ensureCat();
   h+='<nav class="cats" aria-label="หมวดอาหาร"><div class="wrap"><div class="in">'+M.categories.map(function(c){return '<button class="cat" data-a="cat" data-id="'+c.id+'" aria-pressed="'+(cat===c.id)+'">'+esc(c.name)+'</button>';}).join('')+'</div></div></nav>';
   // ปุ่มตะกร้าอยู่ล่างจอ (fixed) แต่ใน DOM อยู่ก่อนรายการ คีย์บอร์ด/โปรแกรมอ่านหน้าจอเข้าถึงได้ทันที ไม่ต้องผ่านทุกจาน
@@ -318,6 +350,7 @@ function renderAll(){
     h+='<section class="sec" id="sec-'+c.id+'" data-cat="'+c.id+'" aria-labelledby="h-'+c.id+'"><h2 id="h-'+c.id+'">'+esc(c.name)+'<small>'+its.length+' รายการ</small></h2><div class="grid">'+its.map(cardHtml).join('')+'</div></section>';
   });
   h+='<div id="status"></div></main>';
+  if(M.address||M.phone)h+='<footer class="wrap foot"><b>'+esc(M.shop)+'</b>'+(M.address?'<br>'+esc(M.address):'')+(M.phone?'<br>โทร <a href="tel:'+esc(M.phone.replace(/[^0-9+]/g,''))+'">'+esc(M.phone)+'</a>':'')+'</footer>';
   $('#app').innerHTML=h;
   renderStatus();
   if(fsel){
@@ -330,7 +363,7 @@ function renderAll(){
 function cardHtml(m){
     return '<div class="item'+(m.soldOut?' out':'')+'"><div class="picwrap">'+
       '<button class="open" data-a="detail" data-id="'+m.id+'" aria-label="'+esc(m.name)+' '+baht(m.price)+(m.soldOut?' หมดแล้ว':'')+' ดูรายละเอียด"><span class="pic">'+picHtml(m)+'</span></button>'+
-      (m.soldOut?'<span class="pill crit badge">หมดแล้ว</span>':'')+cardCtl(m)+'</div>'+
+      (m.soldOut?'<span class="pill crit badge">หมดแล้ว</span>':((M.popular||[]).indexOf(m.id)>=0?'<span class="pill hot badge">ขายดี</span>':''))+cardCtl(m)+'</div>'+
       '<div data-a="detail" data-id="'+m.id+'" aria-hidden="true" style="cursor:pointer"><span class="nm">'+esc(m.name)+'</span><span class="pr">'+baht(m.price)+'</span></div></div>';
 }
 /* ปุ่มหมวดตามตำแหน่งที่เลื่อนอยู่ (แก้เฉพาะ attribute ไม่วาดใหม่) */
@@ -533,6 +566,7 @@ document.addEventListener('click',function(e){
     var mi=item(id);if(!mi||mi.soldOut||closedForGuests())return;
     var plain=linesOf(id).filter(function(l){return !l.note.length;})[0];
     if(plain){if(plain.qty<20)plain.qty++;cartChanged();}else addLine(id,1,[]);
+    bumpId=id;setTimeout(function(){bumpId=null;},400);
     renderAll();renderSheet();
   }
   else if(a==='dec'){var ld=linesOf(id);if(ld.length===1&&!ld[0].note.length){ld[0].qty--;if(ld[0].qty<=0)lines.splice(lines.indexOf(ld[0]),1);cartChanged();}renderAll();renderSheet();}
