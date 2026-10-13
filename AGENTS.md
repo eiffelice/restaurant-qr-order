@@ -10,7 +10,7 @@
 
 ระบบสั่งอาหารของร้านอาหารไทย รันบนคอมเครื่องเดียวในร้าน
 - **ลูกค้า** สแกน QR ที่โต๊ะ → หน้า `/order?t=<โต๊ะ>&k=<รหัสลับโต๊ะ>` → เลือกเมนู (มีรูป ราคา) → สั่งเข้าครัว
-- **พนักงาน** เปิด `/staff` ใส่ PIN ของตัวเอง → เห็นแท็บตามบทบาท: เจ้าของ (ครัว, โต๊ะ & บิล, เมนู, สรุปยอด, ตั้งค่า), แคชเชียร์ (ครัว, โต๊ะ & บิล, เมนูหมด, สรุปยอด), ครัว (ครัว, เมนูหมด)
+- **พนักงาน** เปิด `/staff` ใส่ PIN ของตัวเอง → เห็นแท็บตามบทบาท: เจ้าของ (ครัว, โต๊ะ & บิล, เมนู, สรุปยอด, ตั้งค่า), แคชเชียร์ (ครัว, โต๊ะ & บิล, เมนูหมด, สรุปยอด), พนักงานเสิร์ฟ (ครัว, โต๊ะ & บิล ไม่มีปุ่มรับเงิน, เมนูหมด), ครัว (ครัว, เมนูหมด)
 - ไม่มีฐานข้อมูล ไม่มี dependency ไม่มี build step ใช้แค่ Node.js 18+ ข้อมูลเก็บเป็นไฟล์ JSON
 - ภาษาในหน้าเว็บ ข้อความ error และคอมเมนต์โค้ด เป็นภาษาไทย ให้คงไว้เป็นภาษาไทย
 
@@ -136,7 +136,7 @@ test/api.test.js   ชุดทดสอบ node:test
 ```js
 D = {
   settings: { shop, address, phone, taxId, footer, promptpay, tables, svc, vat, baseUrl, soldOut: [menuId], acceptOrders,
-              accent /* '#rrggbb' สีปุ่มหลัก หรือ '' = สีตั้งต้น */, logo /* 'logo-<hex8>.png' ใน images/ หรือ '' */, cover /* 'cover-<hex8>.jpg' ภาพพื้นหลังหน้าลูกค้า หรือ '' */,
+              accent /* '#rrggbb' สีปุ่มหลัก หรือ '' = สีตั้งต้น */, logo /* 'logo-<hex8>.png' ใน images/ หรือ '' */, cover /* 'cover-<hex8>.jpg' ภาพพื้นหลังหน้าลูกค้า หรือ '' */, payQr /* 'payqr-<hex8>.png' รูป QR รับเงินที่ร้านอัปโหลด หรือ '' */,
               requireSeat /* ต้องเปิดโต๊ะก่อนลูกค้าสั่ง */, hours: { on, open: 'HH:MM', close: 'HH:MM' } /* ปิดรับ QR นอกเวลา (เวลาเครื่องร้าน ข้ามเที่ยงคืนได้) */,
               tagline /* คำโปรยใต้ชื่อร้าน ≤ 80 */, look /* 'dark'|'light'|'auto' โทนหน้าลูกค้า ค่าเริ่มต้น dark */,
               social: { facebook, instagram, line, tiktok } /* URL https ของแพลตฟอร์มนั้น หรือ '' */, shareUrl /* ลิงก์ที่ปุ่ม "แชร์ร้านนี้" ส่ง หรือ '' */ },
@@ -155,7 +155,7 @@ D = {
   sales: [{ no, at, table, sub, svc, vat, total, method /* cash|transfer */, items: [{ name, qty, price }] }],  // แค่ 8 วันล่าสุด
   keys: { [table]: 'hex8' },       // รหัสลับใน QR ของแต่ละโต๊ะ ห้ามสุ่มใหม่ (QR ที่พิมพ์ไว้จะใช้ไม่ได้)
   secret,                          // กุญแจ HMAC ของ PIN และ cookie พนักงาน (เปลี่ยน = ทุกเครื่องหลุด)
-  staff: [{ id /* s1, s2 ... */, name, role /* owner|cashier|kitchen */, pinHash /* HMAC(secret, pin) */, active, ver }],
+  staff: [{ id /* s1, s2 ... */, name, role /* owner|cashier|waiter|kitchen */, pinHash /* HMAC(secret, pin) */, active, ver }],
   nextStaffId, ownerVer,           // ver เพิ่มเมื่อเปลี่ยน PIN/บทบาท/ปิดบัญชี/สั่งออกทุกเครื่อง → cookie เก่าใช้ไม่ได้
   nextTicket, nextBill, lastBackup, lastAutoBackupAt
 }
@@ -180,8 +180,8 @@ D = {
 
 ## 5. API
 
-สิทธิ์: **public** = ใครก็ได้, **QR** = ต้องส่ง `k` ที่ตรงกับ `D.keys[t]` (หรือเป็นเจ้าของ/แคชเชียร์), **staff** = ต้องมี cookie `st` และบทบาทตาม `PERM` ใน routes.js:
-**ทุกบทบาท** state, events, เปลี่ยนสถานะตั๋ว, ตั้งเมนูหมด · **เจ้าของ+แคชเชียร์** รับเงิน, ยกเลิกตั๋ว, รับทราบการเรียก, สรุปยอด, สั่งแทนลูกค้า · **ที่เหลือทั้งหมด = เจ้าของ** (ตั้งค่า, เมนู, CSV, สำรอง/กู้คืน, log, พนักงาน) ไม่มีสิทธิ์ได้ 403
+สิทธิ์: **public** = ใครก็ได้, **QR** = ต้องส่ง `k` ที่ตรงกับ `D.keys[t]` (หรือเป็นเจ้าของ/แคชเชียร์/พนักงานเสิร์ฟ = `frontStaff()`), **staff** = ต้องมี cookie `st` และบทบาทตาม `PERM` ใน routes.js:
+**ทุกบทบาท** state, events, เปลี่ยนสถานะตั๋ว, ตั้งเมนูหมด · **`SERVE` เจ้าของ+แคชเชียร์+พนักงานเสิร์ฟ** รับทราบการเรียก, เปิด/ปิดโต๊ะ, สั่งแทนลูกค้า · **`FRONT` เจ้าของ+แคชเชียร์** รับเงิน, ยกเลิกตั๋ว, สรุปยอด · **ที่เหลือทั้งหมด = เจ้าของ** (ตั้งค่า, เมนู, CSV, สำรอง/กู้คืน, log, พนักงาน) ไม่มีสิทธิ์ได้ 403
 ทุก POST ต้องเป็น `Content-Type: application/json` (ยกเว้นอัปโหลดรูปและกู้คืน) ไม่อย่างนั้นได้ 415
 
 | Method & path | สิทธิ์ | ทำอะไร |
@@ -198,7 +198,7 @@ D = {
 | POST /api/ticket `{id,from,status}` | staff | เปลี่ยนสถานะ เดินหน้าทีละขั้นเท่านั้น (new→cooking→ready→served) ไม่ส่ง `from` หรือย้อน/ข้ามขั้นได้ 400, `from` ไม่ตรงได้ 409 |
 | POST /api/ticket/void `{id,reason,approvePin?}` | staff | ยกเลิกตั๋วทั้งใบ ต้องมี `reason` ถ้าตั๋วไม่ใช่ new และคนกดไม่ใช่เจ้าของ ต้องมี `approvePin` ของเจ้าของ (ไม่มี/ผิดได้ 403 `code: need_approval`) |
 | POST /api/call/clear `{table}` | staff | รับทราบการเรียก |
-| POST /api/table/seat `{table,open}` | เจ้าของ+แคชเชียร์ | เปิด/ปิดโต๊ะ (โหมดต้องเปิดโต๊ะก่อนสั่ง) ปิดโต๊ะที่มีออเดอร์ได้ 409 |
+| POST /api/table/seat `{table,open}` | เจ้าของ+แคชเชียร์+พนักงานเสิร์ฟ | เปิด/ปิดโต๊ะ (โหมดต้องเปิดโต๊ะก่อนสั่ง) ปิดโต๊ะที่มีออเดอร์ได้ 409 |
 | POST /api/table/rekey `{table}` | เจ้าของ + PIN ซ้ำ | สุ่มรหัส QR ใหม่ของโต๊ะเดียว QR แผ่นเก่าโต๊ะนั้นใช้ไม่ได้ทันที |
 | GET /api/reauth · POST /api/reauth `{pin}` | staff | สถานะ/ยืนยัน PIN ซ้ำของเครื่องนี้ (PIN ของบัญชีที่เข้าอยู่) ผิดได้ 400 `code: bad_pin` นับรวม `pinLocked()` |
 | POST /api/pay `{table,expectedSub,svc,vat,method,received?}` | staff | ปิดบิล ถ้ายอดเปลี่ยนได้ 409, `received` (เงินสดที่รับมา) ต้อง ≥ ยอด ตอบ `change` กลับ |
@@ -207,6 +207,7 @@ D = {
 | POST /api/settings/logo (body = รูป, Content-Type image/*) | เจ้าของ | อัปโหลดโลโก้ ≤ 3 MB ตรวจ magic bytes ลบไฟล์เก่า |
 | POST /api/settings/logo/delete | เจ้าของ | เอาโลโก้ออก |
 | POST /api/settings/cover (body = รูป) · POST /api/settings/cover/delete | เจ้าของ | ภาพพื้นหลังหน้าลูกค้า ใช้ `brandImage()` ร่วมกับโลโก้ |
+| POST /api/settings/payqr (body = รูป) · POST /api/settings/payqr/delete | เจ้าของ + PIN ซ้ำ | รูป QR รับเงินของร้าน (`settings.payQr`, `PAYQR_RE`) ใบแจ้งยอดใช้แทน QR จากเบอร์ PromptPay ไม่ทำให้หน้าลูกค้าโหลดใหม่ |
 | POST /api/soldout `{id,soldOut}` | staff | ตั้ง/ยกเลิกเมนูหมด |
 | POST /api/menu/item `{id?,name,price,cat,station,desc,hidden,rec,was?}` | เจ้าของ | เพิ่ม (ไม่มี id) หรือแก้เมนู ถ้า `was` ไม่ตรงกับค่าปัจจุบันได้ 409 |
 | POST /api/menu/item/delete `{id}` | staff | ลบเมนูและรูป |
@@ -289,6 +290,8 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 50. **ลิงก์ที่พาลูกค้าออกไปเว็บอื่น (`social`, `shareUrl`) ต้องผ่าน `U.cleanLink()` ทั้งตอนบันทึกและใน `normalize()`** (ตรวจโดเมนของแพลตฟอร์ม ไม่รับ `javascript:`/`data:` โซเชียลมีเดียต้อง https) เปลี่ยนต้อง `requireFresh` ในหน้าลูกค้าใส่ `href` ผ่าน `esc()` + `safeUrl()` และ `target=_blank rel="noopener noreferrer"` หน้าลูกค้ามี `<meta name="referrer" content="no-referrer">` ห้ามเอาออก (ที่อยู่หน้ามีรหัส QR ของโต๊ะ)
 51. **ปุ่มแชร์ร้านส่ง `shareUrl` ที่ร้านตั้งเท่านั้น ห้ามแชร์ `location.href`** ที่อยู่หน้าลูกค้ามี `k=` ของโต๊ะ คนที่ได้ลิงก์ไปสั่งอาหารเข้าโต๊ะนั้นได้จากที่ไหนก็ได้ ไม่ตั้ง `shareUrl` = ไม่มีปุ่มแชร์
 52. **`POST /api/settings` แก้บนสำเนาแล้วแทนที่ทีเดียว** ห้ามแก้ `st.D.settings` ทีละช่องก่อนตรวจครบ (เคยแก้ชื่อร้านแล้วช่อง PromptPay ผิด ตอบ 400 แต่ชื่อร้านเปลี่ยนในหน่วยความจำแล้ว ไม่มี audit แล้วถูกบันทึกลงดิสก์ตอนบันทึกครั้งถัดไป)
+53. **รูป QR รับเงิน (`payqr`) = เงินเข้าบัญชีไหน** อัปโหลดและเลิกใช้ต้อง `requireFresh` + audit + เจ้าของเท่านั้น หน้าพนักงานส่งไฟล์ตามต้นฉบับ (`preparePayQr()` ย่อเฉพาะไฟล์ใหญ่ ไม่บีบอัด JPEG) QR เบลอสแกนไม่ติด ชื่อรูปใน URL/ไฟล์ (`payqr`) ต่างจากชื่อใน settings (`payQr`) ใช้ `SETTING_KEY` เสมอ
+54. **พนักงานเสิร์ฟ (`waiter`) อยู่ใน `SERVE` ไม่อยู่ใน `FRONT`** endpoint ที่แตะเงิน (รับเงิน ยกเลิกตั๋ว สรุปยอด CSV) ห้ามใส่ `SERVE` หน้าพนักงานซ่อนปุ่มด้วย `canMoney()` (`front()` = ไม่ใช่ครัว ใช้กับเรื่องดูแลโต๊ะเท่านั้น) ลิงก์ "สั่งแทนลูกค้า" ใช้ `staffOrderUrl()` (ที่อยู่สั้น cookie ไปด้วย) ห้ามใช้ `orderUrl()` ที่เป็นที่อยู่ใน QR
 ---
 
 ## 7. วิธีแก้โค้ดที่ทำบ่อย

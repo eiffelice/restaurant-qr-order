@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -925,6 +925,86 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await c.context().close(); await c2.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* รูป QR รับเงินของร้าน: อัปโหลดจากหน้าตั้งค่า ใบแจ้งยอดใช้รูปนั้นพร้อมบอกยอด หมดเวลายืนยันแล้วขอ PIN ก่อน เลิกใช้แล้วกลับเป็น QR จากเบอร์ */
+  async payqr(browser) {
+    const ok = checker('payqr'); const errors = [];
+    const app = makeApp(); const s = start(app.code, { REAUTH_SEC: '3' }); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { promptpay: '0812345678' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    const p = await staffPage(browser, s, null, errors);
+    const bill = async () => { await tab(p, 'tables'); await sleep(200); if (!(await p.$('.receipt .grand .a'))) await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('.receipt .grand .a', { timeout: 5000 }).catch(() => {}); await sleep(300); return p.evaluate(() => { const q = document.querySelector('.receipt .qr'); return { img: q && q.querySelector('img.payqr') ? q.querySelector('img.payqr').getAttribute('src') : '', svg: !!(q && q.querySelector('svg')), t: q ? q.textContent : '', total: document.querySelector('.receipt .grand .a').textContent.trim() }; }); };
+    let b = await bill();
+    ok(b.svg && !b.img, 'ยังไม่อัปโหลด: ใบแจ้งยอดใช้ QR ที่สร้างจากเบอร์ PromptPay');
+    await tab(p, 'settings'); await p.waitForSelector('label[for="payqr-file"]');
+    await p.setInputFiles('#payqr-file', { name: 'qr.png', mimeType: 'image/png', buffer: await fakePhoto(browser, 120, 300) });
+    await until(async () => !!(await s.call('GET', '/api/state')).json.settings.payQr, 8000).catch(() => {});
+    const q1 = (await s.call('GET', '/api/state')).json.settings.payQr;
+    ok(/^payqr-/.test(q1 || ''), 'อัปโหลดรูป QR จากหน้าตั้งค่า (input อยู่นอกส่วนที่วาดใหม่)', q1);
+    await p.waitForSelector('#payqr .pq img', { timeout: 5000 }).catch(() => {});
+    ok(await p.$('#payqr .pq img'), 'หน้าตั้งค่าแสดงรูป QR ที่ใช้อยู่');
+    b = await bill();
+    ok(b.img.includes(q1) && !b.svg && b.t.includes(b.total), 'ใบแจ้งยอดใช้รูป QR ของร้าน และบอกยอดให้ลูกค้าพิมพ์เอง', b);
+    // หมดเวลายืนยัน: เปลี่ยนรูปต้องใส่ PIN ก่อน แล้วอัปโหลดต่อให้เอง
+    await sleep(3300);
+    await tab(p, 'settings'); await p.waitForSelector('label[for="payqr-file"]');
+    await p.setInputFiles('#payqr-file', { name: 'qr2.png', mimeType: 'image/png', buffer: await fakePhoto(browser, 200, 300) });
+    await p.waitForSelector('#reauth-dlg[open]', { timeout: 5000 }).catch(() => {});
+    ok(await p.isVisible('#reauth-dlg') && (await s.call('GET', '/api/state')).json.settings.payQr === q1, 'หมดเวลายืนยัน: ขอ PIN ก่อน ยังไม่เปลี่ยนรูป');
+    await p.fill('#ra-pin', PIN); await p.click('#ra-ok');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.payQr !== q1, 8000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.settings.payQr !== q1, 'ใส่ PIN ถูกแล้วอัปโหลดต่อเอง');
+    // เลิกใช้รูป: ผ่านหน้าต่างยืนยัน กลับไปใช้ QR จากเบอร์
+    await p.waitForSelector('[data-a="payqrdel"]'); await p.click('[data-a="payqrdel"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(/0812345678/.test(await p.textContent('#confirm-dlg')), 'หน้าต่างยืนยันบอกว่าจะกลับไปใช้เบอร์ไหน');
+    await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.settings.payQr, 8000).catch(() => {});
+    b = await bill();
+    ok(b.svg && !b.img, 'เลิกใช้รูปแล้ว ใบแจ้งยอดกลับไปใช้ QR จากเบอร์');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* พนักงานเสิร์ฟ: เห็นแท็บ ครัว / โต๊ะ / เมนูหมด เห็นโต๊ะที่เรียก สั่งแทนลูกค้าได้ ไม่มีปุ่มรับเงิน ยกเลิก สรุปยอด */
+  async waiter(browser) {
+    const ok = checker('waiter'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'น้องเอ', role: 'waiter', pin: '520033' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    const ctx = await browser.newContext({ baseURL: s.B }); const p = await ctx.newPage(); watch(p, errors, 'waiter');
+    await p.goto('/staff'); await p.fill('#pin', '520033'); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
+    const tabs = await p.$$eval('#tabs .tab', x => x.map(b => b.dataset.v));
+    ok(JSON.stringify(tabs) === JSON.stringify(['kitchen', 'tables', 'menu']) && /พนักงานเสิร์ฟ/.test(await p.textContent('#brand')), 'แท็บ: ครัว โต๊ะ & บิล เมนูหมด (ไม่มีสรุปยอด ตั้งค่า)', tabs);
+    await tab(p, 'kitchen'); await p.waitForSelector('#v-kitchen .card');
+    ok(!(await p.$('#v-kitchen [data-a="void"]')) && await p.$('#v-kitchen [data-a="adv"]'), 'จอครัว: เปลี่ยนสถานะได้ ไม่มีปุ่มยกเลิกออเดอร์');
+    await s.call('POST', '/api/call', { table: 2, key: keys[2], kind: 'bill' }, { staff: false });
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="2"]'); await p.waitForSelector('.receipt .grand .a');
+    ok(/ขอเช็คบิล/.test(await p.textContent('#v-tables')), 'เห็นโต๊ะที่ลูกค้าขอเช็คบิล');
+    ok(!(await p.$('[data-a="pay"]')) && !(await p.$('[data-a="bsvc"]')) && /รับเงินได้เฉพาะแคชเชียร์/.test(await p.textContent('#v-tables')) && await p.$('[data-a="printr"]'), 'ใบแจ้งยอดดู/พิมพ์ได้ แต่ไม่มีปุ่มรับเงินและปรับค่าบริการ');
+    await p.click('[data-a="clearcall"]');
+    await until(async () => !(await s.call('GET', '/api/state')).json.calls[2], 6000).catch(() => {});
+    ok(!(await s.call('GET', '/api/state')).json.calls[2], 'กดรับทราบการเรียกได้');
+    // สั่งแทนลูกค้า: ลิงก์เปิดหน้าลูกค้าในโหมดพนักงาน (ใช้ cookie เดียวกัน)
+    const href = await p.getAttribute('#v-tables a[href*="/order?"]', 'href');
+    const c = await ctx.newPage(); watch(c, errors, 'waiter-order');
+    ok(href.startsWith('/order?'), 'ลิงก์สั่งแทนลูกค้าเป็นที่อยู่เดียวกับหน้าพนักงาน (cookie ไปด้วย)', href);
+    await c.goto(href); await c.waitForSelector('.item');
+    ok(/โหมดพนักงาน/.test(await c.textContent('header.top')), 'สั่งแทนลูกค้า: หน้าลูกค้าเปิดในโหมดพนักงาน');
+    await c.click('.item [data-a="inc"][data-id="2"]'); await c.click('[data-a="open"]'); await c.click('[data-a="send"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 2 && k.by === 'staff'), 6000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 2 && k.by === 'staff'), 'ส่งออเดอร์แทนลูกค้าเข้าครัวได้');
+    // เปิด URL สรุปยอดตรงๆ ก็ไม่ได้ข้อมูล
+    const rep = await p.evaluate(() => fetch('/api/report', { credentials: 'same-origin' }).then(r => r.status));
+    ok(rep === 403, 'เรียกข้อมูลสรุปยอดตรงๆ ได้ 403', rep);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await ctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
