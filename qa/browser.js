@@ -1067,6 +1067,25 @@ const cases = {
     await sleep(1500);
     d = await delta(async () => { for (const p of [k, w, o]) await p.clock.fastForward('03:00'); });
     ok(eq(d, { k: {}, w: {}, o: {} }), 'ไม่มีเรื่องค้าง: ไม่เตือนซ้ำ', d);
+    // แท็บเล็ตนาฬิกาเร็วกว่าเครื่องร้าน 5 นาที: ออเดอร์ที่เพิ่งเข้าต้องไม่ถูกนับว่าค้าง (ใช้เวลาที่ชดเชยแล้ว ไม่ใช่นาฬิกาแท็บเล็ต)
+    {
+      const ctx = await browser.newContext({ baseURL: s.B });
+      await ctx.addInitScript(() => {
+        window.__f = [];
+        const A = window.AudioContext;
+        window.AudioContext = function () { const ac = new A(), co = ac.createOscillator.bind(ac); ac.createOscillator = () => { const o2 = co(), st2 = o2.start.bind(o2); o2.start = t => { window.__f.push(o2.frequency.value); return st2(t); }; return o2; }; return ac; };
+      });
+      const sk = await ctx.newPage(); watch(sk, errors, 'skew');
+      await sk.clock.install({ time: Date.now() + 5 * 60000 });
+      await sk.goto('/staff'); await sk.fill('#pin', '520022'); await sk.press('#pin', 'Enter'); await sk.waitForSelector('#tabs .tab');
+      await sk.mouse.click(5, 5); await sleep(200);
+      await s.call('POST', '/api/order', { table: 9, key: keys[9], items: [{ id: hot, qty: 1 }] }, { staff: false }); await sleep(1500);
+      const before = (await kinds(sk)).order;
+      await sk.clock.fastForward('01:15'); await sleep(800);
+      const after = (await kinds(sk)).order;
+      ok(before === 1 && after === 1, 'แท็บเล็ตนาฬิกาเร็ว 5 นาที: ออเดอร์ใหม่ดังครั้งเดียว ไม่เตือนซ้ำทั้งที่เพิ่งเข้า', { before, after });
+      await ctx.close();
+    }
     // รีเฟรชหน้าแล้วยังไม่ได้แตะจอ: ป้ายบอกว่าเสียงปิดอยู่ แตะแล้วหาย
     await w.reload(); await w.waitForSelector('#tabs .tab');
     const before = await w.isVisible('#sound'); await w.click('#sound'); await sleep(300);

@@ -608,6 +608,7 @@ function detectNew(){
   });
   Object.keys(S.d.calls).forEach(function(t){var key=t+':'+S.d.calls[t].at;calls[key]=1;if(S.seenCalls&&!S.seenCalls[key])newCall={t:t,c:S.d.calls[t]};});
   S.seen=ids;S.seenCalls=calls;
+  Object.keys(readyAt).forEach(function(id){if(!ids[id])delete readyAt[id];});
   var msg=[],sound=null;
   if(fresh.length){
     msg.push('ออเดอร์ใหม่ โต๊ะ '+fresh[0].table+(fresh.length>1?' และอีก '+(fresh.length-1)+' ใบ':''));
@@ -622,13 +623,15 @@ function detectNew(){
    (เดิมดังครั้งเดียว ไม่ได้ยินก็พลาดเลย) */
 var lastRemind=0,REMIND_MS=60000;
 function remind(){
-  if(!S.d||!soundReady()||Date.now()-lastRemind<REMIND_MS)return;
-  var now=Date.now(),kind=null;
-  if(hears('order')&&S.d.tickets.some(function(k){return k.status==='new'&&stationOk(k)&&now-k.createdAt>=120000;}))kind='order';
-  else if(hears('bill')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind==='bill'&&now-S.d.calls[t].at>=60000;}))kind='bill';
-  else if(hears('call')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind!=='bill'&&now-S.d.calls[t].at>=60000;}))kind='call';
-  else if(hears('ready')&&S.d.tickets.some(function(k){return k.status==='ready'&&now-(readyAt[k.id]||now)>=120000;}))kind='ready';
-  if(kind){beep(kind);lastRemind=now;}
+  if(!S.d||!$('#login').hidden||!soundReady()||Date.now()-lastRemind<REMIND_MS)return;
+  // เวลาจากเซิร์ฟเวอร์ (createdAt, เวลาเรียก) เทียบกับ now() ที่ชดเชยนาฬิกาเครื่องนี้ต่างจากเครื่องร้านแล้ว (S.skew)
+  // ไม่อย่างนั้นแท็บเล็ตนาฬิกาเร็วจะเห็นทุกออเดอร์ค้างแล้วเตือนทุกนาที · เวลาพร้อมเสิร์ฟจดด้วยนาฬิกาเครื่องนี้ เทียบกับ Date.now()
+  var sv=now(),local=Date.now(),kind=null;
+  if(hears('order')&&S.d.tickets.some(function(k){return k.status==='new'&&stationOk(k)&&sv-k.createdAt>=120000;}))kind='order';
+  else if(hears('bill')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind==='bill'&&sv-S.d.calls[t].at>=60000;}))kind='bill';
+  else if(hears('call')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind!=='bill'&&sv-S.d.calls[t].at>=60000;}))kind='call';
+  else if(hears('ready')&&S.d.tickets.some(function(k){return k.status==='ready'&&local-(readyAt[k.id]||local)>=120000;}))kind='ready';
+  if(kind){beep(kind);lastRemind=local;}
 }
 setInterval(remind,10000);
 

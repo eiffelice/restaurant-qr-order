@@ -1812,6 +1812,8 @@ describe('บทบาทพนักงานเสิร์ฟ: ดูแล�
     const ws = (await w.call('GET', '/api/state')).json;
     assert.equal(ws.calls[5].kind, 'staff');
     assert.ok(!('sales' in ws) && !('report' in ws), 'state ไม่มียอดขาย');
+    assert.deepEqual(ws.keys, {}, 'ไม่ได้รหัส QR ของโต๊ะ (สั่งแทนด้วย cookie พนักงาน ปิดบัญชีแล้วไม่มีรหัสติดตัวไปสั่งเข้าโต๊ะได้)');
+    assert.equal((await w.call('GET', '/api/table?t=3&k=')).status, 200, 'เปิดหน้าโต๊ะในโหมดพนักงานได้โดยไม่มีรหัส');
     assert.equal((await w.call('POST', '/api/call/clear', { table: 5 })).status, 200);
     assert.equal((await w.call('POST', '/api/table/seat', { table: 6, open: true })).status, 200);
     assert.equal((await w.call('POST', '/api/ticket', { id: tk.id, from: 'new', status: 'cooking' })).status, 200);
