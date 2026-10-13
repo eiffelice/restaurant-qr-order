@@ -385,10 +385,25 @@ function unlockAudio(){
 }
 document.addEventListener('pointerdown',unlockAudio,true);
 document.addEventListener('keydown',unlockAudio,true);
-function beep(){
+/* เสียงแต่ละเรื่องไม่เหมือนกัน (ได้ยินแล้วรู้เลยว่าต้องทำอะไร) และดังพอสำหรับครัว
+   order = ออเดอร์ใหม่ (ไล่ขึ้น 3 โน้ต) · call = เรียกพนักงาน (ติ๊ดสองครั้ง) · bill = ขอเช็คบิล (ดิ๊ง-ด่อง) · ready = อาหารพร้อมเสิร์ฟ (กระดิ่ง) */
+var TONES={order:[[660,0,.18],[880,.2,.18],[1100,.4,.3]],call:[[1200,0,.14],[1200,.22,.14]],bill:[[990,0,.3],[740,.32,.45]],ready:[[1320,0,.6]]};
+function beep(kind){
   if(!soundReady())return;
-  try{var o=AC.createOscillator(),g=AC.createGain(),t=AC.currentTime;o.connect(g);g.connect(AC.destination);o.frequency.value=880;g.gain.setValueAtTime(.12,t);g.gain.exponentialRampToValueAtTime(.001,t+.35);o.start(t);o.stop(t+.35);}catch(e){}
+  try{
+    var t0=AC.currentTime;
+    (TONES[kind]||TONES.order).forEach(function(n){
+      var o=AC.createOscillator(),g=AC.createGain(),t=t0+n[1];
+      o.type='sine';o.frequency.value=n[0];o.connect(g);g.connect(AC.destination);
+      g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.35,t+.015);g.gain.exponentialRampToValueAtTime(.001,t+n[2]);
+      o.start(t);o.stop(t+n[2]+.02);
+    });
+  }catch(e){}
 }
+/* ใครได้ยินอะไร (ข้อความบนจอขึ้นให้ทุกคนเหมือนเดิม): ครัวสนใจออเดอร์ใหม่ของจุดที่ดูอยู่ หน้าร้านสนใจการเรียก ขอบิล และอาหารพร้อมเสิร์ฟ เจ้าของได้ยินทุกเรื่อง */
+function hears(kind){var r=role();if(r==='owner')return true;if(r==='kitchen')return kind==='order';return kind!=='order';}
+function stationOk(k){return S.kStation==='all'||k.station===S.kStation;}
+function alertSound(kind){if(hears(kind))beep(kind);}
 
 function rawApi(path,body){
   return fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'})
@@ -580,14 +595,42 @@ function pad(n,w){return String(n).padStart(w,'0');}
 function billNo(no,at){var d=new Date(at);return 'R'+d.getFullYear()+pad(d.getMonth()+1,2)+pad(d.getDate(),2)+'-'+pad(no,4);}
 function fmtDate(at){var d=new Date(at);return d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'numeric'})+' '+d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});}
 
+var readyAt={};      // ตั๋ว → เวลาที่หน้านี้เห็นว่าพร้อมเสิร์ฟ (เซิร์ฟเวอร์ไม่ได้เก็บ) ใช้เตือนซ้ำเมื่อค้าง
 function detectNew(){
-  var ids={},calls={},fresh=[],newCall=null;
-  S.d.tickets.forEach(function(k){ids[k.id]=1;if(S.seen&&!S.seen[k.id]&&k.status==='new')fresh.push(k);});
+  // S.seen = สถานะล่าสุดของแต่ละตั๋วที่เห็นแล้ว (จับได้ทั้งตั๋วใหม่ และตั๋วที่เพิ่งเปลี่ยนเป็นพร้อมเสิร์ฟ)
+  var ids={},calls={},fresh=[],ready=[],newCall=null,first=!S.seen;
+  S.d.tickets.forEach(function(k){
+    ids[k.id]=k.status;
+    if(k.status==='ready'){if(!readyAt[k.id])readyAt[k.id]=Date.now();}else delete readyAt[k.id];
+    if(first)return;
+    if(!S.seen[k.id]&&k.status==='new')fresh.push(k);
+    else if(k.status==='ready'&&S.seen[k.id]&&S.seen[k.id]!=='ready')ready.push(k);
+  });
   Object.keys(S.d.calls).forEach(function(t){var key=t+':'+S.d.calls[t].at;calls[key]=1;if(S.seenCalls&&!S.seenCalls[key])newCall={t:t,c:S.d.calls[t]};});
   S.seen=ids;S.seenCalls=calls;
-  if(fresh.length){beep();toast('ออเดอร์ใหม่ โต๊ะ '+fresh[0].table+(fresh.length>1?' และอีก '+(fresh.length-1)+' ใบ':''));}
-  else if(newCall){beep();toast('โต๊ะ '+newCall.t+(newCall.c.kind==='bill'?' ขอเช็คบิล':' เรียกพนักงาน'));}
+  var msg=[],sound=null;
+  if(fresh.length){
+    msg.push('ออเดอร์ใหม่ โต๊ะ '+fresh[0].table+(fresh.length>1?' และอีก '+(fresh.length-1)+' ใบ':''));
+    if(fresh.some(stationOk)&&hears('order'))sound='order';
+  }
+  if(newCall){var kb=newCall.c.kind==='bill'?'bill':'call';msg.push('โต๊ะ '+newCall.t+(kb==='bill'?' ขอเช็คบิล':' เรียกพนักงาน'));if(!sound&&hears(kb))sound=kb;}
+  if(ready.length){msg.push('พร้อมเสิร์ฟ โต๊ะ '+ready.map(function(k){return k.table;}).filter(function(t,i,a){return a.indexOf(t)===i;}).join(', '));if(!sound&&hears('ready'))sound='ready';}
+  if(msg.length)toast(msg.join(' · '));
+  if(sound){beep(sound);lastRemind=Date.now();}
 }
+/* เตือนซ้ำทุก 1 นาที ถ้ามีเรื่องค้าง: ออเดอร์ใหม่ที่ยังไม่มีใครกดเริ่มทำเกิน 2 นาที (ครัว) / ลูกค้าเรียกหรือขอบิลแล้วยังไม่มีใครรับทราบเกิน 1 นาที / อาหารพร้อมเสิร์ฟค้างเกิน 2 นาที (หน้าร้าน)
+   (เดิมดังครั้งเดียว ไม่ได้ยินก็พลาดเลย) */
+var lastRemind=0,REMIND_MS=60000;
+function remind(){
+  if(!S.d||!soundReady()||Date.now()-lastRemind<REMIND_MS)return;
+  var now=Date.now(),kind=null;
+  if(hears('order')&&S.d.tickets.some(function(k){return k.status==='new'&&stationOk(k)&&now-k.createdAt>=120000;}))kind='order';
+  else if(hears('bill')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind==='bill'&&now-S.d.calls[t].at>=60000;}))kind='bill';
+  else if(hears('call')&&Object.keys(S.d.calls).some(function(t){return S.d.calls[t].kind!=='bill'&&now-S.d.calls[t].at>=60000;}))kind='call';
+  else if(hears('ready')&&S.d.tickets.some(function(k){return k.status==='ready'&&now-(readyAt[k.id]||now)>=120000;}))kind='ready';
+  if(kind){beep(kind);lastRemind=now;}
+}
+setInterval(remind,10000);
 
 var loading=false,again=false;
 function load(){

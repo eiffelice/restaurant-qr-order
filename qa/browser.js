@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1005,6 +1005,76 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* เสียงแจ้งเตือน: ครัวได้ยินเฉพาะออเดอร์ใหม่ของจุดที่ดูอยู่ หน้าร้านได้ยินการเรียก ขอบิล พร้อมเสิร์ฟ เจ้าของได้ยินทุกเรื่อง
+     เสียงแต่ละเรื่องไม่เหมือนกัน และเตือนซ้ำถ้ามีเรื่องค้าง (เร่งนาฬิกาในหน้าเว็บ) */
+  async sound(browser) {
+    const ok = checker('sound'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'ครัว', role: 'kitchen', pin: '520022' });
+    await s.call('POST', '/api/staff', { name: 'เสิร์ฟ', role: 'waiter', pin: '520033' });
+    const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
+    const hot = st0.menu.items.find(i => i.station === 'hot').id, bar = st0.menu.items.find(i => i.station === 'bar').id;
+    // นับเสียงจาก oscillator ที่เริ่มเล่น: โน้ตแรกของแต่ละเสียง order 660 · call 1200 (สองครั้ง) · bill 990 · ready 1320
+    const open = async (pin, label) => {
+      const ctx = await browser.newContext({ baseURL: s.B });
+      await ctx.addInitScript(() => {
+        window.__f = [];
+        const A = window.AudioContext;
+        window.AudioContext = function () {
+          const ac = new A(), co = ac.createOscillator.bind(ac);
+          ac.createOscillator = () => { const o = co(), st = o.start.bind(o); o.start = t => { window.__f.push(o.frequency.value); return st(t); }; return o; };
+          return ac;
+        };
+      });
+      const p = await ctx.newPage(); watch(p, errors, label);
+      await p.clock.install();
+      await p.goto('/staff'); await p.fill('#pin', pin); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
+      await p.mouse.click(5, 5); await sleep(200);
+      return p;
+    };
+    const k = await open('520022', 'kitchen'), w = await open('520033', 'waiter'), o = await open(PIN, 'owner');
+    const P = { k, w, o };
+    const kinds = async p => { const f = await p.evaluate(() => window.__f.slice()); const n = x => f.filter(v => v === x).length; return { order: n(660), call: n(1200) / 2, bill: n(990), ready: n(1320) }; };
+    const delta = async fn => { const a = {}; for (const x in P) a[x] = await kinds(P[x]); await fn(); await sleep(1500); const d = {}; for (const x in P) { const b = await kinds(P[x]); d[x] = {}; for (const kk in b) if (b[kk] - a[x][kk]) d[x][kk] = b[kk] - a[x][kk]; } return d; };
+    const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    let d = await delta(() => s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: hot, qty: 1 }] }, { staff: false }));
+    ok(eq(d, { k: { order: 1 }, w: {}, o: { order: 1 } }), 'ออเดอร์ใหม่: ครัวและเจ้าของได้ยินเสียงออเดอร์ หน้าร้านไม่ดัง (เห็นข้อความ)', d);
+    ok(/ออเดอร์ใหม่/.test(await w.textContent('#toast')), 'พนักงานเสิร์ฟยังเห็นข้อความออเดอร์ใหม่บนจอ');
+    await k.click('[data-a="kst"][data-s="bar"]');
+    d = await delta(() => s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: hot, qty: 1 }] }, { staff: false }));
+    ok(!d.k.order, 'จอครัวที่ดูเฉพาะเครื่องดื่ม: ออเดอร์ครัวร้อนไม่ดัง', d.k);
+    d = await delta(() => s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: bar, qty: 1 }] }, { staff: false }));
+    ok(d.k.order === 1, 'จอครัวที่ดูเฉพาะเครื่องดื่ม: ออเดอร์เครื่องดื่มดัง', d.k);
+    d = await delta(() => s.call('POST', '/api/call', { table: 4, key: keys[4], kind: 'staff' }, { staff: false }));
+    ok(eq(d, { k: {}, w: { call: 1 }, o: { call: 1 } }), 'ลูกค้าเรียกพนักงาน: หน้าร้านและเจ้าของได้ยิน ครัวไม่ดัง', d);
+    d = await delta(() => s.call('POST', '/api/call', { table: 5, key: keys[5], kind: 'bill' }, { staff: false }));
+    ok(eq(d, { k: {}, w: { bill: 1 }, o: { bill: 1 } }), 'ขอเช็คบิล: เสียงคนละแบบกับเรียกพนักงาน ครัวไม่ดัง', d);
+    const t1 = (await s.call('GET', '/api/state')).json.tickets.find(x => x.table === 1);
+    await s.call('POST', '/api/ticket', { id: t1.id, from: 'new', status: 'cooking' }); await sleep(800);
+    d = await delta(() => s.call('POST', '/api/ticket', { id: t1.id, from: 'cooking', status: 'ready' }));
+    ok(eq(d, { k: {}, w: { ready: 1 }, o: { ready: 1 } }), 'อาหารพร้อมเสิร์ฟ: พนักงานเสิร์ฟและเจ้าของได้ยิน (เดิมไม่มีเสียง)', d);
+    // เรื่องค้าง: ออเดอร์ที่ยังไม่มีใครเริ่มทำ / การเรียกที่ยังไม่มีใครรับทราบ → เตือนซ้ำ
+    d = await delta(async () => { for (const p of [k, w, o]) await p.clock.fastForward('02:30'); });
+    ok(d.k.order >= 1 && !d.k.call && !d.k.bill, 'ออเดอร์ค้างเกิน 2 นาที: จอครัวเตือนซ้ำ', d.k);
+    ok((d.w.bill || 0) + (d.w.call || 0) >= 1 && !d.w.order, 'ลูกค้าเรียก/ขอบิลค้าง: หน้าร้านเตือนซ้ำ', d.w);
+    // จัดการทุกเรื่องแล้วต้องเงียบ
+    const st = (await s.call('GET', '/api/state')).json;
+    for (const t of st.tickets) { let from = t.status; for (const nx of ['cooking', 'ready', 'served'].slice(['new', 'cooking', 'ready'].indexOf(from))) { await s.call('POST', '/api/ticket', { id: t.id, from, status: nx }); from = nx; } }
+    for (const t of Object.keys(st.calls)) await s.call('POST', '/api/call/clear', { table: +t });
+    await sleep(1500);
+    d = await delta(async () => { for (const p of [k, w, o]) await p.clock.fastForward('03:00'); });
+    ok(eq(d, { k: {}, w: {}, o: {} }), 'ไม่มีเรื่องค้าง: ไม่เตือนซ้ำ', d);
+    // รีเฟรชหน้าแล้วยังไม่ได้แตะจอ: ป้ายบอกว่าเสียงปิดอยู่ แตะแล้วหาย
+    await w.reload(); await w.waitForSelector('#tabs .tab');
+    const before = await w.isVisible('#sound'); await w.click('#sound'); await sleep(300);
+    ok(before && !(await w.isVisible('#sound')), 'รีเฟรชแล้วยังไม่แตะจอ: มีป้ายเปิดเสียง แตะแล้วเสียงเปิดและป้ายหาย');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    for (const p of [k, w, o]) await p.context().close();
+    await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
