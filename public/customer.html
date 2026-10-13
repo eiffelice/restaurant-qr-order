@@ -7,35 +7,40 @@
 <title>สั่งอาหาร</title>
 <style>
 :root{
-  --bg:#f3f1ec; --surface:#ffffff; --surface2:#ebe8e1; --ink:#1d1a16; --muted:#6a645a; --line:#d9d4c9;
-  --accent:#c2410c; --accent-ink:#ffffff; --accent-soft:#fde6d8;
-  --ok:#166534; --ok-bg:#dcf3e2; --warn:#92400e; --warn-bg:#fef0c7; --crit:#b91c1c; --crit-bg:#fde2e2;
-  --font:'Noto Sans Thai','Sarabun','Leelawadee UI','Thonburi',system-ui,-apple-system,'Segoe UI',sans-serif;
+  /* Restaurant OS tokens: Graphite + Lime ปุ่มหลักพื้น lime ตัวหนังสือ graphite (ตัวขาวบน lime contrast แค่ 2:1)
+     ตัวหนังสือสีเน้นใช้ --accent-text (lime เข้ม) ไม่ใช้ --accent */
+  --bg:#f8fafc; --surface:#ffffff; --surface2:#f1f5f9; --ink:#111827; --muted:#4b5563; --line:#e2e8f0; --line-strong:#7c8796;
+  --accent:#84cc16; --accent-ink:#111827; --accent-soft:#ecfccb; --accent-text:#3f6212; --focus:#4d7c0f;
+  --nav:#111827; --nav-ink:#f9fafb;
+  --ok:#15803d; --ok-bg:#dcfce7; --warn:#92400e; --warn-bg:#fef3c7; --warn-line:#d97706; --crit:#b91c1c; --crit-bg:#fee2e2; --danger:#dc2626; --danger-ink:#ffffff;
+  --r-sm:8px; --r:12px; --r-lg:16px; --ctl:44px;
+  --font:'Inter','Noto Sans Thai','IBM Plex Sans Thai','Leelawadee UI','Sarabun','Thonburi',system-ui,-apple-system,'Segoe UI',sans-serif;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#16130f; --surface:#211d18; --surface2:#2d2821; --ink:#f1ece3; --muted:#a89f90; --line:#3a342b;
-  --accent:#fb923c; --accent-ink:#1d1006; --accent-soft:#3b2412;
-  --ok:#4ade80; --ok-bg:#10301c; --warn:#fbbf24; --warn-bg:#3a2a0b; --crit:#f87171; --crit-bg:#3b1414}}
+  --bg:#0b0f17; --surface:#111827; --surface2:#1f2937; --ink:#f9fafb; --muted:#9ca3af; --line:#273244; --line-strong:#6b7280;
+  --accent:#a3e635; --accent-ink:#111827; --accent-soft:#1d2b0c; --accent-text:#bef264; --focus:#bef264;
+  --nav:#030712; --nav-ink:#f9fafb;
+  --ok:#4ade80; --ok-bg:#0f2e1a; --warn:#fbbf24; --warn-bg:#3a2a0b; --warn-line:#f59e0b; --crit:#f87171; --crit-bg:#3b1414; --danger:#dc2626; --danger-ink:#ffffff;}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 var(--font);padding-bottom:calc(6rem + env(safe-area-inset-bottom,0px));font-variant-numeric:tabular-nums}
 button{font:inherit;color:inherit;cursor:pointer}
-button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .wrap{max-width:38rem;margin:0 auto;padding-inline:16px}
 header{padding-block:calc(14px + env(safe-area-inset-top,0px)) 12px}
 .shop{font-size:.95rem;color:var(--muted);font-weight:500}
 .tno{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .tno h1{margin:0;font-size:2.4rem;line-height:1.2;font-weight:700;letter-spacing:-.01em}
 .pill{display:inline-block;border-radius:99px;padding:1px 10px;font-size:.8rem;font-weight:600;background:var(--surface2);color:var(--muted)}
-.pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.warn{background:var(--warn-bg);color:var(--warn)} .pill.acc{background:var(--accent-soft);color:var(--accent)}
+.pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.warn{background:var(--warn-bg);color:var(--warn)} .pill.acc{background:var(--accent-soft);color:var(--accent-text)}
 nav.cats{position:sticky;top:0;z-index:4;background:var(--bg);border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top,0px)}
 nav.cats .in{display:flex;gap:8px;overflow-x:auto;padding-block:10px;scrollbar-width:none}
 nav.cats .in::-webkit-scrollbar{display:none}
 .cat{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:7px 16px;font-weight:600}
 .cat[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .list{display:flex;flex-direction:column;gap:10px;padding-block:14px}
-.item{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.item{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:12px 14px}
 .item .tx{flex:1;min-width:0}
 .item .nm{font-weight:600;font-size:1.05rem;line-height:1.3;overflow-wrap:anywhere}
 .item .pr{color:var(--muted);font-weight:600}
@@ -46,18 +51,18 @@ nav.cats .in::-webkit-scrollbar{display:none}
 .zoom{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px}
 .zoom img{max-width:100%;max-height:75vh;border-radius:12px}
 .zoom p{color:#fff;margin:0;font-weight:600;text-align:center}
-.add{flex:none;width:2.9rem;height:2.9rem;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);font-size:1.6rem;line-height:1;font-weight:500}
+.add{flex:none;width:2.9rem;height:2.9rem;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);font-size:1.6rem;line-height:1;font-weight:700;box-shadow:inset 0 0 0 1px rgba(17,24,39,.12)}
 .step{flex:none;display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;overflow:hidden;background:var(--surface2)}
 .step button{border:0;background:none;width:2.7rem;height:2.7rem;font-size:1.4rem}
 .step b{min-width:1.8rem;text-align:center}
 .section{padding-block:6px 8px}
 .section h2{font-size:1.1rem;margin:14px 0 8px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:12px 14px}
 .srow{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px dashed var(--line)}
 .srow:first-child{border-top:0}
 .srow .t{min-width:0;overflow-wrap:anywhere}
 .help{display:flex;gap:10px;flex-wrap:wrap}
-.btn{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 16px;font-weight:600;flex:1;min-width:9rem}
+.btn{border:1px solid var(--line-strong);background:var(--surface);border-radius:var(--r);padding:12px 16px;min-height:48px;font-weight:600;flex:1;min-width:9rem}
 .btn:disabled{opacity:.55;cursor:default}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .bar{position:fixed;left:0;right:0;bottom:0;z-index:6;padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--bg);border-top:1px solid var(--line)}
@@ -74,8 +79,8 @@ nav.cats .in::-webkit-scrollbar{display:none}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 12px;font-size:.9rem}
 .chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-.link{border:0;background:none;color:var(--accent);text-decoration:underline;padding:6px 2px;font-weight:600}
-.memo{width:100%;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px}
+.link{border:0;background:none;color:var(--accent-text);text-decoration:underline;padding:6px 2px;font-weight:600}
+.memo{width:100%;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-sm);min-height:var(--ctl);padding:10px 12px;margin-top:6px}
 .total{display:flex;justify-content:space-between;font-size:1.25rem;font-weight:700;margin:14px 0 10px}
 .err{background:var(--crit-bg);color:var(--crit);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-weight:500}
 .center{text-align:center;padding:48px 8px}
@@ -181,7 +186,7 @@ function renderSheet(){
     h+='<div class="cl"><div class="cl-top"><span>'+esc(m.name)+'</span><span>'+baht(m.price*l.qty)+'</span></div>';
     h+='<div class="cl-ctl"><span class="step"><button data-a="dec" data-id="'+id+'" aria-label="ลด">−</button><b>'+l.qty+'</b><button data-a="inc" data-id="'+id+'" aria-label="เพิ่ม">+</button></span>';
     h+='<button class="link" data-a="notes" data-id="'+id+'">'+(l.note.length?'แก้หมายเหตุ':'เพิ่มหมายเหตุ')+'</button></div>';
-    if(l.note.length&&!l.open)h+='<div class="small" style="color:var(--accent);margin-top:4px">'+esc(l.note.join(' · '))+'</div>';
+    if(l.note.length&&!l.open)h+='<div class="small" style="color:var(--accent-text);margin-top:4px">'+esc(l.note.join(' · '))+'</div>';
     if(l.open)h+='<div class="chips">'+M.notes.map(function(n){return '<button class="chip" data-a="note" data-id="'+id+'" data-n="'+esc(n)+'" aria-pressed="'+(l.note.indexOf(n)>=0)+'">'+esc(n)+'</button>';}).join('')+'</div>';
     h+='</div>';
   });

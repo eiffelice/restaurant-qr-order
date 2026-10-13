@@ -282,7 +282,11 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 - ไม่มี framework ไม่มี build แก้ไฟล์ HTML แล้ว refresh ได้เลย
 - รูปแบบ: state object `S` → ฟังก์ชัน `renderX()` สร้าง HTML string → ปุ่มใช้ `data-a="action"` และมี click handler ตัวเดียวท้ายไฟล์
 - หน้าพนักงาน re-render ทุกครั้งที่มี SSE ถ้ามี input ที่ผู้ใช้กำลังพิมพ์ ต้องกันไม่ให้ถูก render ทับ (ดู `S.dirty`, `menuBusy()`, `syncEditor()`)
-- สีทั้งหมดเป็น CSS variable รองรับ dark mode ห้ามใส่สีตรงๆ ใน component
+- สีทั้งหมดเป็น CSS variable รองรับ dark mode ห้ามใส่สีตรงๆ ใน component ชุดสีคือ Graphite + Lime (design tokens อยู่ใน `:root` ของทั้งสองหน้า ค่าเดียวกัน)
+  - `--accent` (lime) ใช้เป็น**พื้น**เท่านั้น ตัวหนังสือบนพื้น lime ใช้ `--accent-ink` (graphite) ห้ามใช้ตัวขาว (contrast 2:1) ตัวหนังสือสีเน้นใช้ `--accent-text` กรอบโฟกัสใช้ `--focus`
+  - ขอบช่องกรอก/ปุ่มใช้ `--line-strong` (≥ 3:1) ส่วน `--line` ใช้กับการ์ดเท่านั้น ปุ่มและช่องกรอกสูงอย่างน้อย `--ctl` (44px) รัศมี `--r-sm/--r/--r-lg` = 8/12/16
+  - หน้าพนักงานจอ ≥ 1024px แท็บ (`#tabs`) กลายเป็นแถบซ้าย (248px, จอ 1024–1279 = 200px) ด้วย CSS อย่างเดียว markup เดิม
+  - แก้สีแล้วรัน `node qa/a11y.js` (axe ตรวจ contrast ทั้ง light/dark) และดูภาพจาก `node qa/shots.js`
 - CSS ที่ใช้ `display` ต้องไม่ทับ attribute `hidden` (มี `[hidden]{display:none!important}` อยู่แล้ว ห้ามลบ)
 
 ---
