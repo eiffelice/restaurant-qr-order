@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -727,6 +727,69 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* กันออเดอร์ปลอม: เปิดโต๊ะก่อนสั่ง, ปิดรับตามเวลา, เปลี่ยนรหัส QR, ใส่ PIN ซ้ำก่อนเรื่องสำคัญ (ผ่านหน้าจอจริง) */
+  async antiprank(browser) {
+    const ok = checker('antiprank'); const errors = [];
+    const app = makeApp(); const s = start(app.code, { REAUTH_SEC: '3' }); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const p = await staffPage(browser, s, null, errors);
+    // 1) เปิดใช้ "ต้องเปิดโต๊ะก่อนลูกค้าสั่ง" จากหน้าตั้งค่า
+    await tab(p, 'settings'); await p.waitForSelector('#s-seat');
+    await p.click('#s-seat'); await p.click('[data-a="savesettings"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.requireSeat === true, 5000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.settings.requireSeat === true, 'เปิดโหมด "ต้องเปิดโต๊ะก่อนสั่ง" จากหน้าตั้งค่าได้');
+    const c = await customerPage(browser, s, 2, keys[2], errors);
+    await c.waitForFunction(() => /ยังไม่ได้เปิด/.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {});
+    ok(/ยังไม่ได้เปิด/.test(await c.textContent('#app')), 'ลูกค้าโต๊ะที่ยังไม่เปิด เห็นข้อความให้เรียกพนักงาน');
+    await c.click('.item .open[data-id="1"]'); await c.waitForSelector('#detail:not([hidden])');
+    ok(await c.$eval('[data-a="dadd"]', b => b.disabled && /รอพนักงานเปิดโต๊ะ/.test(b.textContent)), 'ปุ่มเพิ่มรายการกดไม่ได้ บอกว่ารอพนักงานเปิดโต๊ะ');
+    await c.click('[data-a="dback"]');
+    ok(await c.isEnabled('[data-a="call"][data-k="staff"]'), 'ยังกดเรียกพนักงานได้');
+    // พนักงานเปิดโต๊ะ → ลูกค้าสั่งได้เอง (ไม่ต้องรีเฟรช)
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="2"]'); await p.waitForSelector('[data-a="seat"][data-on="1"]');
+    await p.click('[data-a="seat"][data-on="1"]');
+    await c.waitForFunction(() => !/ยังไม่ได้เปิด/.test(document.querySelector('#app').innerText), null, { timeout: 9000 }).catch(() => {});
+    await c.click('.item [data-a="inc"][data-id="1"]').catch(() => {}); await c.click('[data-a="open"]').catch(() => {}); await c.click('[data-a="send"]').catch(() => {});
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.some(t => t.table === 2), 6000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.tickets.some(t => t.table === 2), 'พนักงานกดเปิดโต๊ะ ลูกค้าสั่งได้ทันทีโดยไม่ต้องรีเฟรช');
+    // 2) นอกเวลารับออเดอร์: ป้ายบนหน้าพนักงาน
+    const m = new Date().getHours() * 60 + new Date().getMinutes(), hh = x => { x = ((x % 1440) + 1440) % 1440; return String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0'); };
+    await s.call('POST', '/api/settings', { hours: { on: true, open: hh(m + 60), close: hh(m + 120) } });
+    await p.waitForSelector('#closedpill:not([hidden])', { timeout: 6000 }).catch(() => {});
+    ok(/นอกเวลารับออเดอร์/.test(await p.textContent('#closedpill')), 'นอกเวลา: หน้าพนักงานมีป้าย "นอกเวลารับออเดอร์ QR"');
+    await s.call('POST', '/api/settings', { hours: { on: false, open: '10:00', close: '22:00' } });
+    // 3) ใส่ PIN ซ้ำ: หมดเวลายืนยันแล้วเพิ่มพนักงาน → หน้าต่างขอ PIN → PIN ผิดแจ้ง → PIN ถูกแล้วทำต่อให้เอง
+    await sleep(3300);
+    await tab(p, 'settings'); await p.waitForSelector('[data-a="stnew"]'); await p.click('[data-a="stnew"]');
+    await p.fill('#sf-name', 'ทดสอบยืนยัน'); await p.fill('#sf-pin', '640099'); await p.click('[data-a="stsave"]');
+    await p.waitForSelector('#reauth-dlg[open]', { timeout: 5000 }).catch(() => {});
+    ok(await p.isVisible('#reauth-dlg'), 'เรื่องสำคัญหลังหมดเวลา: ขึ้นหน้าต่างใส่ PIN');
+    await p.fill('#ra-pin', '111111'); await p.click('#ra-ok'); await sleep(500);
+    ok(/ไม่ถูกต้อง/.test(await p.textContent('#ra-err')) && await p.isVisible('#reauth-dlg'), 'PIN ผิด: บอกในหน้าต่าง ไม่ทำรายการ');
+    await p.fill('#ra-pin', PIN); await p.click('#ra-ok');
+    await until(async () => (await s.call('GET', '/api/staff')).json.list.some(x => x.name === 'ทดสอบยืนยัน'), 5000).catch(() => {});
+    ok((await s.call('GET', '/api/staff')).json.list.some(x => x.name === 'ทดสอบยืนยัน') && await p.isHidden('#reauth-dlg'), 'PIN ถูก: ทำรายการเดิมต่อให้เอง ไม่ต้องกดซ้ำ');
+    // 4) เปลี่ยนรหัส QR โต๊ะ 2 จากการ์ด QR → ลูกค้าที่เปิดค้างอยู่ด้วย QR เก่าเห็นว่าต้องสแกนใหม่
+    await p.waitForSelector('[data-a="qrrekey"][data-t="2"]'); await p.click('[data-a="qrrekey"][data-t="2"]');
+    await p.waitForSelector('#confirm-dlg[open]'); await p.click('#cf-ok');
+    await until(async () => (await s.call('GET', '/api/state')).json.keys[2] !== keys[2], 5000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.keys[2] !== keys[2], 'เปลี่ยนรหัส QR โต๊ะ 2 จากหน้าตั้งค่าได้ (อยู่ในเวลายืนยัน ไม่ต้องใส่ PIN ซ้ำ)');
+    await c.waitForFunction(() => /QR ของโต๊ะไม่ถูกต้อง/.test(document.body.innerText), null, { timeout: 9000 }).catch(() => {});
+    ok(/QR ของโต๊ะไม่ถูกต้อง/.test(await c.textContent('#app')), 'ลูกค้าที่ใช้ QR เก่า: หน้าบอกให้สแกนใหม่ ไม่ค้างแสดงเมนูที่สั่งไม่ได้');
+    // ดาวน์โหลดไฟล์สำรองหลังหมดเวลายืนยัน: ขอ PIN ก่อน
+    await s.call('POST', '/api/backup', {}); await sleep(3300);
+    await p.evaluate(() => { const b = document.querySelector('[data-a="bknow"]'); if (b) b.scrollIntoView(); });
+    await p.click('[data-a="bknow"]').catch(() => {}); await p.waitForSelector('[data-a="bkdl"]', { timeout: 5000 }).catch(() => {});
+    await p.click('[data-a="bkdl"]');
+    await p.waitForSelector('#reauth-dlg[open]', { timeout: 5000 }).catch(() => {});
+    ok(await p.isVisible('#reauth-dlg'), 'ดาวน์โหลดไฟล์สำรองหลังหมดเวลา: ขอ PIN ก่อน');
+    await p.click('#ra-no');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

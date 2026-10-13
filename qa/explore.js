@@ -83,8 +83,9 @@ async function main() {
   await c50.goto('/order?t=50&k=' + k50); await c50.waitForSelector('.item');
   await s.call('POST', '/api/settings', { tables: 20 });
   await sleep(5600);
-  await c50.click('.item [data-a="inc"]'); await c50.click('[data-a="open"]'); await c50.click('[data-a="send"]'); await sleep(600);
-  const msg = (await c50.textContent('#sheet')).replace(/\s+/g, ' ');
+  // หน้าลูกค้าบอกเองในรอบ poll ถัดไป (เดิมต้องกดสั่งก่อนถึงจะรู้) ถ้ายังไม่ขึ้น ลองกดสั่งแบบเดิม
+  let msg = (await c50.textContent('#app')).replace(/\s+/g, ' ');
+  if (!/ไม่พบโต๊ะ/.test(msg)) { await c50.click('.item [data-a="inc"]'); await c50.click('[data-a="open"]'); await c50.click('[data-a="send"]'); await sleep(600); msg = (await c50.textContent('#sheet')).replace(/\s+/g, ' '); }
   ok(/ไม่พบโต๊ะ/.test(msg), 'ลูกค้าโต๊ะที่ถูกลดออก กดสั่งแล้วได้ข้อความบอกเหตุผล', msg.slice(0, 120));
 
   // 7) แก้เมนูเดียวกันจากสองเครื่องพร้อมกัน: เครื่องที่บันทึกทีหลังทับโดยไม่รู้ตัวไหม

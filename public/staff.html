@@ -295,6 +295,16 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 <!-- อยู่นอกส่วนที่ re-render: ถ้ามีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ input จะไม่ถูกแทนที่ ไฟล์ที่เลือกจึงไม่หาย -->
 <input type="file" id="e-file" accept="image/*" hidden>
 <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp" hidden>
+<!-- ใส่ PIN ซ้ำก่อนทำเรื่องสำคัญ (เซิร์ฟเวอร์ตอบ 403 code reauth แล้ว api() เปิดหน้าต่างนี้ ยืนยันแล้วส่งคำขอเดิมซ้ำให้เอง) -->
+<dialog class="dlg" id="reauth-dlg" aria-labelledby="ra-h">
+  <form method="dialog" id="ra-form">
+    <h3 id="ra-h">ใส่ PIN ของคุณอีกครั้ง</h3>
+    <p class="muted small" id="ra-why" style="margin:4px 0 10px">รายการนี้สำคัญ (เช่น เปลี่ยนเบอร์รับเงิน จัดการพนักงาน กู้คืนข้อมูล) ระบบขอยืนยันว่าเป็นคุณจริง ยืนยันแล้วไม่ต้องใส่ซ้ำอีก 5 นาทีบนเครื่องนี้</p>
+    <label class="f" for="ra-pin">PIN<input class="in" id="ra-pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8"></label>
+    <div class="err" id="ra-err" role="alert"></div>
+    <div class="row"><button type="button" class="btn" id="ra-no">ยกเลิก</button><button type="submit" class="btn primary" id="ra-ok">ยืนยัน</button></div>
+  </form>
+</dialog>
 <!-- ยืนยันก่อนลบ/แทนที่ข้อมูล: บอกว่าลบอะไร ย้อนได้ไหม ปุ่มที่โฟกัสก่อนคือ "ไม่ลบ" กด Enter พลาดก็ไม่ลบ -->
 <dialog class="dlg" id="confirm-dlg" aria-labelledby="cf-h" aria-describedby="cf-b">
   <form method="dialog" id="cf-form">
@@ -367,10 +377,43 @@ function beep(){
   try{var o=AC.createOscillator(),g=AC.createGain(),t=AC.currentTime;o.connect(g);g.connect(AC.destination);o.frequency.value=880;g.gain.setValueAtTime(.12,t);g.gain.exponentialRampToValueAtTime(.001,t+.35);o.start(t);o.stop(t+.35);}catch(e){}
 }
 
-function api(path,body){
+function rawApi(path,body){
   return fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'})
     .then(function(r){return r.json().then(function(j){return {ok:r.ok,status:r.status,j:j};},function(){return {ok:false,status:r.status,j:{}};});});
 }
+// เรื่องสำคัญที่เซิร์ฟเวอร์ขอ PIN ซ้ำ: ถาม PIN แล้วส่งคำขอเดิมอีกครั้ง (ยกเลิก = ได้ผลเดิมกลับไป ไม่มีอะไรเปลี่ยน)
+function api(path,body){
+  return rawApi(path,body).then(function(r){
+    if(r.status===403&&r.j&&r.j.code==='reauth')return askPin().then(function(ok){return ok?rawApi(path,body):{ok:false,status:403,j:{error:'ยกเลิกแล้ว ไม่มีอะไรเปลี่ยน'}};});
+    return r;
+  });
+}
+var raDone=null;
+function askPin(){
+  if(raDone)raDone(false);
+  return new Promise(function(resolve){
+    var dlg=$('#reauth-dlg');$('#ra-pin').value='';$('#ra-err').textContent='';$('#ra-ok').disabled=false;
+    raDone=function(v){raDone=null;if(dlg.open)dlg.close();resolve(v);};
+    dlg.showModal();$('#ra-pin').focus();
+  });
+}
+// ก่อนดาวน์โหลด/กู้คืน (ไม่ได้ผ่าน api()) ตรวจก่อนว่ายืนยันอยู่ไหม
+function ensureFresh(){return rawApi('/api/reauth').then(function(r){return r.ok&&r.j.fresh?true:askPin();},function(){return false;});}
+$('#ra-form').addEventListener('submit',function(e){
+  e.preventDefault();
+  var pin=$('#ra-pin').value.trim(),err=$('#ra-err');
+  if(!pin){err.textContent='ใส่ PIN';return;}
+  $('#ra-ok').disabled=true;
+  rawApi('/api/reauth',{pin:pin}).then(function(r){
+    $('#ra-ok').disabled=false;
+    if(r.ok){if(raDone)raDone(true);return;}
+    $('#ra-pin').value='';$('#ra-pin').focus();
+    err.textContent=r.j.error||'ยืนยันไม่สำเร็จ';
+    if(r.status===401){if(raDone)raDone(false);showLogin();}
+  },function(){$('#ra-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';});
+});
+$('#ra-no').addEventListener('click',function(){if(raDone)raDone(false);});
+$('#reauth-dlg').addEventListener('close',function(){if(raDone)raDone(false);});
 function act(path,body,okMsg){
   return api(path,body).then(function(r){
     if(!r.ok){toast(r.j.error||'ทำรายการไม่สำเร็จ');if(r.status===401)showLogin();if(r.status===409)load();}
@@ -546,7 +589,9 @@ function load(){
     $('#brand').textContent=S.d.settings.shop+' · '+S.d.me.name+' ('+(S.d.roles[S.d.me.role]||S.d.me.role)+')';
     setLogo($('#brand-logo'),S.d.settings.logo);
     applyTheme(S.d.settings.accent);
-    $('#closedpill').hidden=S.d.settings.acceptOrders;
+    var qc=S.d.qrClosed;
+    $('#closedpill').hidden=!qc;
+    $('#closedpill').textContent=qc==='hours'?'นอกเวลารับออเดอร์ QR ('+S.d.settings.hours.open+'–'+S.d.settings.hours.close+')':'ปิดรับออเดอร์ QR';
     if(S.tab==='report')loadReport();
     render();
     connect();
@@ -689,7 +734,8 @@ function renderTables(){
   var d=S.d,n=d.settings.tables,h='<div class="sec-title"><h3>โต๊ะทั้งหมด</h3><span class="muted" style="font-size:.85rem">แตะโต๊ะเพื่อดูออเดอร์และออกบิล</span></div><div class="tables">';
   for(var t=1;t<=n;t++){
     var tk=tableTickets(t),rdy=tk.some(function(k){return k.status==='ready';}),call=d.calls[t];
-    var cls=call?'call':(rdy?'ready':(tk.length?'busy':'')),st=call?(call.kind==='bill'?'ขอเช็คบิล':'เรียกพนักงาน'):(rdy?'พร้อมเสิร์ฟ':(tk.length?'มีลูกค้า':'ว่าง'));
+    var seat=d.settings.requireSeat&&d.seated&&d.seated[t];
+    var cls=call?'call':(rdy?'ready':(tk.length||seat?'busy':'')),st=call?(call.kind==='bill'?'ขอเช็คบิล':'เรียกพนักงาน'):(rdy?'พร้อมเสิร์ฟ':(tk.length?'มีลูกค้า':(seat?'เปิดโต๊ะแล้ว':'ว่าง')));
     h+='<button class="tbl '+cls+'" data-a="sel" data-id="'+t+'" aria-pressed="'+(S.sel===t)+'"><span class="n">'+t+'</span><span class="s">'+st+'</span></button>';
   }
   // เพิ่มโต๊ะได้จากตรงนี้เลย (ลดโต๊ะ ตั้งชื่อร้าน และพิมพ์ QR อยู่ที่แท็บตั้งค่า)
@@ -707,6 +753,12 @@ function renderTables(){
   var SL={new:['รอทำ','warn'],cooking:['กำลังทำ','acc'],ready:['พร้อมเสิร์ฟ','ok'],served:['เสิร์ฟแล้ว','']};
   h+='<div class="detail"><div class="stack np"><div class="panel"><div class="sec-title"><h3>โต๊ะ '+t2+'</h3><a class="btn sm" href="'+esc(orderUrl(t2))+'" target="_blank" rel="noopener">สั่งแทนลูกค้า</a></div>';
   if(call2)h+='<div class="row" style="margin-bottom:10px"><span class="pill crit">'+(call2.kind==='bill'?'ลูกค้าขอเช็คบิล':'ลูกค้าเรียกพนักงาน')+'</span><button class="btn sm" data-a="clearcall" data-id="'+t2+'">รับทราบ</button></div>';
+  if(d.settings.requireSeat&&!tk2.length){
+    // โหมดต้องเปิดโต๊ะ: QR โต๊ะว่างสั่งไม่ได้จนกว่าจะกดเปิด
+    var on2=d.seated&&d.seated[t2];
+    h+='<div class="row" style="margin-bottom:10px;flex-wrap:wrap"><span class="pill '+(on2?'ok':'')+'">'+(on2?'เปิดโต๊ะแล้ว ลูกค้าสแกน QR สั่งได้':'โต๊ะยังไม่เปิด ลูกค้าสั่งผ่าน QR ไม่ได้')+'</span>'+
+      (front()?'<button class="btn sm'+(on2?'':' primary')+'" data-a="seat" data-id="'+t2+'" data-on="'+(on2?0:1)+'">'+(on2?'ปิดโต๊ะ':'เปิดโต๊ะ')+'</button>':'')+'</div>';
+  }
   if(!tk2.length)h+='<div class="muted">โต๊ะนี้ยังไม่มีออเดอร์</div>';
   tk2.forEach(function(k){
     h+='<div class="sent-row"><span>'+k.items.map(function(i){return esc(i.name)+' ×'+i.qty;}).join(', ')+(k.memo?'<br><span class="muted">'+esc(k.memo)+'</span>':'')+'</span><span style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><span class="pill '+SL[k.status][1]+'">'+SL[k.status][0]+'</span>'+(k.status==='ready'?'<button class="btn sm" data-a="adv" data-id="'+k.id+'" data-from="ready" data-st="served">เสิร์ฟแล้ว</button>':'')+'</span></div>';
@@ -827,6 +879,12 @@ function renderSettings(){
     '<span class="row" style="gap:10px">รับออเดอร์ผ่าน QR <button class="sw" id="s-open" data-a="tog" aria-pressed="'+s.acceptOrders+'">'+(s.acceptOrders?'เปิด':'ปิด')+'</button></span>'+
     '<span class="row" style="gap:10px">ค่าบริการ 10% เริ่มต้น <button class="sw" id="s-svc" data-a="tog" aria-pressed="'+s.svc+'">'+(s.svc?'เปิด':'ปิด')+'</button></span>'+
     '<span class="row" style="gap:10px">VAT 7% เริ่มต้น <button class="sw" id="s-vat" data-a="tog" aria-pressed="'+s.vat+'">'+(s.vat?'เปิด':'ปิด')+'</button></span></div>'+
+    '<div class="sec-title" style="margin-top:6px"><h3 style="font-size:1rem">กันออเดอร์ปลอม</h3></div>'+
+    '<div class="toggles" style="margin-top:4px">'+
+    '<span class="row" style="gap:10px">ต้องเปิดโต๊ะก่อนลูกค้าสั่ง <button class="sw" id="s-seat" data-a="tog" aria-pressed="'+s.requireSeat+'">'+(s.requireSeat?'เปิด':'ปิด')+'</button></span>'+
+    '<span class="row" style="gap:10px">ปิดรับ QR อัตโนมัตินอกเวลา <button class="sw" id="s-hon" data-a="tog" aria-pressed="'+s.hours.on+'">'+(s.hours.on?'เปิด':'ปิด')+'</button></span>'+
+    '<span class="row" style="gap:6px"><label class="small" for="s-hopen">รับออเดอร์ตั้งแต่</label><input class="in" id="s-hopen" type="time" value="'+esc(s.hours.open)+'" style="width:auto"><label class="small" for="s-hclose">ถึง</label><input class="in" id="s-hclose" type="time" value="'+esc(s.hours.close)+'" style="width:auto"></span></div>'+
+    '<p class="muted small" style="margin:-6px 0 12px">เปิดโต๊ะ: QR ของโต๊ะว่างสั่งไม่ได้จนกว่าพนักงานกด "เปิดโต๊ะ" ในแท็บโต๊ะ & บิล ปิดบิลแล้วโต๊ะปิดเอง · เวลา: ใช้เวลาของเครื่องนี้ ปิดหลังเที่ยงคืนได้ (เช่น 17:00 ถึง 02:00) · พนักงานสั่งแทนลูกค้าได้เสมอ</p>'+
     '<button class="btn primary" data-a="savesettings">บันทึกการตั้งค่า</button></div>';
   h+='<div class="panel np" id="theme"></div>';
   h+='<div class="panel np" id="stf"></div>';
@@ -836,7 +894,7 @@ function renderSettings(){
   if(/localhost|127\.0\.0\.1/.test(b))h+='<div class="banner warn np">QR ชี้ไปที่ localhost ซึ่งมือถือลูกค้าเปิดไม่ได้ ใส่ที่อยู่เครื่องในช่อง "ที่อยู่เว็บที่ใส่ใน QR"</div>';
   h+='<div class="muted np" style="font-size:.85rem;margin-bottom:10px">QR ชี้ไปที่ '+esc(b)+(d.lanAll&&d.lanAll.length>1?' · ที่อยู่อื่นของเครื่องนี้: '+d.lanAll.slice(1).map(esc).join(', '):'')+'<br>ลองสแกน QR โต๊ะ 1 ด้วยมือถือที่ต่อ WiFi ร้านก่อนพิมพ์ทุกโต๊ะ</div><div class="qrsheet">';
   for(var t=1;t<=s.tables;t++){
-    h+='<div class="qcard" data-t="'+t+'">'+(s.logo?'<img class="qlogo" src="/img/'+esc(s.logo)+'" alt="">':'')+'<div class="sh">'+esc(s.shop)+'</div><div class="tn">โต๊ะ '+t+'</div>'+qrSvg(orderUrl(t),'QR โต๊ะ '+t)+'<div class="hint">สแกนเพื่อสั่งอาหาร</div><div class="qact np"><button class="btn sm" data-a="qrprint" data-t="'+t+'" aria-label="พิมพ์ QR โต๊ะ '+t+'">พิมพ์</button><button class="btn sm" data-a="qrpng" data-t="'+t+'" aria-label="ดาวน์โหลดรูป QR โต๊ะ '+t+'">ดาวน์โหลด PNG</button></div></div>';
+    h+='<div class="qcard" data-t="'+t+'">'+(s.logo?'<img class="qlogo" src="/img/'+esc(s.logo)+'" alt="">':'')+'<div class="sh">'+esc(s.shop)+'</div><div class="tn">โต๊ะ '+t+'</div>'+qrSvg(orderUrl(t),'QR โต๊ะ '+t)+'<div class="hint">สแกนเพื่อสั่งอาหาร</div><div class="qact np"><button class="btn sm" data-a="qrprint" data-t="'+t+'" aria-label="พิมพ์ QR โต๊ะ '+t+'">พิมพ์</button><button class="btn sm" data-a="qrpng" data-t="'+t+'" aria-label="ดาวน์โหลดรูป QR โต๊ะ '+t+'">ดาวน์โหลด PNG</button><button class="btn sm" data-a="qrrekey" data-t="'+t+'" aria-label="เปลี่ยนรหัส QR โต๊ะ '+t+'">เปลี่ยนรหัส</button></div></div>';
   }
   h+='</div></div></div>';
   $('#v-settings').innerHTML=h;
@@ -1061,7 +1119,7 @@ function renderBackups(){
   }
   if(b.list.length){
     h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>วันเวลา</th><th>ประเภท</th><th class="r">ขนาด</th><th></th></tr></thead><tbody>'+b.list.slice(0,12).map(function(f){
-      return '<tr><td>'+fmtDate(f.at)+'</td><td>'+(REASON[f.reason]||esc(f.reason))+'</td><td class="r">'+fmtSize(f.size)+'</td><td class="r"><a class="btn sm" href="/api/backup/download?name='+encodeURIComponent(f.name)+'">ดาวน์โหลด</a></td></tr>';
+      return '<tr><td>'+fmtDate(f.at)+'</td><td>'+(REASON[f.reason]||esc(f.reason))+'</td><td class="r">'+fmtSize(f.size)+'</td><td class="r"><a class="btn sm" data-a="bkdl" href="/api/backup/download?name='+encodeURIComponent(f.name)+'">ดาวน์โหลด</a></td></tr>';
     }).join('')+'</tbody></table></div>';
     if(b.list.length>12)h+='<p class="muted small">และไฟล์เก่ากว่านี้อีก '+(b.list.length-12)+' ไฟล์ในโฟลเดอร์ '+esc(b.dir)+'</p>';
   }
@@ -1101,6 +1159,8 @@ function pickRestore(file){
 }
 function doRestore(){
   if(!S.rs||S.restoring)return;
+  if(!S.rsFresh){ensureFresh().then(function(ok){if(ok){S.rsFresh=true;doRestore();}});return;}
+  S.rsFresh=false;
   S.restoring=true;renderBackups();
   fetch('/api/backup/restore',{method:'POST',headers:{'Content-Type':S.rs.gz?'application/gzip':'application/json'},body:S.rs.file,credentials:'same-origin'})
     .then(function(r){return r.json().then(function(j){return {ok:r.ok,status:r.status,j:j};},function(){return {ok:false,j:{}};});})
@@ -1199,6 +1259,7 @@ document.addEventListener('keydown',function(e){
 document.addEventListener('click',function(e){
   var b=e.target.closest('[data-a]');if(!b)return;
   var a=b.dataset.a,id=+b.dataset.id;
+  if(a==='bkdl'){e.preventDefault();var href=b.getAttribute('href');ensureFresh().then(function(ok){if(ok)location.href=href;});return;}
   if(['void','pay','edel','catdel','rsgo','cashq'].indexOf(a)<0)disarm();
   if(a==='tab'){
     S.tab=b.dataset.v;S.viewSale=null;
@@ -1252,7 +1313,8 @@ document.addEventListener('click',function(e){
   else if(a==='savesettings'){
     act('/api/settings',{shop:$('#s-shop').value,promptpay:$('#s-pp').value,tables:+$('#s-tables').value,baseUrl:$('#s-base').value,
       address:$('#s-addr').value,phone:$('#s-phone').value,taxId:$('#s-tax').value,footer:$('#s-foot').value,
-      acceptOrders:$('#s-open').getAttribute('aria-pressed')==='true',svc:$('#s-svc').getAttribute('aria-pressed')==='true',vat:$('#s-vat').getAttribute('aria-pressed')==='true'},'บันทึกแล้ว')
+      acceptOrders:$('#s-open').getAttribute('aria-pressed')==='true',svc:$('#s-svc').getAttribute('aria-pressed')==='true',vat:$('#s-vat').getAttribute('aria-pressed')==='true',
+      requireSeat:$('#s-seat').getAttribute('aria-pressed')==='true',hours:{on:$('#s-hon').getAttribute('aria-pressed')==='true',open:$('#s-hopen').value,close:$('#s-hclose').value}},'บันทึกแล้ว')
       .then(function(r){if(r&&r.ok){S.dirty=false;if(document.activeElement)document.activeElement.blur();load();}});
   }
   else if(a==='tpreset'){pickTheme(b.dataset.c);}
@@ -1324,9 +1386,15 @@ document.addEventListener('click',function(e){
     };
     nextQr();
   }
+  else if(a==='seat'){act('/api/table/seat',{table:id,open:b.dataset.on==='1'},b.dataset.on==='1'?'เปิดโต๊ะ '+id+' แล้ว ลูกค้าสั่งผ่าน QR ได้':'ปิดโต๊ะ '+id+' แล้ว');}
+  else if(a==='qrrekey'){
+    var rt=+b.dataset.t;
+    confirmBox({title:'เปลี่ยนรหัส QR โต๊ะ '+rt+'?',lines:['QR โต๊ะ '+rt+' แผ่นที่ติดอยู่และรูปที่เคยดาวน์โหลดจะใช้ไม่ได้ทันที ต้องพิมพ์แผ่นใหม่ไปติดแทน','ลูกค้าที่กำลังเปิดหน้าสั่งอาหารของโต๊ะนี้ต้องสแกน QR ใหม่','ใช้เมื่อรูป QR หลุดออกไป หรือสงสัยว่ามีคนแกล้งสั่ง โต๊ะอื่นไม่กระทบ'],ok:'เปลี่ยนรหัส QR',no:'ไม่เปลี่ยน'})
+      .then(function(ok){if(ok)act('/api/table/rekey',{table:rt},'เปลี่ยนรหัส QR โต๊ะ '+rt+' แล้ว พิมพ์แผ่นใหม่ไปติดแทน').then(function(r){if(r&&r.ok)load();});});
+  }
   else if(a==='deltable'){
     var lt=S.d.settings.tables;
-    if(S.d.tickets.some(function(k){return k.table===lt;})||S.d.calls[lt]){toast('โต๊ะ '+lt+' ยังมีออเดอร์หรือการเรียกค้างอยู่ ปิดบิลหรือรับทราบก่อนลบ');return;}
+    if(S.d.tickets.some(function(k){return k.table===lt;})||S.d.calls[lt]||(S.d.seated&&S.d.seated[lt])){toast('โต๊ะ '+lt+' ยังมีออเดอร์ การเรียก หรือเปิดโต๊ะค้างอยู่ ปิดบิล/รับทราบ/ปิดโต๊ะก่อนลบ');return;}
     confirmBox({title:'ลบโต๊ะ '+lt+'?',lines:['ลบได้เฉพาะโต๊ะเลขสุดท้าย เลขโต๊ะอื่นไม่เปลี่ยน','QR โต๊ะ '+lt+' ที่ติดอยู่จะสั่งอาหารไม่ได้ ควรเก็บแผ่น QR ออกจากโต๊ะ','ถ้าเพิ่มโต๊ะกลับมาภายหลัง QR แผ่นเดิมกลับมาใช้ได้'],ok:'ลบโต๊ะ '+lt})
       .then(function(ok){if(ok)act('/api/settings',{tables:lt-1},'ลบโต๊ะ '+lt+' แล้ว').then(function(r){if(r&&r.ok&&S.sel===lt)S.sel=null;});});
   }
