@@ -941,7 +941,7 @@ describe('Log และเงินทอน', () => {
     await s.call('POST', '/api/settings', { promptpay: '0811111111' });
     const file = (await getBackup(s, (await s.call('POST', '/api/backup', {})).json.backup.name)).buf;
     const o = await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 3 }], memo: 'เผ็ดน้อย' });
-    const r = await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    const r = await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0], reason: 'ลูกค้าเปลี่ยนใจ' });
     assert.ok(r.headers.get('x-request-id'), 'ทุกคำขอมีรหัสอ้างอิง');
     await s.call('POST', '/api/menu/item', item({ id: 1, name: 'ผัดกะเพราหมูสับ', price: 75, cat: 1, station: 'hot' }));
     await s.call('POST', '/api/settings', { promptpay: '0899999999' });
@@ -1004,7 +1004,7 @@ describe('Log และเงินทอน', () => {
     const s = start(dir, { BACKUP_DIR: copy }); await s.ready; await s.login();
     const keys = (await s.call('GET', '/api/state')).json.keys;
     const o = await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] });
-    await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0], reason: 'ลูกค้าเปลี่ยนใจ' });
     await s.call('POST', '/api/backup', {});
     const f = 'audit-' + monthNow() + '.jsonl', mirror = path.join(copy, 'logs', f);
     const good = fs.readFileSync(mirror, 'utf8');
@@ -1025,7 +1025,7 @@ describe('Log และเงินทอน', () => {
     const s = start(makeApp()); await s.ready; await s.login();
     const keys = (await s.call('GET', '/api/state')).json.keys;
     const o = await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 3 }] });
-    await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    await s.call('POST', '/api/ticket/void', { id: o.json.tickets[0], reason: 'ลูกค้าเปลี่ยนใจ' });
     assert.equal((await s.call('GET', '/api/audit')).json.chain.ok, true, 'ตรวจครั้งแรก ระบบจำผลไว้');
     const lf = path.join(s.dir, 'logs', 'audit-' + monthNow() + '.jsonl');
     const text = fs.readFileSync(lf, 'utf8'), fake = text.replace('"value":180', '"value":100');
@@ -1104,7 +1104,7 @@ describe('พนักงานรายคนและบทบาท', () => {
     const keys = st0.keys;
     const o = await c.call('POST', '/api/order', { table: 4, items: [{ id: 1, qty: 1 }] });
     assert.equal(o.status, 200, 'แคชเชียร์สั่งแทนลูกค้าได้');
-    await c.call('POST', '/api/ticket/void', { id: o.json.tickets[0] });
+    await c.call('POST', '/api/ticket/void', { id: o.json.tickets[0], reason: 'ลูกค้าเปลี่ยนใจ' });
     const v = readLog(s.dir, 'audit').find(e => e.action === 'ticket.voided');
     assert.deepEqual([v.staff, v.name, v.role], [cashier.id, 'สมใจ', 'cashier'], 'log บอกว่าใครยกเลิก');
     assert.ok(readLog(s.dir, 'security').some(e => e.action === 'auth.login' && e.name === 'สมใจ'));
@@ -1182,7 +1182,7 @@ describe('พนักงานรายคนและบทบาท', () => {
     const o = await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] });
     assert.equal((await k.call('POST', '/api/ticket', { id: o.json.tickets[0], from: 'new', status: 'cooking' })).status, 200);
     assert.equal((await k.call('POST', '/api/soldout', { id: 2, soldOut: true })).status, 200);
-    assert.equal((await k.call('POST', '/api/ticket/void', { id: o.json.tickets[0] })).status, 403, 'ครัวยกเลิกออเดอร์เองไม่ได้');
+    assert.equal((await k.call('POST', '/api/ticket/void', { id: o.json.tickets[0], reason: 'ลูกค้าเปลี่ยนใจ' })).status, 403, 'ครัวยกเลิกออเดอร์เองไม่ได้');
     await s.stop();
   });
 
@@ -1241,6 +1241,68 @@ describe('พนักงานรายคนและบทบาท', () => {
     assert.deepEqual(names, ['เจ้าของร้าน', 'สมใจ', 'ช่างต้ม']);
     assert.equal((await device(s, '520011')).status, 200, 'PIN ของพนักงานในไฟล์สำรองใช้ได้');
     assert.equal((await device(s, '540033')).status, 401, 'คนที่เพิ่มหลังวันสำรองไม่อยู่แล้ว');
+    await s.stop();
+  });
+});
+
+describe('ตามเกณฑ์ตรวจรับ: สถานะออเดอร์ การยกเลิก และราคาที่ลูกค้าเห็น', () => {
+  test('สถานะออเดอร์เดินหน้าได้ทีละขั้นเท่านั้น ย้อนกลับ ข้ามขั้น หรือไม่บอกสถานะเดิม ไม่ได้ ทั้งครัวและแคชเชียร์', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const id = (await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] })).json.tickets[0];
+    const k = await device(s, '520022'), c = await device(s, '520011');
+    assert.equal((await k.call('POST', '/api/ticket', { id, from: 'new', status: 'ready' })).status, 400, 'ข้ามจากใหม่ไปพร้อมเสิร์ฟไม่ได้');
+    assert.equal((await k.call('POST', '/api/ticket', { id, status: 'cooking' })).status, 400, 'ต้องบอกสถานะเดิม');
+    assert.equal((await k.call('POST', '/api/ticket', { id, from: 'new', status: 'cooking' })).status, 200);
+    assert.equal((await k.call('POST', '/api/ticket', { id, from: 'cooking', status: 'ready' })).status, 200);
+    assert.equal((await c.call('POST', '/api/ticket', { id, from: 'ready', status: 'cooking' })).status, 400, 'ย้อนกลับไปทำใหม่ไม่ได้');
+    assert.equal((await c.call('POST', '/api/ticket', { id, from: 'ready', status: 'served' })).status, 200);
+    assert.equal((await s.call('POST', '/api/ticket', { id, from: 'served', status: 'new' })).status, 400, 'เจ้าของก็ย้อนไม่ได้');
+    assert.equal((await s.call('GET', '/api/state')).json.tickets.find(t => t.id === id).status, 'served');
+    const ev = readLog(s.dir, 'audit').filter(e => e.action === 'ticket.status');
+    assert.deepEqual(ev.map(e => e.after), ['cooking', 'ready', 'served'], 'log มีเฉพาะที่เปลี่ยนจริง');
+    await s.stop();
+  });
+
+  test('ยกเลิกออเดอร์ต้องมีเหตุผล ครัวเริ่มทำแล้วแคชเชียร์ต้องมี PIN เจ้าของ และ log บอกเหตุผลกับคนอนุมัติ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const order = async () => (await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 2 }] })).json.tickets[0];
+    const c = await device(s, '520011');
+    const a = await order(), b = await order(), d = await order();
+    assert.equal((await c.call('POST', '/api/ticket/void', { id: a })).status, 400, 'ไม่มีเหตุผล');
+    assert.equal((await c.call('POST', '/api/ticket/void', { id: a, reason: ' ' })).status, 400, 'เหตุผลว่าง');
+    assert.equal((await c.call('POST', '/api/ticket/void', { id: a, reason: 'สั่งผิด หรือกดซ้ำ' })).status, 200, 'ครัวยังไม่ทำ แคชเชียร์ยกเลิกเองได้');
+    await s.call('POST', '/api/ticket', { id: b, from: 'new', status: 'cooking' });
+    let r = await c.call('POST', '/api/ticket/void', { id: b, reason: 'ลูกค้าเปลี่ยนใจ' });
+    assert.deepEqual([r.status, r.json.code], [403, 'need_approval'], 'ครัวทำแล้ว ต้องให้เจ้าของอนุมัติ');
+    r = await c.call('POST', '/api/ticket/void', { id: b, reason: 'ลูกค้าเปลี่ยนใจ', approvePin: '520011' });
+    assert.equal(r.status, 403, 'PIN แคชเชียร์เองอนุมัติไม่ได้');
+    r = await c.call('POST', '/api/ticket/void', { id: b, reason: 'ลูกค้าเปลี่ยนใจ', approvePin: PIN });
+    assert.equal(r.status, 200);
+    await s.call('POST', '/api/ticket', { id: d, from: 'new', status: 'cooking' });
+    assert.equal((await s.call('POST', '/api/ticket/void', { id: d, reason: 'ของหมด' })).status, 200, 'เจ้าของยกเลิกเองได้เลย');
+    const ev = readLog(s.dir, 'audit').filter(e => e.action === 'ticket.voided');
+    assert.deepEqual(ev.map(e => e.reason), ['สั่งผิด หรือกดซ้ำ', 'ลูกค้าเปลี่ยนใจ', 'ของหมด']);
+    assert.deepEqual([ev[1].name, ev[1].approvedBy.id, ev[1].value], ['สมใจ', 'owner', 120], 'บอกทั้งคนกดและคนอนุมัติ');
+    assert.equal(ev[0].approvedBy, undefined);
+    assert.ok(readLog(s.dir, 'security').some(e => e.action === 'approve.failed'), 'PIN อนุมัติผิดถูกบันทึก');
+    assert.ok(!allLogText(s.dir).includes(PIN), 'PIN ไม่อยู่ใน log');
+    await s.stop();
+  });
+
+  test('ราคาเปลี่ยนระหว่างลูกค้าดูเมนู: ไม่รับออเดอร์ด้วยยอดใหม่เงียบๆ แต่ตอบ 409 ให้ลูกค้าเห็นยอดใหม่ก่อน', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/menu/item', item({ id: 1, name: 'ผัดกะเพราหมูสับ', price: 75, cat: 1, station: 'hot' }));
+    let r = await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 2 }], expect: 120, reqId: 'aa11bb22cc33' });
+    assert.deepEqual([r.status, r.json.code], [409, 'price_changed']);
+    assert.equal((await s.call('GET', '/api/state')).json.tickets.length, 0, 'ไม่มีออเดอร์เข้าครัว');
+    r = await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 2 }], expect: 150, reqId: 'aa11bb22cc33' });
+    assert.equal(r.status, 200, 'ยอดตรงกับที่เห็น สั่งได้ (reqId เดิมใช้ต่อได้ เพราะครั้งก่อนไม่ถูกบันทึก)');
+    assert.equal((await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] })).status, 200, 'หน้าเก่าที่ไม่ส่ง expect ยังสั่งได้');
     await s.stop();
   });
 });

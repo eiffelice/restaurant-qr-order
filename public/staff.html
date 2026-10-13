@@ -177,6 +177,14 @@ select.in{appearance:auto}
 .login[hidden]{display:none}
 .login form{width:100%;max-width:20rem;display:flex;flex-direction:column;gap:12px}
 .err{color:var(--crit);font-weight:600;min-height:1.4em}
+dialog.dlg{border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:18px;width:min(28rem,calc(100% - 32px))}
+dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
+.dlg h3{margin:0 0 6px}
+.dlg .reasons{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.dlg .reasons label{border:1px solid var(--line);border-radius:99px;padding:6px 12px;cursor:pointer;background:var(--bg)}
+.dlg .reasons input{margin:0 6px 0 0}
+.dlg .row{display:flex;gap:8px;margin-top:12px}
+.dlg .row .btn{flex:1}
 #toast{position:fixed;left:50%;bottom:calc(1.5rem + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:99px;font-weight:600;z-index:60;opacity:0;pointer-events:none;transition:opacity .2s;max-width:calc(100% - 32px);text-align:center}
 #toast.on{opacity:1}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
@@ -224,6 +232,28 @@ select.in{appearance:auto}
 <div id="toast" role="status"></div>
 <!-- อยู่นอกส่วนที่ re-render: ถ้ามีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ input จะไม่ถูกแทนที่ ไฟล์ที่เลือกจึงไม่หาย -->
 <input type="file" id="e-file" accept="image/*" hidden>
+<!-- ยกเลิกออเดอร์: อยู่นอกส่วนที่ re-render เหตุผลที่พิมพ์ค้างไว้จึงไม่หายเมื่อมีออเดอร์ใหม่เข้า -->
+<dialog class="dlg" id="void-dlg" aria-labelledby="void-h">
+  <form method="dialog" id="void-form">
+    <h3 id="void-h">ยกเลิกออเดอร์</h3>
+    <div class="muted small" id="void-items"></div>
+    <fieldset class="reasons" style="border:0;padding:0"><legend class="small">เหตุผล (ต้องเลือก)</legend>
+      <label><input type="radio" name="vr" value="ลูกค้าเปลี่ยนใจ">ลูกค้าเปลี่ยนใจ</label>
+      <label><input type="radio" name="vr" value="สั่งผิด หรือกดซ้ำ">สั่งผิด/กดซ้ำ</label>
+      <label><input type="radio" name="vr" value="ของหมด">ของหมด</label>
+      <label><input type="radio" name="vr" value="รอนานเกินไป">รอนานเกินไป</label>
+      <label><input type="radio" name="vr" value="อื่นๆ">อื่นๆ</label>
+    </fieldset>
+    <label class="small" for="void-note">รายละเอียดเพิ่มเติม</label>
+    <input class="in" id="void-note" maxlength="60" autocomplete="off">
+    <div id="void-pin-row" hidden style="margin-top:10px">
+      <label class="small" for="void-pin">ครัวเริ่มทำแล้ว ให้เจ้าของใส่ PIN อนุมัติ</label>
+      <input class="in" id="void-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+    </div>
+    <div class="err" id="void-err" role="alert"></div>
+    <div class="row"><button type="button" class="btn" id="void-cancel">ไม่ยกเลิก</button><button type="submit" class="btn danger" id="void-ok">ยืนยันยกเลิก</button></div>
+  </form>
+</dialog>
 <input type="file" id="rs-file" accept=".gz,.json,application/gzip,application/json" hidden>
 
 <script src="/qrcode.js"></script>
@@ -283,6 +313,41 @@ var confirmTimer;
 function armed(key){return S.confirm===key;}
 function arm(key,ms){S.confirm=key;clearTimeout(confirmTimer);confirmTimer=setTimeout(function(){S.confirm=null;render();},ms||4000);render();}
 function disarm(){S.confirm=null;clearTimeout(confirmTimer);}
+
+/* ยกเลิกออเดอร์: ต้องมีเหตุผลเสมอ ถ้าครัวเริ่มทำแล้วและไม่ใช่เจ้าของ ต้องมี PIN เจ้าของ (เซิร์ฟเวอร์ตรวจซ้ำ) */
+var voidId=null;
+function needPin(k){return k&&k.status!=='new'&&!isOwner();}
+function openVoid(id){
+  var k=S.d.tickets.filter(function(x){return x.id===id;})[0];if(!k)return;
+  voidId=id;var f=$('#void-form');f.reset();
+  $('#void-h').textContent='ยกเลิกออเดอร์ โต๊ะ '+k.table;
+  $('#void-items').textContent=k.items.map(function(i){return i.name+' ×'+i.qty;}).join(', ');
+  $('#void-pin-row').hidden=!needPin(k);$('#void-err').textContent='';$('#void-ok').disabled=false;
+  $('#void-dlg').showModal();
+}
+function voidReason(){
+  var r=document.querySelector('#void-form input[name=vr]:checked'),n=$('#void-note').value.trim();
+  if(!r)return '';
+  return r.value==='อื่นๆ'?n:(n?r.value+': '+n:r.value);
+}
+$('#void-cancel').addEventListener('click',function(){$('#void-dlg').close();});
+$('#void-form').addEventListener('submit',function(e){
+  e.preventDefault();
+  var reason=voidReason(),err=$('#void-err');
+  if(!document.querySelector('#void-form input[name=vr]:checked')){err.textContent='เลือกเหตุผลก่อน';return;}
+  if(reason.length<2){err.textContent='พิมพ์รายละเอียดเหตุผล';$('#void-note').focus();return;}
+  var body={id:voidId,reason:reason},pin=$('#void-pin').value;
+  if(!$('#void-pin-row').hidden){if(!pin){err.textContent='ใส่ PIN เจ้าของ';$('#void-pin').focus();return;}body.approvePin=pin;}
+  $('#void-ok').disabled=true;err.textContent='';
+  api('/api/ticket/void',body).then(function(r){
+    $('#void-ok').disabled=false;$('#void-pin').value='';
+    if(r.ok){$('#void-dlg').close();toast('ยกเลิกออเดอร์แล้ว');load();return;}
+    if(r.j.code==='need_approval'){$('#void-pin-row').hidden=false;$('#void-pin').focus();}
+    err.textContent=r.j.error||'ยกเลิกไม่สำเร็จ';
+    if(r.status===401){$('#void-dlg').close();showLogin();}
+    if(r.status===404){$('#void-dlg').close();toast(r.j.error);load();}
+  },function(){$('#void-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+});
 
 /* ---------- PromptPay ---------- */
 function crc16(s){var c=0xFFFF;for(var i=0;i<s.length;i++){c^=s.charCodeAt(i)<<8;for(var j=0;j<8;j++){c=(c&0x8000)?((c<<1)^0x1021):(c<<1);c&=0xFFFF;}}return c.toString(16).toUpperCase().padStart(4,'0');}
@@ -419,13 +484,12 @@ function renderKitchen(){
     var m=mins(k.createdAt),cls='w-ok';
     if(k.status==='ready')cls='w-ready';else if(m>=CRIT)cls='w-crit';else if(m>=WARN)cls='w-warn';
     var pill=k.status==='ready'?'<span class="pill ok">พร้อมเสิร์ฟ</span>':(k.status==='cooking'?'<span class="pill acc">กำลังทำ</span>':'<span class="pill">ใหม่</span>');
-    var vk='void:'+k.id;
     return '<div class="card '+cls+'"><div class="card-h"><span class="t">โต๊ะ '+k.table+'</span><b>'+m+' นาที</b></div>'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">'+esc(d.stations[k.station]||k.station)+'</span>'+pill+(k.by==='staff'?'<span class="pill">พนักงานสั่ง</span>':'')+'</div>'+
       '<ul>'+k.items.map(function(it){return '<li><b>×'+it.qty+'</b><span>'+esc(it.name)+(it.note.length?'<br><span class="note-txt">'+esc(it.note.join(' · '))+'</span>':'')+'</span></li>';}).join('')+'</ul>'+
       (k.memo?'<div class="memo-txt">'+esc(k.memo)+'</div>':'')+
       '<div class="card-act"><button class="btn primary" data-a="adv" data-id="'+k.id+'" data-from="'+k.status+'" data-st="'+NEXT[k.status][0]+'">'+NEXT[k.status][1]+'</button>'+
-      (k.status==='ready'||!front()?'':'<button class="btn'+(armed(vk)?' danger':'')+'" data-a="void" data-id="'+k.id+'">'+(armed(vk)?'ยืนยันยกเลิก':'ยกเลิก')+'</button>')+'</div></div>';
+      (k.status==='ready'||!front()?'':'<button class="btn" data-a="void" data-id="'+k.id+'">ยกเลิก</button>')+'</div></div>';
   }).join('')+'</div>';
   $('#v-kitchen').innerHTML=h;
 }
@@ -551,7 +615,7 @@ var FLD={shop:'ชื่อร้าน',promptpay:'PromptPay',tables:'จำน
 function fv(v){return v===true?'เปิด':v===false?'ปิด':(v===''||v==null)?'(ว่าง)':String(v);}
 function changes(e){return Object.keys(e.after||{}).map(function(k){return (FLD[k]||k)+' '+fv(e.before&&e.before[k])+' → '+fv(e.after[k]);}).join(', ');}
 function auditDetail(e){
-  if(e.action==='ticket.voided')return 'โต๊ะ '+e.table+' · '+(e.items||[]).map(function(i){return i.name+' ×'+i.qty;}).join(', ')+' · มูลค่า '+baht(e.value);
+  if(e.action==='ticket.voided')return 'โต๊ะ '+e.table+' · '+(e.items||[]).map(function(i){return i.name+' ×'+i.qty;}).join(', ')+' · มูลค่า '+baht(e.value)+(e.reason?' · เหตุผล: '+e.reason:'')+(e.approvedBy?' · อนุมัติโดย '+e.approvedBy.name:'');
   if(e.action==='bill.pay_rejected')return 'โต๊ะ '+e.table+' ยอดตอนกด '+baht(e.expectedSub)+' ยอดจริง '+baht(e.actualSub);
   if(e.action==='menu.item.updated')return (e.itemName||'')+' · '+changes(e);
   if(e.action==='staff.created')return (e.after&&e.after.name||'')+' · '+(S.d.roles[e.after&&e.after.role]||'');
@@ -922,10 +986,7 @@ document.addEventListener('click',function(e){
   }
   else if(a==='kst'){S.kStation=b.dataset.s;render();}
   else if(a==='adv'){act('/api/ticket',{id:id,from:b.dataset.from,status:b.dataset.st},b.dataset.st==='ready'?'แจ้งพนักงานไปรับอาหารแล้ว':null);}
-  else if(a==='void'){
-    if(!armed('void:'+id)){arm('void:'+id);return;}
-    disarm();act('/api/ticket/void',{id:id},'ยกเลิกออเดอร์แล้ว');
-  }
+  else if(a==='void'){openVoid(id);}
   else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}
   else if(a==='bsvc'){S.bSvc=!S.bSvc;render();}

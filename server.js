@@ -115,7 +115,7 @@ const server = http.createServer(async (req, res) => {
       // ส่งข้อมูลเกินขนาด: ตอบแล้วตัดการเชื่อมต่อทันที ไม่อ่านส่วนที่เหลือต่อ
       const extra = e.closeConnection ? { Connection: 'close' } : {};
       if (e.closeConnection) res.on('finish', () => req.socket.destroy());
-      U.send(res, e.status || 500, { error: e.status ? e.message : 'เกิดข้อผิดพลาดในระบบ (รหัสอ้างอิง ' + req.id + ')', requestId: req.id }, extra);
+      U.send(res, e.status || 500, Object.assign({ error: e.status ? e.message : 'เกิดข้อผิดพลาดในระบบ (รหัสอ้างอิง ' + req.id + ')', requestId: req.id }, e.status && e.code ? { code: e.code } : {}), extra);
     } else res.end();
   }
 });

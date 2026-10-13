@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -116,7 +116,7 @@ const cases = {
     const keys = (await s.call('GET', '/api/state')).json.keys;
     await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });   // 120 + ค่าบริการ 12 = 132
     const v = await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 3, qty: 1 }] }, { staff: false });
-    await s.call('POST', '/api/ticket/void', { id: v.json.tickets[0] });
+    await s.call('POST', '/api/ticket/void', { id: v.json.tickets[0], reason: 'ทดสอบ' });
     const page = await staffPage(browser, s, MOBILE, errors);
     await tab(page, 'tables'); await page.click('[data-a="sel"][data-id="1"]');
     const pay = page.locator('[data-a="pay"][data-m="cash"]');
@@ -415,6 +415,80 @@ const cases = {
     }
     const real = errors.filter(e => !/ERR_CONNECTION_REFUSED|Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error ทั้งวัน (ไม่นับการเชื่อมต่อไม่ได้ช่วงเซิร์ฟเวอร์ดับ)', real);
+    await browser.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* เกณฑ์ตรวจรับ: มือถือจอแคบไม่เลื่อนแนวนอน, ราคาเปลี่ยนระหว่างสั่ง, เน็ตหลุด, ยกเลิกออเดอร์ต้องมีเหตุผลและ PIN เจ้าของ */
+  async acceptance(browser) {
+    const ok = checker('acceptance'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/menu/item', { name: 'ข้าวผัดกระเพราหมูกรอบไข่ดาวไม่สุกพิเศษเพิ่มข้าวราดน้ำปลาพริกมะนาวกระเทียมเจียวหอมๆ', price: 89, cat: 1, station: 'hot', desc: 'เผ็ดมากกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกกก' });
+
+    // 1) จอ 320 px (มือถือเล็กสุดที่ยังใช้กัน) ทุกขั้นตอนสั่งอาหาร
+    const c = await customerPage(browser, s, 1, keys[1], errors, { viewport: { width: 320, height: 640 } });
+    ok(!(await overflow(c)), '320px หน้าเมนู ไม่เลื่อนแนวนอน', await overflow(c) || undefined);
+    await c.click('[data-a="inc"][data-id="1"]'); await c.click('[data-a="inc"][data-id="1"]');
+    await c.click('[data-a="open"]'); await c.waitForSelector('#sheet [data-a="send"]');
+    await c.click('[data-a="notes"]').catch(() => {});
+    ok(!(await overflow(c)), '320px ตะกร้าและหมายเหตุ ไม่เลื่อนแนวนอน', await overflow(c) || undefined);
+
+    // 2) ราคาเปลี่ยนตอนลูกค้าเปิดตะกร้าค้างไว้: ต้องเห็นยอดใหม่ก่อน ไม่ใช่เก็บเงินต่างจากที่เห็นเงียบๆ
+    await s.call('POST', '/api/menu/item', { id: 1, name: 'ผัดกะเพราหมูสับ', price: 75, cat: 1, station: 'hot' });
+    await c.click('[data-a="send"]');
+    await c.waitForFunction(() => /ราคาเมนูเพิ่งเปลี่ยน/.test(document.querySelector('#sheet').textContent), null, { timeout: 8000 });
+    await c.waitForFunction(() => /150/.test(document.querySelector('#sheet').textContent), null, { timeout: 8000 });
+    ok((await s.call('GET', '/api/state')).json.tickets.length === 0, 'ราคาเปลี่ยน: ยังไม่มีออเดอร์เข้าครัว และตะกร้าแสดงยอดใหม่ 150');
+    await c.click('[data-a="send"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.length === 1, 8000);
+    const t1 = (await s.call('GET', '/api/state')).json.tickets;
+    ok(t1.length === 1 && t1[0].items[0].price === 75, 'กดอีกครั้งหลังเห็นยอดใหม่ สั่งได้ 1 ใบ ราคา 75');
+
+    // 3) เน็ตหลุด: มีป้ายบอก ไม่แสดงข้อมูลเก่าเหมือนเป็นปัจจุบัน และหายเองเมื่อกลับมา
+    await c.context().setOffline(true);
+    await c.waitForSelector('#offline:not([hidden])', { timeout: 15000 }).catch(() => {});
+    ok(await c.isVisible('#offline'), 'เน็ตหลุด: มีป้ายเตือนบนหน้าลูกค้า');
+    await c.context().setOffline(false);
+    await c.waitForSelector('#offline', { state: 'hidden', timeout: 15000 }).catch(() => {});
+    ok(!(await c.isVisible('#offline')), 'เน็ตกลับมา: ป้ายหายเอง');
+
+    // 4) ยกเลิกออเดอร์จากแคชเชียร์
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const ctx = await browser.newContext({ baseURL: s.B });
+    const p = await ctx.newPage(); watch(p, errors, 'cashier');
+    await p.goto('/staff'); await p.fill('#pin', '520011'); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
+    const id = t1[0].id;
+    await p.click('[data-a="void"][data-id="' + id + '"]');
+    await p.waitForSelector('#void-dlg[open]');
+    ok(await p.isHidden('#void-pin-row'), 'ออเดอร์ใหม่ ไม่ต้องใช้ PIN เจ้าของ');
+    await p.click('#void-ok');
+    ok(/เลือกเหตุผล/.test(await p.textContent('#void-err')), 'ไม่เลือกเหตุผล กดยืนยันไม่ได้');
+    await p.check('#void-form input[value="อื่นๆ"]'); await p.fill('#void-note', 'ลูกค้าย้ายโต๊ะ');
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 2, qty: 1 }] }, { staff: false });   // มีออเดอร์ใหม่เข้าระหว่างพิมพ์
+    await sleep(800);
+    ok(await p.inputValue('#void-note') === 'ลูกค้าย้ายโต๊ะ' && await p.isChecked('#void-form input[value="อื่นๆ"]'), 'ออเดอร์ใหม่เข้าระหว่างพิมพ์ เหตุผลที่พิมพ์ไม่หาย');
+    // ระหว่างนั้นครัวเริ่มทำ: เซิร์ฟเวอร์ขอ PIN เจ้าของ หน้าจอเปิดช่อง PIN ให้เอง
+    await s.call('POST', '/api/ticket', { id, from: 'new', status: 'cooking' });
+    await p.click('#void-ok');
+    await p.waitForSelector('#void-pin-row:not([hidden])', { timeout: 5000 }).catch(() => {});
+    ok(await p.isVisible('#void-pin-row'), 'ครัวเริ่มทำระหว่างเปิดหน้าต่าง: ขอ PIN เจ้าของ');
+    await p.fill('#void-pin', '520011'); await p.click('#void-ok');
+    await p.waitForFunction(() => /ไม่ถูกต้อง/.test(document.querySelector('#void-err').textContent), null, { timeout: 5000 }).catch(() => {});
+    ok(/ไม่ถูกต้อง/.test(await p.textContent('#void-err')), 'PIN ผิด: แจ้งในหน้าต่าง ไม่ปิดเอง');
+    await p.fill('#void-pin', PIN); await p.press('#void-pin', 'Enter');
+    await p.waitForSelector('#void-dlg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    const left = (await s.call('GET', '/api/state')).json.tickets.map(t => t.id);
+    ok(!left.includes(id), 'PIN เจ้าของถูก: ยกเลิกสำเร็จ หน้าต่างปิด');
+    // คีย์บอร์ด: Esc ปิดหน้าต่าง โฟกัสอยู่ในหน้าต่างตอนเปิด
+    const id2 = left[0];
+    await p.click('[data-a="void"][data-id="' + id2 + '"]'); await p.waitForSelector('#void-dlg[open]');
+    ok(await p.evaluate(() => !!document.activeElement.closest('#void-dlg')), 'เปิดหน้าต่างแล้วโฟกัสอยู่ในหน้าต่าง');
+    await p.keyboard.press('Escape');
+    ok(await p.isHidden('#void-dlg'), 'กด Esc ปิดหน้าต่าง ไม่ยกเลิกออเดอร์');
+    ok((await s.call('GET', '/api/state')).json.tickets.some(t => t.id === id2), 'Esc แล้วออเดอร์ยังอยู่');
+    const real = errors.filter(e => !/ERR_INTERNET_DISCONNECTED|Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
     await browser.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   }

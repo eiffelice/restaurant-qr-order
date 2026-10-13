@@ -83,11 +83,13 @@ nav.cats .in::-webkit-scrollbar{display:none}
 .small{font-size:.85rem}
 #toast{position:fixed;left:50%;bottom:calc(6.5rem + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:99px;font-weight:600;z-index:20;opacity:0;pointer-events:none;transition:opacity .2s;max-width:calc(100% - 32px);text-align:center}
 #toast.on{opacity:1}
+.offline{position:fixed;left:0;right:0;top:0;z-index:25;background:var(--warn-bg);color:var(--warn);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top,0px)) 16px 8px;text-align:center;font-weight:600;font-size:.92rem}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app"><div class="wrap center muted" role="status">กำลังโหลดเมนู…</div></div>
+<div class="offline" id="offline" role="status" hidden>สัญญาณหลุด สถานะอาหารที่เห็นอาจไม่ใช่ล่าสุด กำลังเชื่อมต่อใหม่…</div>
 <div class="sheet-bg" id="sheetbg" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="ตะกร้า"></div></div>
 <div class="zoom" id="zoom" hidden data-a="unzoom"><img id="zoomimg" alt=""><p id="zoomtxt"></p><button class="x" data-a="unzoom" aria-label="ปิดรูป">×</button></div>
 <div id="toast" role="status"></div>
@@ -220,11 +222,17 @@ function applyStat(s){
   if(before!==after||removed.length||gone){renderAll();renderSheet();}
   else renderStatus();
 }
+// เน็ตหลุด: บอกลูกค้าตรงๆ ว่าสถานะที่เห็นอาจเก่า (เดิมเงียบ ลูกค้าเห็นข้อมูลค้างเหมือนเป็นปัจจุบัน)
+var netFails=0;
+function setOnline(ok){netFails=ok?0:netFails+1;$('#offline').hidden=ok||(netFails<2&&navigator.onLine!==false);}
 function refreshStatus(){
   api('/api/table?t='+T+'&k='+encodeURIComponent(K)).then(function(r){
+    setOnline(true);
     if(r.ok)applyStat(r.j);
-  }).catch(function(){});
+  }).catch(function(){setOnline(false);});
 }
+window.addEventListener('offline',function(){$('#offline').hidden=false;});
+window.addEventListener('online',refreshStatus);
 
 document.addEventListener('click',function(e){
   var b=e.target.closest('[data-a]');
@@ -255,10 +263,11 @@ function send(){
   if(!items.length)return;
   if(!reqId){reqId=newReqId();saveCart();}
   sending=true;sendErr='';renderSheet();
-  api('/api/order',{table:T,key:K,items:items,memo:memo,reqId:reqId}).then(function(r){
+  // expect = ยอดที่ลูกค้าเห็น ถ้าราคาเปลี่ยนระหว่างนั้น เซิร์ฟเวอร์ตอบ 409 แล้วหน้านี้โหลดราคาใหม่ให้ตรวจก่อนกดอีกครั้ง
+  api('/api/order',{table:T,key:K,items:items,memo:memo,reqId:reqId,expect:Math.round(cartTotal()*100)/100}).then(function(r){
     sending=false;
     if(r.ok){cart={};memo='';reqId=null;saveCart();sheetOpen=false;renderAll();renderSheet();toast('ส่งออเดอร์เข้าครัวแล้ว');refreshStatus();}
-    else{sendErr=r.j.error||'ส่งไม่สำเร็จ';renderSheet();refreshStatus();}
+    else{sendErr=r.j.error||'ส่งไม่สำเร็จ';if(r.j.code==='price_changed'){reqId=null;saveCart();}renderSheet();refreshStatus();}
   }).catch(function(){sending=false;sendErr='ส่งไม่สำเร็จ ตรวจสอบสัญญาณ แล้วกดสั่งอีกครั้ง (ระบบจะไม่ส่งซ้ำ)';renderSheet();});
 }
 
