@@ -41,6 +41,11 @@ async function main() {
     const c = await m.newPage();
     await c.goto('/order?t=1&k=' + keys[1]); await c.waitForSelector('.item');
     all.push(...await scan(c, 'customer menu ' + scheme));
+    await c.click('.item .open'); await c.waitForSelector('#detail:not([hidden])'); await sleep(400);   // รอ animation เปิดหน้าจบ (ระหว่างนั้นสีจาง axe วัดผิด)
+    all.push(...await scan(c, 'customer detail ' + scheme));
+    await c.click('[data-a="dtab"][data-t="notes"]'); await sleep(150);
+    all.push(...await scan(c, 'customer detail notes ' + scheme));
+    await c.click('[data-a="dback"]'); await sleep(150);
     await c.click('.item [data-a="inc"]'); await c.click('[data-a="open"]'); await c.click('[data-a="notes"]'); await sleep(200);
     all.push(...await scan(c, 'customer cart ' + scheme));
     await ctx.close(); await m.close();
@@ -63,7 +68,10 @@ async function main() {
   await c2.goto('/order?t=3&k=' + keys[3]); await c2.waitForSelector('.item');
   let added = false;
   for (let i = 0; i < 25 && !added; i++) { await c2.keyboard.press('Tab'); if (await c2.evaluate(() => document.activeElement && document.activeElement.dataset.a === 'inc')) { await c2.keyboard.press('Enter'); added = true; } }
-  for (let i = 0; i < 40 && added; i++) { await c2.keyboard.press('Tab'); if (await c2.evaluate(() => document.activeElement && document.activeElement.dataset.a === 'open')) { await c2.keyboard.press('Enter'); break; } }
+  // กด + แล้วโฟกัสต้องอยู่ที่ปุ่มของจานเดิม (ไม่เด้งไปบนสุด) ปุ่มตะกร้าอยู่ก่อนรายการเมนูในลำดับ Tab จึงย้อน (Shift+Tab) ไปไม่กี่ครั้ง
+  const stay = added && await c2.evaluate(() => !!document.activeElement.closest('.item'));
+  ok(stay, 'หน้าลูกค้า: กด + ด้วยคีย์บอร์ดแล้วโฟกัสยังอยู่ที่จานเดิม');
+  for (let i = 0; i < 20 && added; i++) { await c2.keyboard.press('Shift+Tab'); if (await c2.evaluate(() => document.activeElement && document.activeElement.dataset.a === 'open')) { await c2.keyboard.press('Enter'); break; } }
   await sleep(200);
   for (let i = 0; i < 30; i++) { await c2.keyboard.press('Tab'); if (await c2.evaluate(() => document.activeElement && document.activeElement.dataset.a === 'send')) { await c2.keyboard.press('Enter'); break; } }
   await sleep(500);

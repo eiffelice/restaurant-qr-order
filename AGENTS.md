@@ -103,6 +103,7 @@ lib/util.js        วันที่, writeAtomic, retryAsync/retry (ลอง�
 lib/store.js       state ในหน่วยความจำ, normalize (ตรวจซ่อมข้อมูล), load, save/writeNow (ลองใหม่ด้วย timer), คิวยอดขาย, billOf, totals
 lib/log.js         log 3 ชนิด (audit/security/app) แยกไฟล์รายเดือน, hash chain ของ audit, ตัดค่าลับ, ระยะเก็บ
 lib/backup.js      สร้างไฟล์สำรอง .json.gz แบบ stream, สำรองอัตโนมัติ, กู้คืนแบบ stage-then-swap
+lib/theme.js       ธีมร้าน: จากสีปุ่มหลักสีเดียว คำนวณสีตัวหนังสือ/พื้นจาง/โฟกัสให้ผ่าน WCAG AA (ใช้ทั้ง /theme.css และหน้าตั้งค่า)
 lib/routes.js      API ทั้งหมด (object `api` key = "METHOD /path"), สิทธิ์, rate limit, SSE broadcast
 public/staff.html  หน้าพนักงาน (vanilla JS ไฟล์เดียว)
 public/customer.html หน้าลูกค้า (vanilla JS ไฟล์เดียว)
@@ -132,7 +133,8 @@ test/api.test.js   ชุดทดสอบ node:test
 
 ```js
 D = {
-  settings: { shop, address, phone, taxId, footer, promptpay, tables, svc, vat, baseUrl, soldOut: [menuId], acceptOrders },
+  settings: { shop, address, phone, taxId, footer, promptpay, tables, svc, vat, baseUrl, soldOut: [menuId], acceptOrders,
+              accent /* '#rrggbb' สีปุ่มหลัก หรือ '' = สีตั้งต้น */, logo /* 'logo-<hex8>.png' ใน images/ หรือ '' */ },
   menu: {
     version,                       // เพิ่มทุกครั้งที่แก้เมนู ลูกค้าใช้ตรวจว่าต้องโหลดเมนูใหม่
     categories: [{ id, name }],    // ลำดับใน array = ลำดับที่แสดง
@@ -158,7 +160,8 @@ D = {
 | `data.json` | เขียนแบบ atomic (tmp + rename) |
 | `data.json.bak` | สำเนาตอนเปิดระบบ ใช้กู้อัตโนมัติถ้า data.json อ่านไม่ได้ |
 | `sales/YYYY-MM.jsonl` | ยอดขายถาวร append-only หนึ่งบรรทัดต่อบิล ถ้าเขียนไม่ได้ บิลค้างในคิวและลองใหม่เรื่อยๆ ตอนเปิดระบบและหลังกู้คืน `reconcileSales()` เทียบ `D.sales` กับไฟล์ (ตาม `no`) แล้วเติมบิลที่ขาด |
-| `images/m<id>-<hex8>.<jpg\|png\|webp>` | รูปอาหาร ชื่อไฟล์ใหม่ทุกครั้งที่เปลี่ยนรูป (cache ได้ตลอด) |
+| `images/m<id>-<hex8>.<jpg\|png\|webp>` | รูปอาหาร ชื่อไฟล์ใหม่ทุกครั้งที่เปลี่ยนรูป (cache ได้ตลอด) ตรวจด้วย `MENU_IMG_RE` |
+| `images/logo-<hex8>.<jpg\|png\|webp>` | โลโก้ร้าน (`LOGO_RE`) อยู่ในไฟล์สำรองเหมือนรูปเมนู `IMG_RE` = ทุกไฟล์ใน images/ |
 | `backups/backup-YYYYMMDD-HHMMSS-<reason>.json.gz` | reason = auto, manual, before-restore |
 | `logs/audit-YYYY-MM.jsonl` | ใครทำอะไรกับเงิน/ออเดอร์/เมนู/ตั้งค่า มี before/after, ip, dev, req และ hash chain (prev/hash) เก็บ 25 เดือน กู้คืนข้อมูลไม่ย้อน log |
 | `logs/security-YYYY-MM.jsonl` | เข้าสู่ระบบ รหัสผิด ถูกจำกัด 401 รหัส QR ผิด (ซ้ำจากที่เดิมบันทึกครั้งเดียวต่อ 10 นาที) เก็บ 6 เดือน |
@@ -178,7 +181,8 @@ D = {
 |---|---|---|
 | POST /api/login `{pin}` | public | ได้ cookie `st` ของคนที่ PIN ตรง และ `me` (id, name, role) (จำกัด 6 ครั้ง/นาที/IP และรหัสผิดรวมทุก IP 30 ครั้ง/นาที ยกเว้นเครื่องร้านเอง) |
 | POST /api/logout | public | ลบ cookie |
-| GET /api/menu | public | เมนูที่ไม่ซ่อน + หมวดที่มีเมนู + `version` |
+| GET /api/menu | public | เมนูที่ไม่ซ่อน + หมวดที่มีเมนู + `version` + `logo` |
+| GET /api/brand | public | ชื่อร้าน + โลโก้ (หน้าเข้าสู่ระบบพนักงานใช้ก่อนเข้าสู่ระบบ) |
 | GET /api/table?t=&k= | QR | ออเดอร์ของโต๊ะ, ยอด, `menuVersion`, `soldOut`, `open` |
 | POST /api/order `{table,key,items:[{id,qty,note}],memo,reqId,expect}` | QR | สั่งอาหาร แยกตั๋วตาม station, `reqId` กันสั่งซ้ำ 10 นาที, `expect` = ยอดที่ลูกค้าเห็น ถ้าไม่ตรงราคาปัจจุบันได้ 409 `code: price_changed` |
 | POST /api/call `{table,key,kind}` | QR | เรียกพนักงาน / ขอบิล |
@@ -188,7 +192,10 @@ D = {
 | POST /api/ticket/void `{id,reason,approvePin?}` | staff | ยกเลิกตั๋วทั้งใบ ต้องมี `reason` ถ้าตั๋วไม่ใช่ new และคนกดไม่ใช่เจ้าของ ต้องมี `approvePin` ของเจ้าของ (ไม่มี/ผิดได้ 403 `code: need_approval`) |
 | POST /api/call/clear `{table}` | staff | รับทราบการเรียก |
 | POST /api/pay `{table,expectedSub,svc,vat,method,received?}` | staff | ปิดบิล ถ้ายอดเปลี่ยนได้ 409, `received` (เงินสดที่รับมา) ต้อง ≥ ยอด ตอบ `change` กลับ |
-| POST /api/settings `{...}` | staff | แก้ตั้งค่าร้าน (ส่งเฉพาะ field ที่จะแก้) |
+| POST /api/settings `{...}` | staff | แก้ตั้งค่าร้าน (ส่งเฉพาะ field ที่จะแก้) `accent` ต้องผ่าน `theme.derive()` เปลี่ยนสีแล้ว `menu.version` เพิ่ม หน้าลูกค้าโหลดสีใหม่เอง |
+| GET /api/theme/preview?accent= | เจ้าของ | ผลคำนวณสี light/dark + ชุดสีสำเร็จรูป ใช้แสดงตัวอย่างก่อนบันทึก |
+| POST /api/settings/logo (body = รูป, Content-Type image/*) | เจ้าของ | อัปโหลดโลโก้ ≤ 3 MB ตรวจ magic bytes ลบไฟล์เก่า |
+| POST /api/settings/logo/delete | เจ้าของ | เอาโลโก้ออก |
 | POST /api/soldout `{id,soldOut}` | staff | ตั้ง/ยกเลิกเมนูหมด |
 | POST /api/menu/item `{id?,name,price,cat,station,desc,hidden,was?}` | เจ้าของ | เพิ่ม (ไม่มี id) หรือแก้เมนู ถ้า `was` ไม่ตรงกับค่าปัจจุบันได้ 409 |
 | POST /api/menu/item/delete `{id}` | staff | ลบเมนูและรูป |
@@ -210,7 +217,7 @@ D = {
 | GET /api/backup/download?name= | staff | ดาวน์โหลดไฟล์สำรอง |
 | POST /api/backup/restore (body = ไฟล์ .json.gz หรือ .json) | staff | กู้คืน ได้ cookie ใหม่กลับมา |
 
-หน้าเว็บ: `GET /staff`, `GET /order`, `GET /qrcode.js`, `GET /img/<ชื่อไฟล์>` (`GET /` redirect ไป `/staff`)
+หน้าเว็บ: `GET /staff`, `GET /order`, `GET /qrcode.js`, `GET /img/<ชื่อไฟล์>`, `GET /theme.css` (สีร้าน ทั้งสองหน้าโหลดต่อท้าย `<style>`) (`GET /` redirect ไป `/staff`)
 Error ทุกตัวเป็น `{ "error": "ข้อความภาษาไทยที่แสดงให้ผู้ใช้ได้เลย", "requestId": "..." }` ทุกคำตอบมี header `X-Request-Id` ตรงกับ `req` ใน log บาง error มี `code` ให้หน้าเว็บตัดสินใจ (`need_approval`, `price_changed`) สร้างด้วย `codeFail(msg, status, code)`
 
 ---
@@ -241,7 +248,7 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 20. **ข้อมูลชุดเดียวกันเปิดได้ทีละโปรแกรม** ห้ามเอาล็อกใน `lockDataDir()` ออก (เคยเปิดคนละพอร์ตได้ data.json ทับกัน บิลหายและเลขบิลซ้ำ)
 21. **เลขบิลห้ามย้อนหรือซ้ำ** กู้คืนใช้ `max(nextBill เดิม, ของไฟล์สำรอง)` และตอนเปิดระบบต้องมากกว่าเลขบิลล่าสุดใน sales/ (ใบเสร็จที่ส่งให้ลูกค้าแล้วย้อนกลับไม่ได้)
 22. **ปิดบิลส่ง `expectedSub` ที่จำไว้ตอนกดครั้งแรก** (`S.paySub`) ไม่ใช่ยอดบนปุ่มตอนกดยืนยัน เพราะหน้าจอ re-render ยอดใหม่ใต้นิ้วพนักงานได้ (เคยรับเงิน 132 แต่บันทึก 220)
-23. **`reqId` ของลูกค้าเก็บคู่กับตะกร้าใน localStorage** รีเฟรชหน้าแล้วกดใหม่ต้องใช้ reqId เดิม (เคยได้ออเดอร์ซ้ำ)
+23. **`reqId` ของลูกค้าเก็บคู่กับตะกร้าใน localStorage** รีเฟรชหน้าแล้วกดใหม่ต้องใช้ reqId เดิม (เคยได้ออเดอร์ซ้ำ) รูปแบบปัจจุบัน `{v:2, lines:[{id,qty,note}], memo, reqId}` ตะกร้าแบบเดิม `{cart:{id:{qty,note}}}` ต้องแปลงได้และใช้ reqId เดิมต่อ
 24. **รหัส QR ผิดเกิน 30 ครั้ง/นาที/IP ได้ 429** ต้องตรวจก่อนเทียบรหัส ไม่อย่างนั้นถูกจำกัดแล้วก็ยังเดาต่อได้
 25. **CSV ยกเว้น `'` นำหน้าเฉพาะค่าที่เป็นตัวเลขล้วน** (`-2+3+cmd|...` ขึ้นต้นด้วยตัวเลขแต่เป็นสูตร)
 26. **`<input type=file>` ในหน้าพนักงานต้องอยู่นอกส่วนที่ re-render** (`#e-file`, `#rs-file` อยู่ท้าย body, label อ้างด้วย `for`) ไม่อย่างนั้นมีออเดอร์เข้าระหว่างหน้าต่างเลือกไฟล์เปิดอยู่ ไฟล์ที่เลือกหายเงียบๆ
@@ -260,6 +267,10 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 39. **ยกเลิกตั๋วต้องมีเหตุผล และถ้าครัวเริ่มทำแล้ว แคชเชียร์ต้องมี PIN เจ้าของ** เหตุผลและผู้อนุมัติอยู่ใน audit `ticket.voided` (`reason`, `approvedBy`) PIN อนุมัติผิดนับรวมกับ PIN ผิดตอนเข้าสู่ระบบ ห้ามเก็บ PIN ใน log
 40. **ราคาที่ลูกค้าเห็นต้องตรงกับที่คิดเงิน** หน้าลูกค้าส่ง `expect` ถ้าราคาเปลี่ยนต้องตอบ 409 ไม่รับออเดอร์ด้วยราคาใหม่เงียบๆ (ห้ามใช้ `expect` คิดเงิน ราคายังมาจากเซิร์ฟเวอร์ตามข้อ 1)
 41. **หน้าลูกค้าต้องบอกเมื่อเน็ตหลุด** (`#offline`) ห้ามแสดงสถานะอาหารเก่าเหมือนเป็นปัจจุบัน
+42. **สีร้านคำนวณที่ `lib/theme.js` ที่เดียว** หน้าเว็บห้ามมีสูตรสีของตัวเอง (หน้าตั้งค่าขอผลจาก `/api/theme/preview`) ค่า `accent` จากดิสก์/ไฟล์สำรองต้องผ่าน `derive()` ก่อนใส่ใน CSS กัน CSS injection
+43. **ตะกร้าลูกค้าเป็นแถวตาม (เมนู + หมายเหตุ)** เมนูเดียวกันหมายเหตุต่างกัน = คนละแถว (ครัวรู้ว่าจานไหนเผ็ด) หมายเหตุเหมือนกัน = รวมแถว (`mergeLines()`) ปุ่ม + บนการ์ด = จานปกติไม่มีหมายเหตุเสมอ
+44. **หน้ารายละเอียดและตะกร้าของลูกค้าเปิดด้วย `history.pushState`** ปุ่มย้อนกลับของมือถือต้องปิดหน้านั้น ไม่ออกจากเว็บ ปิดด้วยปุ่มในหน้าต้อง `history.back()` ตาม (ธง `backing`) ไม่อย่างนั้นต้องกด back สองครั้ง
+45. **วาดใหม่แล้วต้องคืนโฟกัส** `renderAll()` และ `renderDetail()` จำปุ่มที่โฟกัสอยู่ (data-a/data-id/data-n) แล้วโฟกัสคืน และหน้ารายละเอียดวาดใหม่เฉพาะเมื่อเมนูหมด/ร้านปิดรับ/เมนูเปลี่ยน ไม่ใช่ทุกรอบ poll (เคยทำให้คนใช้คีย์บอร์ดหลุดตำแหน่งทุก 5 วินาที)
 ---
 
 ## 7. วิธีแก้โค้ดที่ทำบ่อย
@@ -280,6 +291,14 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 
 ### แก้หน้าเว็บ
 - ไม่มี framework ไม่มี build แก้ไฟล์ HTML แล้ว refresh ได้เลย
+- **โครงหน้าลูกค้า (customer.html)**
+  - `#app` = หัวร้าน (โลโก้ ชื่อร้าน โต๊ะ) → แถบหมวด (`nav.cats` ปุ่มกระโดดไปหมวด + ไฮไลต์ตามตำแหน่งที่เลื่อน `spy()`) → ปุ่มตะกร้า `.bar` (fixed ล่างจอ แต่อยู่ก่อนรายการใน DOM ให้คีย์บอร์ดถึงเร็ว) → `<section class="sec">` ทุกหมวดเรียงต่อกัน การ์ด 2 คอลัมน์ (≥ 700px 3 คอลัมน์) → `#status` ออเดอร์ของโต๊ะ + เรียกพนักงาน/ขอบิล
+  - การ์ด: `.item > .picwrap > button.open[data-a=detail]` (รูปหรือ `.noimg.tn0-4` พื้นจางตามหมวด) + `.ctl` (ปุ่ม + หรือ − n +) ชื่อและราคาอยู่ใต้รูป
+  - `#detail` หน้ารายละเอียด (นอก #app): `.hero` รูป 55% จอ มุม 28px gradient มืดบน/ล่าง ป้ายมีพื้นทึบ (`--scrim`) ตัวหนังสือบนรูปจึงผ่าน contrast ทุกรูป → `.buy` ราคาบนพื้นเว้า (`.notch`) + ตัวเพิ่มลด + ปุ่มแคปซูล `.cap` → แท็บ รายละเอียด/หมายเหตุ
+  - `#sheetbg > #sheet` ตะกร้า (นอก #app) แต่ละแถวมีรูปเล็ก ตัวเพิ่มลด (`linc/ldec` ตาม index แถว) และชิปหมายเหตุ
+  - ปุ่มหลักทุกจุดใช้ `.cap` (แคปซูล + วงกลมลูกศร) สีจาก `--accent` ที่เจ้าของตั้งได้ ไอคอนเป็น inline SVG ใน `IC` ห้ามโหลดฟอนต์/ไอคอนจากเน็ต
+  - selector ที่สคริปต์ QA ใช้ ห้ามเปลี่ยนชื่อโดยไม่แก้ qa/: `.item`, `.item.out`, `.item [data-a="inc"]`, `.item .open`, `[data-a="open"]`, `[data-a="send"]`, `[data-a="notes"]`, `#detail`, `[data-a="dadd"]`
+- **ธีมร้าน:** แผง `#theme` ในแท็บตั้งค่า (ไม่วาดทับระหว่างเลือกสี `themeBusy()`) โลโก้เลือกผ่าน `#logo-file` ที่อยู่ท้าย body (กฎข้อ 26) โลโก้แสดงที่หน้าเข้าสู่ระบบ แถบเมนู ใบเสร็จ แผ่น QR และหัวหน้าลูกค้า
 - รูปแบบ: state object `S` → ฟังก์ชัน `renderX()` สร้าง HTML string → ปุ่มใช้ `data-a="action"` และมี click handler ตัวเดียวท้ายไฟล์
 - หน้าพนักงาน re-render ทุกครั้งที่มี SSE ถ้ามี input ที่ผู้ใช้กำลังพิมพ์ ต้องกันไม่ให้ถูก render ทับ (ดู `S.dirty`, `menuBusy()`, `syncEditor()`)
 - สีทั้งหมดเป็น CSS variable รองรับ dark mode ห้ามใส่สีตรงๆ ใน component ชุดสีคือ Graphite + Lime (design tokens อยู่ใน `:root` ของทั้งสองหน้า ค่าเดียวกัน)
