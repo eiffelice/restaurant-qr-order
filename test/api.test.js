@@ -1150,6 +1150,29 @@ describe('พนักงานรายคนและบทบาท', () => {
     await s.stop();
   });
 
+  test('PIN เจ้าของเป็นค่าเริ่มต้น 1234: หน้าพนักงานของเจ้าของได้คำเตือน (ไม่ใช่แค่ใน console)', async () => {
+    const weak = start(makeApp(), { STAFF_PIN: '1234' }); await weak.ready;
+    await weak.call('POST', '/api/login', { pin: '1234' });
+    assert.equal((await weak.call('GET', '/api/state')).json.weakPin, true);
+    await weak.stop();
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.equal((await s.call('GET', '/api/state')).json.weakPin, false, 'PIN 6 หลักไม่ต้องเตือน');
+    await s.stop();
+  });
+
+  test('สองเครื่องแก้เมนูเดียวกัน: เครื่องที่เปิดหน้าแก้ค้างไว้บันทึกทับราคาที่อีกเครื่องเพิ่งแก้ไม่ได้', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const m = (await s.call('GET', '/api/state')).json.menu.items.find(x => x.id === 1);
+    const was = { name: m.name, price: m.price, cat: m.cat, station: m.station, desc: m.desc, hidden: m.hidden };
+    // เครื่อง A และ B เปิดหน้าแก้พร้อมกัน A ขึ้นราคาก่อน
+    assert.equal((await s.call('POST', '/api/menu/item', Object.assign({}, was, { id: 1, price: 75, was }))).status, 200);
+    // B แก้แค่คำอธิบาย แต่ฟอร์มยังถือราคาเดิม 60
+    const r = await s.call('POST', '/api/menu/item', Object.assign({}, was, { id: 1, desc: 'แก้คำอธิบาย', was }));
+    assert.equal(r.status, 409, 'ต้องบอกว่ามีคนแก้ไปก่อน');
+    assert.equal((await s.call('GET', '/api/menu')).json.items.find(x => x.id === 1).price, 75, 'ราคาใหม่ต้องไม่ถูกทับ');
+    await s.stop();
+  });
+
   test('ครัวสั่งอาหารแทนลูกค้าโดยไม่มีรหัส QR ไม่ได้ แต่เปลี่ยนสถานะอาหารและตั้งเมนูหมดได้', async () => {
     const s = start(makeApp()); await s.ready; await s.login();
     await withStaff(s);

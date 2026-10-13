@@ -57,7 +57,7 @@ button.pill{border:0}
 .banner.crit{background:var(--crit-bg);color:var(--crit)}
 /* kitchen */
 .agg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
-.agg .pill{background:var(--accent-soft);color:var(--accent);font-size:.85rem;padding:3px 11px}
+.agg .pill{background:var(--accent-soft);color:var(--accent);font-size:.85rem;padding:3px 11px;white-space:normal;overflow-wrap:anywhere;max-width:100%}
 .board{display:grid;grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));gap:10px;align-items:start}
 .card{background:var(--surface);border:1px solid var(--line);border-left-width:6px;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0}
 .card.w-ok{border-left-color:var(--accent)} .card.w-warn{border-left-color:#d97706;background:var(--warn-bg)} .card.w-crit{border-left-color:var(--crit);background:var(--crit-bg)} .card.w-ready{border-left-color:var(--ok)}
@@ -78,6 +78,7 @@ button.pill{border:0}
 .tbl.busy{border-color:var(--accent);background:var(--accent-soft)} .tbl.busy .s{color:var(--accent)}
 .tbl.ready{border-color:var(--ok);background:var(--ok-bg)} .tbl.ready .s{color:var(--ok);font-weight:700}
 .tbl.call{border-color:var(--crit);background:var(--crit-bg)} .tbl.call .s{color:var(--crit);font-weight:700}
+.tbl.add{border-style:dashed;color:var(--accent)} .tbl.add .s{color:var(--accent)}
 .tbl[aria-pressed="true"]{outline:3px solid var(--ink);outline-offset:1px}
 .detail{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start}
 @media (min-width:860px){.detail{grid-template-columns:22rem minmax(0,1fr)}}
@@ -449,7 +450,7 @@ function receiptHtml(o){
     h+='<hr><div class="qr">';
     var payload=ppPayload(s.promptpay,pay),svg=payload?qrSvg(payload,'PromptPay QR'):'';
     if(svg)h+=svg+'<small>สแกนจ่ายผ่าน PromptPay '+baht(pay)+'</small>';
-    else h+='<small>ตั้งค่าเบอร์ PromptPay ในแท็บ "ตั้งค่า & QR" เพื่อแสดง QR รับเงิน</small>';
+    else h+='<small>ตั้งค่าเบอร์ PromptPay ในแท็บ "ตั้งค่า" เพื่อแสดง QR รับเงิน</small>';
     h+='</div>';
   }
   if(s.footer)h+='<hr><div class="sub">'+esc(s.footer)+'</div>';
@@ -487,6 +488,8 @@ function renderTables(){
     var cls=call?'call':(rdy?'ready':(tk.length?'busy':'')),st=call?(call.kind==='bill'?'ขอเช็คบิล':'เรียกพนักงาน'):(rdy?'พร้อมเสิร์ฟ':(tk.length?'มีลูกค้า':'ว่าง'));
     h+='<button class="tbl '+cls+'" data-a="sel" data-id="'+t+'" aria-pressed="'+(S.sel===t)+'"><span class="n">'+t+'</span><span class="s">'+st+'</span></button>';
   }
+  // เพิ่มโต๊ะได้จากตรงนี้เลย (ลดโต๊ะ ตั้งชื่อร้าน และพิมพ์ QR อยู่ที่แท็บตั้งค่า)
+  if(isOwner()&&n<60)h+='<button class="tbl add" data-a="addtable"><span class="n" aria-hidden="true">+</span><span class="s">เพิ่มโต๊ะ</span></button>';
   h+='</div>';
   if(S.lastSale){
     var ls=S.lastSale;
@@ -708,7 +711,8 @@ function renderMenu(){
 function openEditor(m){
   var mm=S.d.menu;
   closeEditor();
-  S.edit=m?{id:m.id,name:m.name,price:String(m.price),cat:m.cat,station:m.station,desc:m.desc||'',hidden:!!m.hidden,image:m.image||''}
+  S.edit=m?{id:m.id,name:m.name,price:String(m.price),cat:m.cat,station:m.station,desc:m.desc||'',hidden:!!m.hidden,image:m.image||'',
+           was:{name:m.name,price:m.price,cat:m.cat,station:m.station,desc:m.desc||'',hidden:!!m.hidden}}
           :{id:0,name:'',price:'',cat:S.mCat||(mm.categories[0]&&mm.categories[0].id),station:Object.keys(mm.stations)[0],desc:'',hidden:false,image:''};
   renderMenu();
   window.scrollTo({top:0,behavior:'smooth'});
@@ -740,7 +744,7 @@ function saveItem(){
   if(!e.name.trim()){e.err='ใส่ชื่อเมนู';renderMenu();return;}
   if(e.price===''||isNaN(+e.price)||+e.price<0){e.err='ใส่ราคาเป็นตัวเลข';renderMenu();return;}
   e.err='';S.saving=true;renderMenu();
-  api('/api/menu/item',{id:e.id||undefined,name:e.name,price:+e.price,cat:e.cat,station:e.station,desc:e.desc,hidden:e.hidden}).then(function(r){
+  api('/api/menu/item',{id:e.id||undefined,name:e.name,price:+e.price,cat:e.cat,station:e.station,desc:e.desc,hidden:e.hidden,was:e.was}).then(function(r){
     if(!r.ok){S.saving=false;e.err=r.j.error||'บันทึกไม่สำเร็จ';renderMenu();if(r.status===401)showLogin();return;}
     var id=r.j.item.id,p=Promise.resolve(null);
     if(e.blob)p=uploadImage(id,e.blob);
@@ -854,6 +858,7 @@ function renderStaff(){
 function renderHealth(){
   var e=S.d.health&&S.d.health.saveError,el=$('#health');
   el.innerHTML=e?'<div class="banner crit" style="margin-top:12px"><span>บันทึกข้อมูลลงเครื่องไม่สำเร็จตั้งแต่ '+new Date(e.at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' ('+esc(e.message)+') ข้อมูลล่าสุดยังอยู่ในโปรแกรม อย่าเพิ่งปิดโปรแกรม ตรวจพื้นที่ดิสก์หรือโปรแกรมที่อาจล็อกไฟล์ ระบบกำลังลองบันทึกใหม่ให้เองเรื่อยๆ</span><button class="btn sm" data-a="tab" data-v="settings">ไปดาวน์โหลดไฟล์สำรอง</button></div>':'';
+  if(S.d.weakPin)el.innerHTML+='<div class="banner crit" style="margin-top:12px"><span>รหัสเจ้าของร้านเป็นค่าเริ่มต้นหรือสั้นเกินไป ใครที่ต่อ WiFi ร้านเดาเข้าเป็นเจ้าของได้ (เปลี่ยนเบอร์ PromptPay ให้เงินเข้าบัญชีอื่นได้) ปิดโปรแกรมแล้วเปิดใหม่ด้วย STAFF_PIN อย่างน้อย 6 หลัก (ดู README)</span></div>';
 }
 function render(){
   if(!S.d)return;
@@ -1004,6 +1009,7 @@ document.addEventListener('click',function(e){
     disarm();doRestore();
   }
   else if(a==='printqr'){printMode('qr');}
+  else if(a==='addtable'){var nt=S.d.settings.tables+1;act('/api/settings',{tables:nt},'เพิ่มโต๊ะ '+nt+' แล้ว พิมพ์ QR ของโต๊ะใหม่ได้ที่แท็บตั้งค่า');}
   else if(a==='stnew'){S.stEdit='new';S.stErr='';S.sf=null;renderStaff();var n1=$('#sf-name');if(n1)n1.focus();}
   else if(a==='stedit'){S.stEdit=b.dataset.id;S.stErr='';S.sf=null;renderStaff();}
   else if(a==='stcancel'){S.stEdit=null;S.sf=null;renderStaff();}

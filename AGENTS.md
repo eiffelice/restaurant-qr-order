@@ -189,7 +189,7 @@ D = {
 | POST /api/pay `{table,expectedSub,svc,vat,method,received?}` | staff | ปิดบิล ถ้ายอดเปลี่ยนได้ 409, `received` (เงินสดที่รับมา) ต้อง ≥ ยอด ตอบ `change` กลับ |
 | POST /api/settings `{...}` | staff | แก้ตั้งค่าร้าน (ส่งเฉพาะ field ที่จะแก้) |
 | POST /api/soldout `{id,soldOut}` | staff | ตั้ง/ยกเลิกเมนูหมด |
-| POST /api/menu/item `{id?,name,price,cat,station,desc,hidden}` | staff | เพิ่ม (ไม่มี id) หรือแก้เมนู |
+| POST /api/menu/item `{id?,name,price,cat,station,desc,hidden,was?}` | เจ้าของ | เพิ่ม (ไม่มี id) หรือแก้เมนู ถ้า `was` ไม่ตรงกับค่าปัจจุบันได้ 409 |
 | POST /api/menu/item/delete `{id}` | staff | ลบเมนูและรูป |
 | POST /api/menu/image?id= (body = ไฟล์รูป, Content-Type image/*) | staff | อัปโหลดรูป ≤ 3 MB ตรวจ magic bytes |
 | POST /api/menu/image/delete `{id}` | staff | เอารูปออก |
@@ -254,6 +254,7 @@ Error ทุกตัวเป็น `{ "error": "ข้อความภาษ
 34. **สิทธิ์ตรวจที่เซิร์ฟเวอร์ใน `requireStaff()` จากตาราง `PERM` เท่านั้น** endpoint ที่ไม่ได้ใส่ใน PERM = เจ้าของเท่านั้น ถ้าเพิ่ม endpoint ที่แคชเชียร์/ครัวต้องใช้ ให้ใส่ PERM และมีเทสต์ไล่ทุก endpoint ทุกบทบาทอัตโนมัติ การซ่อนปุ่มในหน้าเว็บเป็นแค่ความสะดวก ไม่ใช่การป้องกัน
 35. **บัญชีเจ้าของร้าน (id owner) มาจาก STAFF_PIN ห้ามลบหรือแก้ผ่าน API** กันเจ้าของล็อกตัวเองออก PIN พนักงานเก็บเป็น HMAC ห้ามเก็บตัว PIN หรือส่ง pinHash ออกทาง API/log
 36. **ใน audit ผู้ทำ (staff/name/role/ip/dev/req) ถูกใส่ท้ายสุด** field ของเหตุการณ์ห้ามใช้ชื่อเหล่านี้ (ชื่อเมนูใช้ `itemName` ชื่อไฟล์ใช้ `file`) เคยมีชื่อเมนูทับชื่อพนักงานที่แก้ราคา
+37. **แก้เมนูต้องส่ง `was` (ค่าตอนเปิดหน้าแก้)** เซิร์ฟเวอร์เทียบกับค่าปัจจุบัน ไม่ตรงได้ 409 แบบเดียวกับ `from` และ `expectedSub` (เคยมีเครื่องที่เปิดหน้าแก้ค้างไว้บันทึกทับราคาที่อีกเครื่องเพิ่งขึ้น ราคาย้อนกลับเงียบๆ)
 ---
 
 ## 7. วิธีแก้โค้ดที่ทำบ่อย
