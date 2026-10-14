@@ -27,6 +27,10 @@ async function main() {
   await s.call('POST', '/api/settings', { tagline: 'อาหารไทยรสชาติต้นตำรับ', address: '88/8 ถ.สุขุมวิท', phone: '02-123-4567', social: { facebook: 'facebook.com/x', instagram: '@x', line: '@x', tiktok: '@x' }, shareUrl: 'https://maps.app.goo.gl/x' });
   const m3 = (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 3);
   await s.call('POST', '/api/menu/item', Object.assign({}, m3, { rec: true }));
+  // สต็อก: วัตถุดิบหนึ่งตัวใกล้หมด + สูตร ให้ตาราง ป้าย และปุ่มขึ้นครบ
+  const egg = (await s.call('POST', '/api/stock/item', { name: 'ไข่ไก่', unit: 'ฟอง', min: 10, cost: 4 })).json.item;
+  await s.call('POST', '/api/stock/move', { id: egg.id, type: 'receive', qty: 5 });
+  await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: egg.id, q: 1 }] });
   const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge', headless: true });
   const all = [];
   for (const scheme of ['light', 'dark']) {
@@ -35,7 +39,7 @@ async function main() {
     await p.goto('/staff'); await p.waitForSelector('#pin');
     all.push(...await scan(p, 'staff login ' + scheme));
     await p.fill('#pin', PIN); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
-    for (const v of ['kitchen', 'tables', 'menu', 'report', 'settings']) {
+    for (const v of ['kitchen', 'tables', 'menu', 'stock', 'report', 'settings']) {
       await p.click('#tabs [data-v="' + v + '"]'); await sleep(400);
       if (v === 'tables') { await p.click('[data-a="sel"][data-id="1"]'); await sleep(200); }
       if (v === 'menu') { await p.click('[data-a="eopen"][data-id="1"]'); await sleep(200); }

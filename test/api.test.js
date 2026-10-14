@@ -2280,7 +2280,7 @@ describe('POS: ส่วนลดท้ายบิล', () => {
     await s.stop();
   });
 
-  test('ปิดบิลต้องส่ง expectedDisc ตรงกับส่วนลดปัจจุบัน (อีกเครื่องเพิ่ม/แก้ส่วนลดระหว่างคิดเงิน = 409) · ลด % คิดจากยอดล่าสุด', async () => {
+  test('ปิดบิลต้องส่ง expectedDisc ตรงกับส่วนลดปัจจุบัน (อีกเครื่องเพิ่ม/แก้ส่วนลดระหว่างคิดเงิน = 409) · ลด % ไม่เกินยอดตอนอนุมัติ', async () => {
     const s = start(makeApp()); await s.ready; await s.login();
     await order(s, 1, [{ id: 1, qty: 2 }]);
     await s.call('POST', '/api/table/discount', { table: 1, kind: 'pct', value: 50, reason: 'โปรโมชัน' });
@@ -2290,7 +2290,8 @@ describe('POS: ส่วนลดท้ายบิล', () => {
     assert.equal((await s.call('POST', '/api/pay', { table: 1, expectedSub: 120, expectedDisc: 60, method: 'cash' })).status, 409, 'ส่วนลดเปลี่ยนแล้ว');
     await order(s, 1, [{ id: 1, qty: 2 }]);
     const b = (await s.call('GET', '/api/state')).json.bills[1];
-    assert.deepEqual([b.sub, b.disc], [240, 60], 'สั่งเพิ่ม: ลด 25% ของยอดใหม่');
+    // แก้ตามรีวิว: ส่วนลด % ไม่ขยายไปถึงของที่สั่งหลังอนุมัติ (ฐาน = ยอดตอนให้ส่วนลด 120)
+    assert.deepEqual([b.sub, b.disc], [240, 30], 'สั่งเพิ่ม: ยังลด 25% ของ 120 ที่อนุมัติ');
     // ลดเป็นบาทเกินยอดหลังยกเลิกบางรายการ: ลดได้ไม่เกินค่าอาหาร
     const k = (await s.call('GET', '/api/state')).json.tickets.filter(x => x.table === 1);
     await s.call('POST', '/api/table/discount', { table: 1, kind: 'amt', value: 200, reason: 'โปรโมชัน' });
@@ -2537,6 +2538,83 @@ describe('POS ระยะ 2: สต็อกวัตถุดิบ สูต�
     s = start(dir); await s.ready; await s.login();
     j = (await s.call('GET', '/api/stock')).json;
     assert.deepEqual([j.items.length, j.recipes[2], j.recipes[3]], [2, [{ s: egg.id, q: 1 }], undefined], 'ข้อมูลเสียถูกตัด ส่วนที่ดียังอยู่');
+    await s.stop();
+  });
+});
+
+describe('แก้ตามรีวิว POS ระยะ 2', () => {
+  test('ทุนและสูตรเห็นได้เฉพาะเจ้าของ: ครัว/แคชเชียร์ไม่ได้ cost/value ใน /api/stock และไม่ได้ use/cost ในตั๋วของ /api/state', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011'), kc = await device(s, '520022');
+    const egg = (await s.call('POST', '/api/stock/item', { name: 'ไข่ไก่', unit: 'ฟอง', cost: 4 })).json.item;
+    await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: egg.id, q: 1 }] });
+    await c.call('POST', '/api/order', { table: 1, items: [{ id: 1, qty: 1 }] });
+    for (const [who, label] of [[c, 'แคชเชียร์'], [kc, 'ครัว']]) {
+      const sk = (await who.call('GET', '/api/stock')).json;
+      assert.ok(!('cost' in sk.items[0]) && !('value' in sk) && !sk.recipes[1], label + ': ไม่เห็นทุน มูลค่า สูตร');
+      const it = (await who.call('GET', '/api/state')).json.tickets[0].items[0];
+      assert.ok(!('cost' in it) && !('use' in it), label + ': ตั๋วไม่มีทุน/สูตร');
+    }
+    const own = (await s.call('GET', '/api/stock')).json;
+    assert.ok(own.items[0].cost === 4 && own.recipes[1], 'เจ้าของเห็นครบ');
+    await s.stop();
+  });
+
+  test('ส่วนลด % ไม่ขยายไปถึงของที่สั่งเพิ่มหลังอนุมัติ (ลดได้ไม่เกิน % ของยอดตอนให้ส่วนลด) · ยอดเหลือน้อยกว่าตอนอนุมัติ ลดตามยอดที่เหลือ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] });     // 120
+    await s.call('POST', '/api/table/discount', { table: 1, kind: 'pct', value: 50, reason: 'โปรโมชัน' });
+    await s.guest('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 2, qty: 10 }] });    // +800 หลังอนุมัติ
+    let b = (await s.call('GET', '/api/state')).json.bills[1];
+    assert.deepEqual([b.sub, b.disc, b.discount.base], [920, 60, 120], 'ลด 50% ของ 120 ที่อนุมัติ ไม่ใช่ 460');
+    const k = (await s.call('GET', '/api/state')).json.tickets.filter(x => x.table === 1).find(x => x.items[0].id === 1);
+    await s.call('POST', '/api/ticket/item/void', { id: k.id, index: 0, item: 1, from: 2, qty: 1, reason: 'ลูกค้าเปลี่ยนใจ' });
+    b = (await s.call('GET', '/api/state')).json.bills[1];
+    assert.deepEqual([b.sub, b.disc], [860, 60], 'ยกเลิก 1 จาน: ลดได้ไม่เกินที่อนุมัติไว้ (ไม่เพิ่ม)');
+    const k2 = (await s.call('GET', '/api/state')).json.tickets.filter(x => x.table === 1).find(x => x.items[0].id === 2);
+    await s.call('POST', '/api/ticket/void', { id: k2.id, reason: 'ลูกค้าเปลี่ยนใจ' });
+    b = (await s.call('GET', '/api/state')).json.bills[1];
+    assert.deepEqual([b.sub, b.disc], [60, 30], 'ยอดเหลือ 60 ต่ำกว่าฐาน 120: ลด 50% ของ 60');
+    await s.stop();
+  });
+
+  test('audit: ยกเลิกจนโต๊ะว่างบอกว่าส่วนลดหายไป ย้ายโต๊ะบอกว่าส่วนลดย้ายตาม ออเดอร์/ยกเลิกบอกวัตถุดิบที่ตัด/คืน', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const egg = (await s.call('POST', '/api/stock/item', { name: 'ไข่ไก่', unit: 'ฟอง' })).json.item;
+    await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: egg.id, q: 2 }] });
+    await s.call('POST', '/api/order', { table: 1, items: [{ id: 1, qty: 1 }] });
+    await s.call('POST', '/api/table/discount', { table: 1, kind: 'amt', value: 10, reason: 'โปรโมชัน' });
+    await s.call('POST', '/api/table/move', { from: 1, to: 2, expectedSub: 60 });
+    const k = (await s.call('GET', '/api/state')).json.tickets[0];
+    await s.call('POST', '/api/ticket/void', { id: k.id, reason: 'ลูกค้าเปลี่ยนใจ' });
+    const ev = readLog(s.dir, 'audit');
+    const oc = ev.find(e => e.action === 'order.created'), mv = ev.find(e => e.action === 'table.moved'), vd = ev.find(e => e.action === 'ticket.voided');
+    assert.deepEqual(oc.stock, [{ s: egg.id, name: 'ไข่ไก่', unit: 'ฟอง', qty: -2 }], 'order.created มีวัตถุดิบที่ตัด');
+    assert.deepEqual(mv.discountMoved, { kind: 'amt', value: 10 }, 'table.moved บอกส่วนลดที่ย้ายตาม');
+    assert.deepEqual(vd.discountDropped, { kind: 'amt', value: 10 }, 'ticket.voided บอกส่วนลดที่หายเพราะโต๊ะว่าง');
+    assert.equal(vd.stock[0].qty, 2, 'ticket.voided มีวัตถุดิบที่คืน');
+    await s.stop();
+  });
+
+  test('คนนอกเรียกเลขคิว: ได้ 403 แบบรหัส QR ผิด (ไม่บอกว่าคิวไหนมีอยู่) และนับเป็นการเดารหัส', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await s.call('POST', '/api/queue', {});
+    const open = await s.guest('GET', '/api/table?t=1001&k=x'), none = await s.guest('GET', '/api/table?t=1050&k=x');
+    assert.deepEqual([open.status, none.status, open.json.error], [403, 403, none.json.error]);
+    assert.equal((await s.guest('POST', '/api/order', { table: 1050, key: 'x', items: [{ id: 1, qty: 1 }] })).status, 403);
+    await s.stop();
+  });
+
+  test('กำไรขั้นต้นคิดเฉพาะเมนูที่มีสูตร (บิลที่มีทั้งเมนูมีสูตรและไม่มี ไม่นับรายได้ของเมนูที่ไม่รู้ทุน)', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const egg = (await s.call('POST', '/api/stock/item', { name: 'ไข่ไก่', unit: 'ฟอง', cost: 5 })).json.item;
+    await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: egg.id, q: 2 }] });
+    await s.call('POST', '/api/order', { table: 1, items: [{ id: 1, qty: 1 }, { id: 2, qty: 1 }] });   // 60 มีสูตร (ทุน 10) + 80 ไม่มี
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: 140, method: 'cash' });
+    const r = (await s.call('GET', '/api/report/range?period=today')).json;
+    assert.deepEqual([r.cogs, r.gross, r.costedRevenue], [10, 50, 60], 'กำไร 60 − 10 ไม่ใช่ 140 − 10');
     await s.stop();
   });
 });

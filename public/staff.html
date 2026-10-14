@@ -312,6 +312,7 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
   <section class="view" id="v-kitchen"></section>
   <section class="view" id="v-tables" hidden></section>
   <section class="view" id="v-menu" hidden></section>
+  <section class="view" id="v-stock" hidden></section>
   <section class="view" id="v-report" hidden></section>
   <section class="view" id="v-settings" hidden></section>
 </div>
@@ -367,6 +368,37 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
     <p class="muted small" style="margin:8px 0 0">ออเดอร์ การเรียกพนักงาน/ขอบิล และสถานะเปิดโต๊ะย้ายไปด้วย ถ้าโต๊ะปลายทางมีออเดอร์อยู่ ระบบจะถามก่อนรวมเป็นบิลเดียว · ลูกค้าที่จะสั่งเพิ่มให้สแกน QR ของโต๊ะใหม่</p>
     <div class="err" id="move-err" role="alert"></div>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" type="button" id="move-cancel">ยกเลิก</button><button class="btn primary" id="move-ok">ย้ายโต๊ะ</button></div>
+  </form>
+</dialog>
+<dialog class="dlg" id="stk-dlg" aria-labelledby="stk-h">
+  <form method="dialog" id="stk-form">
+    <h3 id="stk-h">วัตถุดิบ</h3>
+    <div class="muted small" id="stk-info"></div>
+    <div class="form" id="stk-def" style="grid-template-columns:1fr 1fr">
+      <label class="f" for="stk-name" style="grid-column:1/-1">ชื่อวัตถุดิบ<input class="in" id="stk-name" maxlength="60" autocomplete="off" placeholder="เช่น ไข่ไก่"></label>
+      <label class="f" for="stk-unit">หน่วย<input class="in" id="stk-unit" maxlength="20" autocomplete="off" list="stk-units" placeholder="ฟอง"></label>
+      <label class="f" for="stk-min">แจ้งเตือนเมื่อเหลือไม่เกิน<input class="in" id="stk-min" inputmode="decimal" autocomplete="off" placeholder="0 = ไม่เตือน"></label>
+    </div>
+    <datalist id="stk-units"><option value="กก."><option value="กรัม"><option value="ลิตร"><option value="มล."><option value="ฟอง"><option value="ชิ้น"><option value="ขวด"><option value="แพ็ค"><option value="ถุง"></datalist>
+    <div id="stk-qty-row"><label class="small" for="stk-qty" id="stk-qty-l">จำนวน</label>
+      <input class="in" id="stk-qty" inputmode="decimal" autocomplete="off" style="width:10rem"></div>
+    <div id="stk-cost-row"><label class="small" for="stk-cost">ราคาทุนต่อหน่วย (บาท ไม่บังคับ)</label>
+      <input class="in" id="stk-cost" inputmode="decimal" autocomplete="off" style="width:10rem"></div>
+    <div id="stk-note-row"><label class="small" for="stk-note" id="stk-note-l">หมายเหตุ</label>
+      <input class="in" id="stk-note" maxlength="80" autocomplete="off"></div>
+    <div class="err" id="stk-err" role="alert"></div>
+    <div class="row"><button type="button" class="btn" id="stk-cancel">ปิด</button><button type="submit" class="btn primary" id="stk-ok">บันทึก</button></div>
+  </form>
+</dialog>
+<dialog class="dlg" id="rcp-dlg" aria-labelledby="rcp-h">
+  <form method="dialog" id="rcp-form">
+    <h3 id="rcp-h">สูตร</h3>
+    <p class="muted small" style="margin:0 0 8px">ปริมาณวัตถุดิบที่ใช้ต่อ 1 จาน ระบบตัดสต็อกเมื่อออเดอร์ส่งเข้าครัว และคืนเมื่อยกเลิก</p>
+    <div id="rcp-rows" class="stack" style="gap:8px"></div>
+    <button type="button" class="btn sm" id="rcp-add" style="margin-top:8px">+ เพิ่มวัตถุดิบ</button>
+    <div class="small" id="rcp-cost" aria-live="polite" style="margin-top:8px"></div>
+    <div class="err" id="rcp-err" role="alert"></div>
+    <div class="row"><button type="button" class="btn" id="rcp-cancel">ปิด</button><button type="submit" class="btn primary" id="rcp-ok">บันทึกสูตร</button></div>
   </form>
 </dialog>
 <dialog class="dlg" id="queue-dlg" aria-labelledby="queue-h">
@@ -448,7 +480,7 @@ var S={tab:'kitchen',kStation:'all',sel:null,bSvc:true,bVat:false,d:null,report:
 function $(s){return document.querySelector(s);}
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 /* บทบาท: ซ่อนสิ่งที่ทำไม่ได้ (เซิร์ฟเวอร์ตรวจสิทธิ์ซ้ำทุกครั้งอยู่แล้ว ส่วนนี้แค่ไม่ให้เห็นปุ่มที่กดแล้วได้ 403) */
-var TABS={owner:['kitchen','tables','menu','report','settings'],cashier:['kitchen','tables','menu','report'],waiter:['kitchen','tables','menu'],kitchen:['kitchen','menu']};
+var TABS={owner:['kitchen','tables','menu','stock','report','settings'],cashier:['kitchen','tables','menu','report'],waiter:['kitchen','tables','menu'],kitchen:['kitchen','menu']};
 function role(){return S.d&&S.d.me?S.d.me.role:'owner';}
 function isOwner(){return role()==='owner';}
 function front(){return role()!=='kitchen';}
@@ -618,8 +650,9 @@ function openDisc(t){
   discT=t;$('#disc-form').reset();
   $('#disc-h').textContent='ให้ส่วนลด โต๊ะ '+t;
   if(bl.discount){
-    document.querySelector('#disc-form input[name=dk][value="'+bl.discount.kind+'"]').checked=true;$('#disc-val').value=bl.discount.value;
-    var dr=document.querySelector('#disc-form input[name=dr][value="'+bl.discount.reason.replace(/"/g,'')+'"]');
+    document.querySelector('#disc-form input[name=dk][value="'+(bl.discount.kind==='amt'?'amt':'pct')+'"]').checked=true;$('#disc-val').value=bl.discount.value;
+    // เทียบค่าเอง ไม่สร้าง selector จากเหตุผล (เหตุผลมี \ หรือ ] แล้ว querySelector พัง)
+    var dr=[].filter.call(document.querySelectorAll('#disc-form input[name=dr]'),function(x){return x.value===bl.discount.reason;})[0];
     if(dr)dr.checked=true;else{document.querySelector('#disc-form input[name=dr][value="อื่นๆ"]').checked=true;$('#disc-note').value=bl.discount.reason;}
   }
   $('#disc-pin-row').hidden=isOwner();$('#disc-err').textContent='';$('#disc-ok').disabled=false;
@@ -630,7 +663,7 @@ function discInput(){
   var k=document.querySelector('#disc-form input[name=dk]:checked').value,v=$('#disc-val').value.trim();
   return {kind:k,raw:v,value:v===''?NaN:Math.round(+v*100)/100};
 }
-function discAmount(sub,d){return d.kind==='pct'?Math.min(Math.round(sub*d.value/100),sub):Math.min(d.value,sub);}
+function discAmount(sub,d){return d.kind==='pct'?Math.min(Math.round(sub*d.value/100),sub):Math.min(d.value,sub);}   // ให้ใหม่ = ฐานคือยอดตอนนี้
 function discPreview(){
   var bl=discBill();if(!bl)return;
   var d=discInput(),el=$('#disc-prev');
@@ -669,6 +702,147 @@ $('#disc-form').addEventListener('submit',function(e){
     if(r.status===409){$('#disc-dlg').close();discT=null;toast(r.j.error);load();}
     if(r.status===401){$('#disc-dlg').close();showLogin();}
   },function(){$('#disc-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+});
+
+/* ---------- สต็อกวัตถุดิบ ----------
+   เจ้าของ: แท็บสต็อก (วัตถุดิบ สูตร ประวัติ) · แคชเชียร์/ครัว: ส่วนวัตถุดิบท้ายแท็บเมนูหมด (แคชเชียร์รับเข้า/เบิก/ของเสีย/ตรวจนับได้)
+   ช่องกรอกอยู่ในหน้าต่าง #stk-dlg / #rcp-dlg นอกส่วนที่วาดใหม่ ออเดอร์เข้าระหว่างพิมพ์ ตัวเลขไม่หาย */
+var STK_T={receive:'รับเข้า',issue:'เบิกใช้',waste:'ของเสีย',adjust:'ตรวจนับ',sale:'ขาย (ตัดตามสูตร)',void:'ยกเลิก (คืนสต็อก)'};
+function fmtQ(n){return Number(n).toLocaleString('th-TH',{maximumFractionDigits:3});}
+function stockShown(){return S.tab==='stock'||(S.tab==='menu'&&!isOwner());}
+function loadStock(){
+  return api('/api/stock').then(function(r){if(r.ok){S.stk=r.j;if(S.tab==='stock')renderStock();else if(S.tab==='menu'&&!isOwner()){var el=$('#stk-menu');if(el)el.innerHTML=stockHtml();}}},function(){});
+}
+function stkItem(id){return S.stk&&S.stk.items.filter(function(i){return i.id===id;})[0];}
+function dishCost(menuId){
+  var ls=S.stk&&S.stk.recipes[menuId];if(!ls)return null;
+  return round2(ls.reduce(function(a,l){var it=stkItem(l.s);return a+(it?l.q*it.cost:0);},0));
+}
+function stockHtml(){
+  var k=S.stk;if(!k)return '<div class="panel empty">กำลังโหลดสต็อก…</div>';
+  var own=isOwner(),mv=canMoney();
+  var h='<div class="panel"><div class="sec-title"><h3>วัตถุดิบคงเหลือ</h3>'+(own?'<button class="btn sm primary" data-a="stknew">+ เพิ่มวัตถุดิบ</button>':'')+'</div>';
+  if(own)h+='<div class="kpis"><div class="kpi"><div class="l">มูลค่าสต็อก (ราคาทุน)</div><div class="v">'+baht(k.value)+'</div></div><div class="kpi"><div class="l">ใกล้หมด</div><div class="v">'+k.low.length+' รายการ</div></div></div>';
+  if(!k.items.length)h+='<div class="muted">'+(own?'ยังไม่มีวัตถุดิบ เพิ่มวัตถุดิบ แล้วใส่สูตรให้เมนู ระบบจะตัดสต็อกเองเมื่อมีออเดอร์':'ร้านยังไม่ได้ตั้งสต็อกวัตถุดิบ')+'</div>';
+  else h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>วัตถุดิบ</th><th class="r">คงเหลือ</th><th class="r">เตือนที่</th>'+(own?'<th class="r">ทุน/หน่วย</th>':'')+(mv?'<th></th>':'')+'</tr></thead><tbody>'+k.items.map(function(i){
+    var st=i.qty<=0?'<span class="pill crit">หมด</span>':(i.low?'<span class="pill warn">ใกล้หมด</span>':'');
+    return '<tr><td>'+esc(i.name)+' '+st+'</td><td class="r">'+fmtQ(i.qty)+' '+esc(i.unit)+'</td><td class="r">'+(i.min?fmtQ(i.min):'–')+'</td>'+(own?'<td class="r">'+baht(i.cost)+'</td>':'')+
+      (mv?'<td class="r"><span class="row" style="gap:4px;justify-content:flex-end;flex-wrap:wrap">'+['receive','issue','waste','adjust'].map(function(m){return '<button class="btn xs" data-a="stk" data-m="'+m+'" data-id="'+i.id+'" aria-label="'+STK_T[m]+' '+esc(i.name)+'">'+STK_T[m]+'</button>';}).join('')+
+        (own?'<button class="btn xs" data-a="stk" data-m="edit" data-id="'+i.id+'" aria-label="แก้ '+esc(i.name)+'">แก้</button><button class="btn xs" data-a="stkdel" data-id="'+i.id+'" aria-label="ลบ '+esc(i.name)+'">ลบ</button>':'')+'</span></td>':'')+'</tr>';
+  }).join('')+'</tbody></table></div>';
+  h+='</div>';
+  if(own){
+    h+='<div class="panel"><div class="sec-title"><h3>สูตรต่อเมนู</h3><span class="muted small">ทุนต่อจานคิดจากราคาทุนเฉลี่ยของวัตถุดิบ</span></div>';
+    h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>เมนู</th><th>สูตร (ต่อ 1 จาน)</th><th class="r">ราคา</th><th class="r">ทุน</th><th class="r">กำไร</th><th></th></tr></thead><tbody>'+S.d.menu.items.map(function(m){
+      var ls=k.recipes[m.id]||[],c=dishCost(m.id);
+      return '<tr><td>'+esc(m.name)+'</td><td class="small">'+(ls.length?ls.map(function(l){var it=stkItem(l.s);return it?esc(it.name)+' '+fmtQ(l.q)+' '+esc(it.unit):'';}).join(' · '):'<span class="muted">ยังไม่มีสูตร</span>')+'</td>'+
+        '<td class="r">'+baht(m.price)+'</td><td class="r">'+(c==null?'–':baht(c))+'</td><td class="r">'+(c==null||!m.price?'–':Math.round((m.price-c)/m.price*100)+'%')+'</td>'+
+        '<td class="r"><button class="btn xs" data-a="rcp" data-id="'+m.id+'" aria-label="แก้สูตร '+esc(m.name)+'">'+(ls.length?'แก้สูตร':'ใส่สูตร')+'</button></td></tr>';
+    }).join('')+'</tbody></table></div></div>';
+  }
+  h+='<div class="panel"><div class="sec-title"><h3>รายการเคลื่อนไหวล่าสุด</h3></div>';
+  if(!k.log.length)h+='<div class="muted">ยังไม่มีรายการ</div>';
+  else h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>เวลา</th><th>รายการ</th><th>วัตถุดิบ</th><th>โดย / หมายเหตุ</th></tr></thead><tbody>'+k.log.slice(0,40).map(function(e){
+    var lines=e.lines?e.lines:[{name:e.name,unit:e.unit,qty:e.qty}];
+    return '<tr><td>'+fmtDate(e.at)+'</td><td>'+esc(STK_T[e.type]||e.type)+(e.table?' · '+esc(tLabel(e.table)):'')+'</td><td class="small">'+lines.map(function(l){return esc(l.name)+' '+(l.qty>0?'+':'')+fmtQ(l.qty)+' '+esc(l.unit||'');}).join(' · ')+(e.cost!=null?' @'+baht(e.cost):'')+'</td><td class="small">'+esc((e.by?e.by.name:'')+(e.note?(e.by?' · ':'')+e.note:''))+'</td></tr>';
+  }).join('')+'</tbody></table></div>';
+  return h+'</div>';
+}
+function renderStock(){$('#v-stock').innerHTML=stockHtml();}
+
+var stkMode=null,stkId=null,stkFrom=null;
+function openStk(mode,id){
+  var it=id?stkItem(id):null;if(id&&!it){toast('ไม่พบวัตถุดิบนี้แล้ว');return;}
+  stkMode=mode;stkId=id||null;stkFrom=it?it.qty:null;
+  $('#stk-form').reset();$('#stk-err').textContent='';$('#stk-ok').disabled=false;
+  var def=mode==='new'||mode==='edit';
+  $('#stk-def').hidden=!def;$('#stk-qty-row').hidden=def;$('#stk-cost-row').hidden=!(mode==='receive'||mode==='new');$('#stk-note-row').hidden=def;
+  if(mode==='new'){$('#stk-qty-row').hidden=true;}
+  $('#stk-h').textContent=mode==='new'?'เพิ่มวัตถุดิบ':mode==='edit'?'แก้วัตถุดิบ':STK_T[mode]+' · '+it.name;
+  $('#stk-info').textContent=it?'คงเหลือในระบบ '+fmtQ(it.qty)+' '+it.unit:'';
+  $('#stk-qty-l').textContent=mode==='adjust'?'นับได้จริง ('+it.unit+')':'จำนวน'+(it?' ('+it.unit+')':'');
+  $('#stk-note-l').textContent=mode==='waste'?'เหตุผล (ต้องใส่) เช่น เน่า หก หมดอายุ':'หมายเหตุ';
+  $('#stk-ok').textContent=mode==='new'?'เพิ่ม':mode==='edit'?'บันทึก':STK_T[mode];
+  if(mode==='edit'){$('#stk-name').value=it.name;$('#stk-unit').value=it.unit;$('#stk-min').value=it.min||'';}
+  $('#stk-dlg').showModal();(def?$('#stk-name'):$('#stk-qty')).focus();
+}
+function numIn(id){var v=$(id).value.trim();return v===''?null:+v;}
+$('#stk-cancel').addEventListener('click',function(){$('#stk-dlg').close();});
+$('#stk-form').addEventListener('submit',function(e){
+  e.preventDefault();
+  var err=$('#stk-err'),path,body;
+  if(stkMode==='new'||stkMode==='edit'){
+    var mn=numIn('#stk-min');
+    if(mn!==null&&!(mn>=0)){err.textContent='จำนวนแจ้งเตือนต้องเป็นตัวเลข';$('#stk-min').focus();return;}
+    body={name:$('#stk-name').value.trim(),unit:$('#stk-unit').value.trim(),min:mn===null?0:mn};
+    if(!body.name){err.textContent='ใส่ชื่อวัตถุดิบ';$('#stk-name').focus();return;}
+    if(!body.unit){err.textContent='ใส่หน่วย';$('#stk-unit').focus();return;}
+    if(stkMode==='edit')body.id=stkId;
+    else{var c0=numIn('#stk-cost');if(c0!==null){if(!(c0>=0)){err.textContent='ราคาทุนต้องเป็นตัวเลข';return;}body.cost=c0;}}
+    path='/api/stock/item';
+  } else {
+    var q=numIn('#stk-qty');
+    if(q===null||!(stkMode==='adjust'?q>=0:q>0)){err.textContent='ใส่จำนวนเป็นตัวเลข'+(stkMode==='adjust'?'':' มากกว่า 0');$('#stk-qty').focus();return;}
+    body={id:stkId,type:stkMode,qty:q,note:$('#stk-note').value.trim()};
+    if(stkMode==='waste'&&body.note.length<2){err.textContent='ใส่เหตุผลของเสีย';$('#stk-note').focus();return;}
+    if(stkMode==='adjust')body.from=stkFrom;
+    if(stkMode==='receive'){var c=numIn('#stk-cost');if(c!==null){if(!(c>=0)){err.textContent='ราคาทุนต้องเป็นตัวเลข';return;}body.cost=c;}}
+    path='/api/stock/move';
+  }
+  $('#stk-ok').disabled=true;err.textContent='';
+  api(path,body).then(function(r){
+    $('#stk-ok').disabled=false;
+    if(r.ok){$('#stk-dlg').close();toast('บันทึกแล้ว');loadStock();return;}
+    err.textContent=r.j.error||'บันทึกไม่สำเร็จ';
+    if(r.status===409&&stkMode==='adjust'){loadStock().then(function(){var it=stkItem(stkId);if(it){stkFrom=it.qty;$('#stk-info').textContent='คงเหลือในระบบ '+fmtQ(it.qty)+' '+it.unit+' (เพิ่งเปลี่ยน)';}});}
+    if(r.status===401){$('#stk-dlg').close();showLogin();}
+  },function(){$('#stk-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+});
+
+var rcpMenu=null;
+function rcpRow(l){
+  var row=document.createElement('div');row.className='row rcp-row';row.style.gap='6px';row.style.justifyContent='flex-start';
+  var sel=document.createElement('select');sel.className='in';sel.setAttribute('aria-label','วัตถุดิบ');sel.style.flex='1';
+  S.stk.items.forEach(function(i){var o=document.createElement('option');o.value=i.id;o.textContent=i.name+' ('+i.unit+')';sel.appendChild(o);});
+  if(l)sel.value=l.s;
+  var q=document.createElement('input');q.className='in';q.inputMode='decimal';q.setAttribute('aria-label','ปริมาณต่อจาน');q.style.width='6.5rem';q.placeholder='ต่อจาน';if(l)q.value=l.q;
+  var x=document.createElement('button');x.type='button';x.className='btn sm';x.textContent='เอาออก';x.addEventListener('click',function(){row.remove();rcpCost();});
+  row.appendChild(sel);row.appendChild(q);row.appendChild(x);
+  $('#rcp-rows').appendChild(row);return row;
+}
+function rcpLines(){return [].slice.call(document.querySelectorAll('#rcp-rows .rcp-row')).map(function(r){var v=r.querySelector('input').value.trim();return {s:+r.querySelector('select').value,q:v===''?NaN:+v};});}
+function rcpCost(){
+  var c=rcpLines().reduce(function(a,l){var it=stkItem(l.s);return a+(it&&l.q>0?l.q*it.cost:0);},0),m=S.d.menu.items.filter(function(x){return x.id===rcpMenu;})[0];
+  $('#rcp-cost').textContent='ทุนต่อจาน '+baht(round2(c))+(m&&m.price?' · กำไร '+Math.round((m.price-c)/m.price*100)+'% ของราคา '+baht(m.price):'');
+}
+function openRcp(menuId){
+  var m=S.d.menu.items.filter(function(x){return x.id===menuId;})[0];if(!m)return;
+  if(!S.stk||!S.stk.items.length){toast('เพิ่มวัตถุดิบก่อน แล้วค่อยใส่สูตร');return;}
+  rcpMenu=menuId;$('#rcp-rows').textContent='';$('#rcp-err').textContent='';$('#rcp-ok').disabled=false;
+  $('#rcp-h').textContent='สูตร · '+m.name;
+  var ls=S.stk.recipes[menuId]||[];
+  (ls.length?ls:[null]).forEach(rcpRow);
+  rcpCost();
+  $('#rcp-dlg').showModal();var f=document.querySelector('#rcp-rows select');if(f)f.focus();
+}
+$('#rcp-add').addEventListener('click',function(){var r=rcpRow(null);r.querySelector('select').focus();rcpCost();});
+$('#rcp-cancel').addEventListener('click',function(){$('#rcp-dlg').close();});
+document.addEventListener('input',function(e){if(e.target.closest&&e.target.closest('#rcp-form'))rcpCost();});
+document.addEventListener('change',function(e){if(e.target.closest&&e.target.closest('#rcp-form'))rcpCost();});
+$('#rcp-form').addEventListener('submit',function(e){
+  e.preventDefault();
+  var ls=rcpLines(),err=$('#rcp-err'),seen={};
+  for(var i=0;i<ls.length;i++){
+    if(!(ls[i].q>0)){err.textContent='ใส่ปริมาณต่อจานเป็นตัวเลขมากกว่า 0 (หรือกดเอาออก)';return;}
+    if(seen[ls[i].s]){err.textContent='มีวัตถุดิบซ้ำในสูตร';return;}seen[ls[i].s]=1;
+  }
+  $('#rcp-ok').disabled=true;err.textContent='';
+  api('/api/stock/recipe',{menu:rcpMenu,lines:ls}).then(function(r){
+    $('#rcp-ok').disabled=false;
+    if(r.ok){$('#rcp-dlg').close();toast(ls.length?'บันทึกสูตรแล้ว':'เอาสูตรออกแล้ว');loadStock();return;}
+    err.textContent=r.j.error||'บันทึกไม่สำเร็จ';
+    if(r.status===401){$('#rcp-dlg').close();showLogin();}
+  },function(){$('#rcp-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
 });
 
 /* ---------- ขอเลขคิวกลับบ้าน / เดลิเวอรี ---------- */
@@ -948,6 +1122,7 @@ function load(){
     $('#closedpill').hidden=!qc;
     $('#closedpill').textContent=qc==='hours'?'นอกเวลารับออเดอร์ QR ('+S.d.settings.hours.open+'–'+S.d.settings.hours.close+')':'ปิดรับออเดอร์ QR';
     if(S.tab==='report')loadReport();
+    if(stockShown())loadStock();
     render();
     connect();
   },function(){setConn(false);}).then(function(){
@@ -999,15 +1174,16 @@ function renderTabs(){
   var rd=d.tickets.filter(function(k){return k.status==='ready';}).length+Object.keys(d.calls).length;
   var allow=TABS[role()]||TABS.kitchen;
   if(allow.indexOf(S.tab)<0)S.tab=allow[0];
-  var defs=[['kitchen','ครัว',act],['tables','โต๊ะ & บิล',rd],['menu',isOwner()?'เมนู':'เมนูหมด',0],['report','สรุปยอด',0],['settings','ตั้งค่า',0]].filter(function(x){return allow.indexOf(x[0])>=0;});
+  var defs=[['kitchen','ครัว',act],['tables','โต๊ะ & บิล',rd],['menu',isOwner()?'เมนู':'เมนูหมด',0],['stock','สต็อก',(d.stockLow||[]).length],['report','สรุปยอด',0],['settings','ตั้งค่า',0]].filter(function(x){return allow.indexOf(x[0])>=0;});
   $('#tabs').innerHTML=defs.map(function(x){
     return '<button class="tab" role="tab" data-a="tab" data-v="'+x[0]+'" aria-selected="'+(S.tab===x[0])+'">'+x[1]+(x[2]?'<span class="badge">'+x[2]+'</span>':'')+'</button>';
   }).join('');
-  ['kitchen','tables','menu','report','settings'].forEach(function(v){$('#v-'+v).hidden=S.tab!==v;});
+  ['kitchen','tables','menu','stock','report','settings'].forEach(function(v){$('#v-'+v).hidden=S.tab!==v;});
 }
 
 function renderKitchen(){
   var d=S.d,h='';
+  if(d.stockLow&&d.stockLow.length)h+='<div class="banner warn" role="status"><span><b>วัตถุดิบใกล้หมด:</b> '+d.stockLow.map(function(x){return esc(x.name)+' เหลือ '+fmtQ(x.qty)+' '+esc(x.unit);}).join(' · ')+'</span></div>';
   if(!d.settings.acceptOrders)h+='<div class="banner warn"><span>ปิดรับออเดอร์ผ่าน QR อยู่ ลูกค้าสั่งเองไม่ได้ (พนักงานยังสั่งแทนได้)</span><button class="btn sm" data-a="openorders">เปิดรับออเดอร์</button></div>';
   h+='<div class="tools">';
   [['all','ทั้งหมด']].concat(Object.keys(d.stations).map(function(k){return [k,d.stations[k]];})).forEach(function(s){
@@ -1154,7 +1330,7 @@ function renderTables(){
   if(bill&&canMoney()){
     h+='<div class="panel stack"><div class="row"><span>ค่าบริการ 10%</span><button class="sw" data-a="bsvc" aria-pressed="'+S.bSvc+'">'+(S.bSvc?'เปิด':'ปิด')+'</button></div>';
     h+='<div class="row"><span>VAT 7%</span><button class="sw" data-a="bvat" aria-pressed="'+S.bVat+'">'+(S.bVat?'เปิด':'ปิด')+'</button></div>';
-    h+='<div class="row"><span>ส่วนลด'+(bill.disc?' <b>−'+baht(bill.disc)+'</b>'+(bill.discount.approvedBy?' <span class="muted small">อนุมัติโดย '+esc(bill.discount.approvedBy.name)+'</span>':''):'')+'</span><span class="row" style="gap:6px">'+
+    h+='<div class="row"><span>ส่วนลด'+(bill.disc?' <b>−'+baht(bill.disc)+'</b>'+(bill.discount.kind==='pct'&&bill.discount.base!=null&&bill.discount.base<bill.sub?' <span class="muted small">('+bill.discount.value+'% ของยอดตอนให้ส่วนลด '+baht(bill.discount.base)+' สั่งเพิ่มไม่ได้ส่วนลด)</span>':'')+(bill.discount.approvedBy?' <span class="muted small">อนุมัติโดย '+esc(bill.discount.approvedBy.name)+'</span>':''):'')+'</span><span class="row" style="gap:6px">'+
       (bill.disc?'<button class="btn sm" data-a="discdel" data-id="'+t2+'">เอาส่วนลดออก</button>':'')+'<button class="btn sm" data-a="disc" data-id="'+t2+'">'+(bill.disc?'แก้ส่วนลด':'ให้ส่วนลด')+'</button></span></div></div>';
   }
   h+='</div>';
@@ -1191,7 +1367,7 @@ function renderTables(){
 }
 
 /* ประวัติการแก้ไขวันนี้ จาก audit log: เน้นสิ่งที่เกี่ยวกับเงิน (ยกเลิกออเดอร์ แก้ราคา PromptPay กู้คืน ดาวน์โหลดข้อมูล) */
-var ACT={'queue.created':'ขอเลขคิว','queue.cancelled':'ยกเลิกคิว','bill.discounted':'ให้ส่วนลด','bill.discount_removed':'เอาส่วนลดออก','ticket.voided':'ยกเลิกออเดอร์','bill.pay_rejected':'รับเงินไม่สำเร็จ ยอดเปลี่ยน','menu.item.updated':'แก้เมนู','menu.item.created':'เพิ่มเมนู',
+var ACT={'stock.item.created':'เพิ่มวัตถุดิบ','stock.item.updated':'แก้วัตถุดิบ','stock.item.deleted':'ลบวัตถุดิบ','stock.moved':'สต็อกเคลื่อนไหว','stock.recipe.changed':'แก้สูตร','queue.created':'ขอเลขคิว','queue.cancelled':'ยกเลิกคิว','bill.discounted':'ให้ส่วนลด','bill.discount_removed':'เอาส่วนลดออก','ticket.voided':'ยกเลิกออเดอร์','bill.pay_rejected':'รับเงินไม่สำเร็จ ยอดเปลี่ยน','menu.item.updated':'แก้เมนู','menu.item.created':'เพิ่มเมนู',
   'menu.item.deleted':'ลบเมนู','menu.soldout':'เมนูหมด','settings.changed':'แก้ตั้งค่าร้าน','backup.restored':'กู้คืนข้อมูล','backup.restore_failed':'กู้คืนไม่สำเร็จ',
   'backup.downloaded':'ดาวน์โหลดไฟล์สำรอง','backup.created':'สำรองข้อมูล','report.exported':'ดาวน์โหลด CSV','log.downloaded':'ดาวน์โหลด log',
   'menu.image.updated':'เปลี่ยนรูปเมนู','menu.image.removed':'เอารูปเมนูออก','menu.category.created':'เพิ่มหมวด','menu.category.renamed':'แก้ชื่อหมวด',
@@ -1284,6 +1460,8 @@ function rangeHtml(){
     '<div class="kpi"><div class="l">โอน / QR</div><div class="v">'+baht(m.transfer)+'</div></div>'+
     (m.card?'<div class="kpi"><div class="l">บัตร</div><div class="v">'+baht(m.card)+'</div></div>':'')+
     (m.other?'<div class="kpi"><div class="l">ช่องทางอื่น</div><div class="v">'+baht(m.other)+'</div></div>':'')+
+    (g.costed?'<div class="kpi"><div class="l">ต้นทุนวัตถุดิบ</div><div class="v">'+baht(g.cogs)+'</div><div class="x">'+g.costed+' บิลที่มีสูตร</div></div>'+
+      '<div class="kpi"><div class="l">กำไรขั้นต้น</div><div class="v">'+baht(g.gross)+'</div><div class="x">เฉพาะเมนูที่มีสูตร (ขาย '+baht(g.costedRevenue)+')'+(g.costedRevenue>0?' · '+Math.round(g.gross/g.costedRevenue*100)+'%':'')+'</div></div>':'')+
     '<div class="kpi"><div class="l">ส่วนลด</div><div class="v">'+baht(g.discounts.value)+'</div><div class="x">'+g.discounts.count+' บิล</div></div>'+
     '<div class="kpi"><div class="l">ยกเลิก</div><div class="v">'+g.voids.count+' รายการ</div><div class="x">มูลค่า '+baht(g.voids.value)+'</div></div></div>';
   var ser=g.series.filter(function(x){return x.count||p==='year';}).map(function(x){
@@ -1626,6 +1804,7 @@ function renderMenu(){
   h+='<div class="mtools">'+(isOwner()?'<button class="btn primary" data-a="enew">เพิ่มเมนูใหม่</button>':'')+'<input class="in" id="m-q" type="search" placeholder="ค้นหาเมนู" value="'+esc(S.q)+'" aria-label="ค้นหาเมนู">'+
     (S.mCat?'<button class="btn sm" data-a="catfilter" data-id="'+S.mCat+'">ดูทุกหมวด</button>':'')+'</div>';
   h+='<div class="mgrid" id="mgrid"></div></div></div>';
+  if(!isOwner())h+='<div id="stk-menu" style="margin-top:14px">'+stockHtml()+'</div>';
   $('#v-menu').innerHTML=h;
   renderMenuGrid();
 }
@@ -1796,6 +1975,7 @@ function render(){
   }
   else if(S.tab==='menu'){if(!menuBusy())renderMenu();}
   else if(S.tab==='report')renderReport();
+  else if(S.tab==='stock')renderStock();
   else if(!S.dirty&&!staffBusy()&&!themeBusy())renderSettings();
 }
 
@@ -1854,12 +2034,21 @@ document.addEventListener('click',function(e){
   if(a==='tab'){
     S.tab=b.dataset.v;S.viewSale=null;
     if(S.tab==='report')loadReport(true);
+    if(S.tab==='stock'||S.tab==='menu')loadStock();
     if(S.tab==='settings'){if(!S.dirty)renderSettings();loadBackups();loadStaff();}
     if(S.tab==='menu')renderMenu();
     render();
   }
   else if(a==='kst'){S.kStation=b.dataset.s;render();}
   else if(a==='disc'){openDisc(id);}
+  else if(a==='stknew'){openStk('new');}
+  else if(a==='stk'){openStk(b.dataset.m,id);}
+  else if(a==='rcp'){openRcp(id);}
+  else if(a==='stkdel'){
+    var si=stkItem(id);if(!si)return;
+    confirmBox({title:'ลบวัตถุดิบ '+si.name+'?',lines:['คงเหลือ '+fmtQ(si.qty)+' '+si.unit+' จะหายจากรายการ','ลบแล้วกู้คืนไม่ได้ (ยกเว้นกู้คืนจากไฟล์สำรอง) ถ้าใช้อยู่ในสูตร ต้องเอาออกจากสูตรก่อน'],ok:'ลบวัตถุดิบ',no:'ไม่ลบ'})
+      .then(function(ok){if(ok)act('/api/stock/item/delete',{id:id},'ลบวัตถุดิบแล้ว').then(function(){loadStock();});});
+  }
   else if(a==='discdel'){
     act('/api/table/discount',{table:id,kind:'none'},'เอาส่วนลดออกแล้ว').then(function(){disarm();});
   }

@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, discount, takeaway, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, discount, takeaway, stock, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1424,6 +1424,68 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS ระยะ 2: สต็อก: เจ้าของเพิ่มวัตถุดิบ รับเข้า ใส่สูตร → ออเดอร์ตัดสต็อก → ใกล้หมดขึ้นป้ายจอครัว → ตรวจนับระหว่างมีออเดอร์ = บอกให้นับใหม่ → รายงานมีกำไรขั้นต้น · แคชเชียร์/ครัวเห็นในแท็บเมนูหมด */
+  async stock(browser) {
+    const ok = checker('stock'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    await s.call('POST', '/api/staff', { name: 'ช่างต้ม', role: 'kitchen', pin: '520022' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'stock'); await p.waitForSelector('[data-a="stknew"]');
+    await p.click('[data-a="stknew"]'); await p.waitForSelector('#stk-dlg[open]');
+    await p.fill('#stk-name', 'ไข่ไก่'); await p.fill('#stk-unit', 'ฟอง'); await p.fill('#stk-min', '10'); await p.click('#stk-ok');
+    await p.waitForSelector('[data-a="stk"][data-m="receive"]', { timeout: 6000 }).catch(() => {});
+    ok(/ไข่ไก่/.test(await p.textContent('#v-stock')), 'เพิ่มวัตถุดิบได้');
+    await p.click('[data-a="stk"][data-m="receive"]'); await p.waitForSelector('#stk-dlg[open]');
+    await p.fill('#stk-qty', '30'); await p.fill('#stk-cost', '4'); await p.click('#stk-ok');
+    await p.waitForFunction(() => /30 ฟอง/.test(document.querySelector('#v-stock').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/30 ฟอง/.test(await p.textContent('#v-stock')), 'รับเข้า 30 ฟอง');
+    await p.click('[data-a="rcp"][data-id="1"]'); await p.waitForSelector('#rcp-dlg[open]');
+    await p.fill('#rcp-rows input', '2');
+    ok(/ทุนต่อจาน ฿8/.test(await p.textContent('#rcp-cost')), 'หน้าต่างสูตรบอกทุนต่อจาน 2 × 4 = 8', await p.textContent('#rcp-cost'));
+    await p.click('#rcp-ok');
+    await p.waitForFunction(() => /ไข่ไก่ 2 ฟอง/.test(document.querySelector('#v-stock').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/ไข่ไก่ 2 ฟอง/.test(await p.textContent('#v-stock')), 'ตารางสูตรแสดงสูตรที่บันทึก');
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 11 }] }, { staff: false });
+    await p.waitForFunction(() => /8 ฟอง/.test(document.querySelector('#v-stock').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/8 ฟอง/.test(await p.textContent('#v-stock')) && /ใกล้หมด/.test(await p.textContent('#v-stock')), 'ออเดอร์ 11 จาน ตัด 22 ฟอง เหลือ 8 ขึ้นใกล้หมด');
+    // ตรวจนับ: เปิดหน้าต่าง แล้วมีออเดอร์ตัดสต็อกก่อนกดบันทึก
+    await p.click('[data-a="stk"][data-m="adjust"]'); await p.waitForSelector('#stk-dlg[open]');
+    await p.fill('#stk-qty', '7');
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await sleep(600);
+    ok(await p.inputValue('#stk-qty') === '7', 'ออเดอร์เข้าระหว่างพิมพ์ยอดนับ: ตัวเลขไม่หาย');
+    await p.click('#stk-ok');
+    await p.waitForFunction(() => /เปลี่ยน/.test(document.querySelector('#stk-err').textContent), null, { timeout: 5000 }).catch(() => {});
+    ok(/เปลี่ยน/.test(await p.textContent('#stk-err')) && /6 ฟอง/.test(await p.textContent('#stk-info')), 'ยอดเปลี่ยนระหว่างนับ: บอกให้ตรวจใหม่ พร้อมยอดล่าสุด', await p.textContent('#stk-info'));
+    await p.click('#stk-ok');
+    await p.waitForSelector('#stk-dlg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    const egg = (await s.call('GET', '/api/stock')).json.items[0];
+    ok(egg.qty === 7, 'กดบันทึกอีกครั้ง: ยอดเป็น 7 ตามที่นับ', egg.qty);
+    await tab(p, 'kitchen');
+    ok(/วัตถุดิบใกล้หมด: ไข่ไก่ เหลือ 7 ฟอง/.test(await p.textContent('#v-kitchen')), 'จอครัวมีป้ายวัตถุดิบใกล้หมด');
+    // แคชเชียร์: ส่วนวัตถุดิบในแท็บเมนูหมด รับเข้าได้ แก้/ลบไม่ได้ · ครัว: ดูอย่างเดียว
+    const login = async (pin, opts) => { const ctx = await browser.newContext(Object.assign({ baseURL: s.B }, opts || {})); const q = await ctx.newPage(); watch(q, errors, pin); await q.goto('/staff'); await q.fill('#pin', pin); await q.press('#pin', 'Enter'); await q.waitForSelector('#tabs .tab'); return q; };
+    const c = await login('520011', { viewport: { width: 390, height: 844 } });
+    await tab(c, 'menu'); await c.waitForSelector('#stk-menu [data-a="stk"]', { timeout: 6000 }).catch(() => {});
+    ok(await c.$('#stk-menu [data-a="stk"][data-m="receive"]') && !(await c.$('#stk-menu [data-a="stk"][data-m="edit"]')) && !(await c.$('[data-a="rcp"]')), 'แคชเชียร์: รับเข้า/ตรวจนับได้ แก้วัตถุดิบ/สูตรไม่ได้');
+    const of = await overflow(c);
+    ok(!of, 'มือถือ: ส่วนวัตถุดิบไม่ล้นจอ', of);
+    const k = await login('520022');
+    await tab(k, 'menu'); await k.waitForSelector('#stk-menu table', { timeout: 6000 }).catch(() => {});
+    ok(/ไข่ไก่/.test(await k.textContent('#stk-menu')) && !(await k.$('#stk-menu [data-a="stk"]')), 'ครัว: เห็นคงเหลือ ไม่มีปุ่มแก้ยอด');
+    // รายงาน: ทุนและกำไรขั้นต้น
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: 660, method: 'cash' });
+    await tab(p, 'report'); await p.waitForFunction(() => /กำไรขั้นต้น/.test(document.querySelector('#v-report').textContent), null, { timeout: 6000 }).catch(() => {});
+    const rt = await p.textContent('#range').catch(() => '');
+    ok(/ต้นทุนวัตถุดิบ฿88/.test(rt) && /กำไรขั้นต้น฿572/.test(rt), 'รายงาน: ทุน 11 × 8 = 88 กำไรขั้นต้น 660 − 88 = 572', rt.slice(0, 260));
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await k.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
