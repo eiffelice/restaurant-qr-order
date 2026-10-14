@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1132,9 +1132,216 @@ const cases = {
     const b = await pdfOf(2);
     ok(b.h > 200 && b.pages === Math.ceil(b.h / 200) && b.grand === 1, 'ใบเสร็จยาวเกินหน้า: ไหลต่อหน้าตามความยาวจริง ไม่ทับกัน (เดิมหัวใบเสร็จพิมพ์ทับยอดรวม)', b);
     ok(!(await p.evaluate(() => document.body.className.includes('pm-receipt'))) && !(await p.evaluate(() => document.querySelector('#print-area').innerHTML)), 'พิมพ์เสร็จ: กลับหน้าจอปกติ ล้างสำเนาใบเสร็จ');
+    // ใบสั่งอาหารครัว: ปุ่มพิมพ์บนการ์ดครัว หน้าเดียว ไม่มีราคา มีเลขโต๊ะและหมายเหตุ
+    await tab(p, 'kitchen'); await p.waitForSelector('#v-kitchen [data-a="kprint"]');
+    const kid = await p.getAttribute('#v-kitchen .card:has-text("โต๊ะ 2") [data-a="kprint"]', 'data-id');
+    const n0 = await p.evaluate(() => window.__printed);
+    await p.click('#v-kitchen [data-a="kprint"][data-id="' + kid + '"]');
+    await p.waitForFunction(n => window.__printed > n, n0, { timeout: 5000 }).catch(() => {});
+    await p.emulateMedia({ media: 'print' });
+    const kt = await p.evaluate(() => { const pa = document.querySelector('#print-area'); return { text: pa.textContent, table: (pa.querySelector('.kt-h b') || {}).textContent, notes: pa.querySelectorAll('.kn').length }; });
+    const kbuf = await p.pdf({ width: '80mm', height: '200mm', margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+    await p.emulateMedia({ media: 'screen' });
+    const kpages = (kbuf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+    ok(kt.table === '2' && !/฿/.test(kt.text) && kt.notes > 0 && /ไม่เผ็ด/.test(kt.text), 'ใบสั่งครัว: เลขโต๊ะตัวใหญ่ หมายเหตุครบ ไม่มีราคา', kt);
+    ok(kpages >= 1 && kpages <= 2, 'ใบสั่งครัวไหลต่อหน้าตามความยาว ไม่ซ้ำ', kpages);
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: ยกเลิกทีละรายการจากรายละเอียดโต๊ะ: เลือกจำนวน เหตุผล ยอดบิลลดทันที ครัวทำแล้วต้อง PIN เจ้าของ พนักงานเสิร์ฟไม่เห็นปุ่ม */
+  async itemvoid(browser) {
+    const ok = checker('itemvoid'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    await s.call('POST', '/api/staff', { name: 'เสิร์ฟ', role: 'waiter', pin: '520033' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 3 }, { id: 2, qty: 1 }] }, { staff: false });
+    const login = async pin => { const ctx = await browser.newContext({ baseURL: s.B }); const p = await ctx.newPage(); watch(p, errors, pin); await p.goto('/staff'); await p.fill('#pin', pin); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab'); return p; };
+    const c = await login('520011');
+    await tab(c, 'tables'); await c.click('[data-a="sel"][data-id="1"]'); await c.waitForSelector('.receipt .grand .a');
+    const total0 = (await c.textContent('.receipt .grand .a')).trim();
+    const btns = await c.$$eval('[data-a="voiditem"]', x => x.length);
+    ok(btns === 2, 'แคชเชียร์เห็นปุ่มยกเลิกข้างแต่ละรายการ', btns);
+    const st = (await s.call('GET', '/api/state')).json, k = st.tickets.find(x => x.table === 1), i1 = k.items.findIndex(x => x.id === 1);
+    await c.click('[data-a="voiditem"][data-i="' + i1 + '"]'); await c.waitForSelector('#void-dlg[open]');
+    ok(await c.isVisible('#void-qty') && await c.inputValue('#void-qty') === '3', 'หน้าต่างยกเลิกมีช่องจำนวน ค่าเริ่มต้น = ทั้งหมดของรายการนั้น');
+    await c.fill('#void-qty', '2'); await c.check('#void-form input[value="ลูกค้าเปลี่ยนใจ"]'); await c.click('#void-ok');
+    await c.waitForSelector('#void-dlg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.find(x => x.id === 1).qty === 1, 6000).catch(() => {});
+    const qty = (await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.find(x => x.id === 1).qty;
+    await c.waitForFunction(t0 => document.querySelector('.receipt .grand .a').textContent.trim() !== t0, total0, { timeout: 5000 }).catch(() => {});
+    ok(qty === 1 && (await c.textContent('.receipt .grand .a')).trim() !== total0, 'ยกเลิก 2 จาก 3: เหลือ 1 จาน ยอดบนใบแจ้งยอดลดทันที', { qty, total0 });
+    // ครัวเริ่มทำแล้ว: ขอ PIN เจ้าของในหน้าต่างเดียวกัน
+    await s.call('POST', '/api/ticket', { id: k.id, from: 'new', status: 'cooking' }); await sleep(800);
+    await c.click('[data-a="voiditem"][data-i="' + i1 + '"]'); await c.waitForSelector('#void-dlg[open]');
+    ok(await c.isVisible('#void-pin'), 'ครัวทำแล้ว: หน้าต่างขอ PIN เจ้าของ');
+    await c.check('#void-form input[value="ของหมด"]'); await c.fill('#void-pin', PIN); await c.click('#void-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.some(x => x.id === 1), 6000).catch(() => {});
+    ok(!(await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.some(x => x.id === 1), 'PIN เจ้าของถูก: ยกเลิกจานสุดท้ายของรายการนั้น');
+    const w = await login('520033');
+    await tab(w, 'tables'); await w.click('[data-a="sel"][data-id="1"]'); await w.waitForSelector('.receipt .grand .a');
+    ok(!(await w.$('[data-a="voiditem"]')), 'พนักงานเสิร์ฟไม่เห็นปุ่มยกเลิก (เรื่องเงิน)');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await c.context().close(); await w.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: ย้ายโต๊ะ / รวมโต๊ะ จากรายละเอียดโต๊ะ: เลือกโต๊ะปลายทาง (บอกว่าว่างหรือมีออเดอร์) ปลายทางมีออเดอร์ถามยืนยันรวมบิลก่อน */
+  async movetable(browser) {
+    const ok = checker('movetable'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    await s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 2, qty: 1 }] }, { staff: false });
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('[data-a="movetable"]');
+    await p.click('[data-a="movetable"]'); await p.waitForSelector('#move-dlg[open]');
+    const opts = await p.$$eval('#move-to option', x => x.map(o => o.textContent));
+    ok(opts.length === 11 && /โต๊ะ 3 · มีออเดอร์/.test(opts.join('|')) && /โต๊ะ 2 · ว่าง/.test(opts.join('|')), 'เลือกปลายทางได้ทุกโต๊ะยกเว้นโต๊ะเดิม บอกว่าโต๊ะไหนมีออเดอร์', opts.slice(0, 3));
+    ok(await p.inputValue('#move-to') === '2', 'เลือกโต๊ะว่างแรกให้ก่อน');
+    await p.selectOption('#move-to', '5'); await p.click('#move-ok');
+    await until(async () => !!(await s.call('GET', '/api/state')).json.bills[5], 6000).catch(() => {});
+    const st = (await s.call('GET', '/api/state')).json;
+    ok(st.bills[5] && !st.bills[1], 'ย้ายโต๊ะ 1 ไปโต๊ะ 5 แล้ว');
+    await p.waitForFunction(() => /โต๊ะ 5/.test((document.querySelector('#v-tables .detail h3') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+    ok(/โต๊ะ 5/.test(await p.textContent('#v-tables .detail h3')), 'หน้าจอไปที่โต๊ะใหม่ให้เลย');
+    // รวมเข้ากับโต๊ะ 3 ที่มีออเดอร์: ถามยืนยันก่อน กด "ไม่รวม" แล้วไม่มีอะไรเปลี่ยน
+    await p.click('[data-a="movetable"]'); await p.waitForSelector('#move-dlg[open]');
+    await p.selectOption('#move-to', '3'); await p.click('#move-ok');
+    await p.waitForSelector('#confirm-dlg[open]');
+    ok(/รวมโต๊ะ 5 เข้ากับโต๊ะ 3/.test(await p.textContent('#confirm-dlg')), 'ปลายทางมีออเดอร์: ถามยืนยันรวมบิลก่อน');
+    await p.click('#cf-no'); await sleep(500);
+    ok((await s.call('GET', '/api/state')).json.bills[5], 'กด "ไม่รวม": ไม่มีอะไรย้าย');
+    await p.click('[data-a="movetable"]'); await p.waitForSelector('#move-dlg[open]');
+    await p.selectOption('#move-to', '3'); await p.click('#move-ok'); await p.waitForSelector('#confirm-dlg[open]'); await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.bills[5], 6000).catch(() => {});
+    const st2 = (await s.call('GET', '/api/state')).json;
+    ok(!st2.bills[5] && st2.tickets.filter(k => k.table === 3).length === 2, 'ยืนยันรวม: โต๊ะ 3 มีออเดอร์ของทั้งสองโต๊ะในบิลเดียว');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: รับบัตร และแบ่งจ่ายหลายช่องทาง: บอกยอดที่ขาด/เกิน ไม่ครบยอดกดรับเงินไม่ได้ ใบเสร็จแสดงทุกช่องทาง สรุปยอดมีบัตร/อื่นๆ */
+  async splitpay(browser) {
+    const ok = checker('splitpay'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] }, { staff: false });                 // 60
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] }, { staff: false }); // 200
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('[data-a="pay"][data-m="card"]');
+    await p.click('[data-a="pay"][data-m="card"]'); await p.click('[data-a="pay"][data-m="card"]');
+    await until(async () => (await s.call('GET', '/api/report')).json.card > 0, 6000).catch(() => {});
+    ok((await s.call('GET', '/api/report')).json.card === 66, 'รับบัตร (กดสองครั้งแบบปุ่มเดิม) ยอด 60 + ค่าบริการ 6', (await s.call('GET', '/api/report')).json.card);
+    await p.click('[data-a="donesale"]').catch(() => {});
+    await p.click('[data-a="sel"][data-id="2"]'); await p.waitForSelector('[data-a="split"]');
+    await p.click('[data-a="split"]'); await p.waitForSelector('#split-dlg[open]');
+    ok(/220/.test(await p.textContent('#split-due')), 'หน้าต่างแบ่งจ่ายบอกยอดที่ต้องชำระ (200 + ค่าบริการ 20)');
+    await p.fill('#sp-cash', '100');
+    ok(/ยังขาด ฿120/.test(await p.textContent('#split-left')), 'ใส่บางส่วน: บอกยอดที่ยังขาด');
+    await p.click('#split-ok'); await sleep(300);
+    ok(await p.isVisible('#split-dlg') && /ไม่เท่ากับยอด/.test(await p.textContent('#split-err')), 'ยังไม่ครบยอด: รับเงินไม่ได้ บอกเหตุผล');
+    await p.fill('#sp-transfer', '70'); await p.fill('#sp-other', '50'); await p.fill('#sp-note', 'LINE MAN'); await p.fill('#sp-recv', '500');
+    ok(/ครบยอดพอดี · ทอน ฿400/.test(await p.textContent('#split-left')), 'ครบยอด: บอกเงินทอนจากส่วนเงินสด', await p.textContent('#split-left'));
+    await p.click('#split-ok');
+    await p.waitForSelector('#split-dlg', { state: 'hidden', timeout: 6000 }).catch(() => {});
+    await p.waitForSelector('[data-a="donesale"]', { timeout: 6000 }).catch(() => {});
+    const rc = await p.textContent('#v-tables .receipt');
+    ok(/หลายช่องทาง/.test(rc) && /LINE MAN/.test(rc) && /เงินทอน/.test(rc) && /฿400/.test(rc), 'ใบเสร็จ: ชำระโดยหลายช่องทาง แยกยอดแต่ละช่องทาง และเงินทอน');
+    const r = (await s.call('GET', '/api/report')).json;
+    ok(r.cash === 100 && r.transfer === 70 && r.other === 50 && r.card === 66, 'สรุปยอดแยกทุกช่องทางถูกต้อง', r);
+    await tab(p, 'report'); await p.waitForSelector('.kpis');
+    ok(/บัตร/.test(await p.textContent('.kpis')) && /ช่องทางอื่น/.test(await p.textContent('.kpis')) && /หลายช่องทาง/.test(await p.textContent('#v-report')), 'หน้าสรุปยอดมีบัตร/ช่องทางอื่น และรายการบิลบอกช่องทาง');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: เปิด-ปิดกะ: เปิดกะด้วยเงินทอนตั้งต้น ขายเงินสด เงินที่ควรมีเพิ่มตาม พิมพ์ยอดนับอยู่แล้วมีออเดอร์เข้า ตัวเลขไม่หาย ปิดกะถามยืนยันพร้อมบอกขาด/เกิน */
+  async shift(browser) {
+    const ok = checker('shift'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'report'); await p.waitForSelector('#sh-float');
+    await p.fill('#sh-float', '500'); await p.click('[data-a="shopen"]');
+    await p.waitForSelector('#sh-count', { timeout: 6000 }).catch(() => {});
+    ok(await p.$('#sh-count') && /500/.test(await p.textContent('#v-report .panel')), 'เปิดกะ: แผงแสดงเงินทอนตั้งต้นและช่องนับเงิน');
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: 60, method: 'cash', received: 100 });
+    await tab(p, 'kitchen'); await tab(p, 'report');
+    await p.waitForFunction(() => /฿560/.test(document.querySelector('#v-report .panel').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/฿560/.test(await p.textContent('#v-report .panel')), 'ขายเงินสด 60: เงินที่ควรมี 500 + 60 = 560');
+    await p.click('#sh-count'); await p.keyboard.type('55');
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 2, qty: 1 }] }, { staff: false });    // ออเดอร์เข้าระหว่างพิมพ์
+    await sleep(1200);
+    await p.keyboard.type('0');
+    ok(await p.inputValue('#sh-count') === '550' && await p.evaluate(() => document.activeElement.id === 'sh-count'), 'ออเดอร์เข้าระหว่างพิมพ์ยอดนับ: ตัวเลขไม่หาย โฟกัสอยู่ที่ช่องเดิม', await p.inputValue('#sh-count'));
+    await p.click('[data-a="shclose"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(/เงินขาด ฿10/.test(await p.textContent('#confirm-dlg')), 'ก่อนปิดกะ: ถามยืนยันพร้อมบอกว่าขาด 10');
+    await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/shift')).json.open, 6000).catch(() => {});
+    const h = (await s.call('GET', '/api/shift')).json;
+    ok(!h.open && h.history[0].diff === -10, 'ปิดกะแล้ว บันทึกเงินขาด 10');
+    await p.waitForSelector('#sh-float', { timeout: 6000 }).catch(() => {});
+    ok(/ขาด ฿10/.test(await p.textContent('#v-report .panel')), 'ประวัติกะแสดงขาด/เกิน');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: รายงานช่วงเวลา: วันนี้แยกคนรับเงิน ยกเลิกพร้อมเหตุผล เจ้าของสลับเป็นเดือน/ปี (รวมบิลเก่าใน sales/) แคชเชียร์เห็นแค่วันนี้ มือถือไม่ล้นจอ */
+  async report(browser) {
+    const ok = checker('report'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: 120, method: 'cash', received: 120 });
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 2, qty: 1 }] }, { staff: false });
+    const k = (await s.call('GET', '/api/state')).json.tickets.find(x => x.table === 2);
+    await s.call('POST', '/api/ticket/void', { id: k.id, reason: 'ลูกค้ารอนานเกินไป' });
+    const d = new Date(), month = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    fs.mkdirSync(path.join(app.code, 'sales'), { recursive: true });
+    fs.appendFileSync(path.join(app.code, 'sales', month + '.jsonl'), JSON.stringify({ no: 9001, at: new Date(d.getFullYear(), d.getMonth(), 1, 12).getTime(), table: 4, sub: 1000, svc: 0, vat: 0, total: 1000, method: 'transfer', items: [{ name: 'เมนูเก่า', qty: 5, price: 200 }] }) + '\n');
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'report'); await p.waitForSelector('#range .kpis', { timeout: 6000 }).catch(() => {});
+    const t0 = await p.textContent('#range').catch(() => '');
+    ok(/รายงานวันนี้/.test(t0) && /฿120/.test(t0), 'รายงานวันนี้: ยอด 120', t0.slice(0, 120));
+    ok(/เจ้าของร้าน/.test(t0), 'แยกตามคนรับเงิน: มีชื่อคนที่รับเงิน');
+    ok(/ลูกค้ารอนานเกินไป/.test(t0) && /1 รายการ/.test(t0), 'รายการยกเลิก: จำนวนและเหตุผล');
+    ok(/ไม่มีใครสั่งวันนี้/.test(t0), 'บอกเมนูที่ไม่มีใครสั่ง');
+    await p.click('[data-a="rperiod"][data-p="month"]');
+    await p.waitForFunction(() => /รายงานเดือนนี้/.test(document.querySelector('#range').textContent) && /฿1,120/.test(document.querySelector('#range').textContent), null, { timeout: 6000 }).catch(() => {});
+    const t1 = await p.textContent('#range');
+    ok(/฿1,120/.test(t1) && /ไม่ระบุ/.test(t1) && /เมนูเก่า/.test(t1), 'เดือนนี้: รวมบิลเก่าใน sales/ (คนรับเงินไม่ระบุ) และเมนูเก่า', t1.slice(0, 160));
+    ok(await p.evaluate(() => document.activeElement && document.activeElement.dataset.p === 'month'), 'กดเลือกช่วงแล้วโฟกัสอยู่ที่ปุ่มเดิม (ใช้คีย์บอร์ดต่อได้)');
+    // ออเดอร์เข้าระหว่างดูรายงานเดือน: แผงไม่กลับไปเป็นวันนี้ ไม่โหลดทั้งเดือนใหม่ทุกครั้ง
+    await s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await sleep(1200);
+    ok(/รายงานเดือนนี้/.test(await p.textContent('#range')), 'ออเดอร์เข้า: ยังอยู่ที่รายงานเดือนนี้');
+    await p.click('[data-a="rperiod"][data-p="year"]');
+    await p.waitForFunction(() => /รายงานปีนี้/.test(document.querySelector('#range').textContent) && /฿1,120/.test(document.querySelector('#range').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/รายเดือน/.test(await p.textContent('#range')), 'ปีนี้: กราฟรายเดือน');
+    // แคชเชียร์: เห็นรายงานวันนี้ ไม่มีปุ่มเดือน/ปี
+    const ctx = await browser.newContext({ baseURL: s.B, viewport: { width: 390, height: 844 } });
+    const c = await ctx.newPage(); watch(c, errors, 'cashier');
+    await c.goto('/staff'); await c.fill('#pin', '520011'); await c.press('#pin', 'Enter'); await c.waitForSelector('#tabs .tab');
+    await tab(c, 'report'); await c.waitForSelector('#range .kpis', { timeout: 6000 }).catch(() => {});
+    ok(/฿120/.test(await c.textContent('#range')) && !(await c.$('[data-a="rperiod"]')), 'แคชเชียร์: เห็นรายงานวันนี้ ไม่มีปุ่มเดือน/ปี');
+    const of = await overflow(c);
+    ok(!of, 'มือถือ: รายงานไม่ล้นจอแนวนอน', of);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await ctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
