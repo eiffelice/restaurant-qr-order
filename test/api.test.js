@@ -2421,3 +2421,122 @@ describe('POS: กลับบ้าน / เดลิเวอรี (เลข
     await s.stop();
   });
 });
+
+describe('POS ระยะ 2: สต็อกวัตถุดิบ สูตร ตัดอัตโนมัติ ต้นทุน', () => {
+  const setup = async s => {
+    const add = async b => { const r = await s.call('POST', '/api/stock/item', b); assert.equal(r.status, 200, JSON.stringify(r.json)); return r.json.item; };
+    const rice = await add({ name: 'ข้าวสาร', unit: 'กก.', min: 2 });
+    const egg = await add({ name: 'ไข่ไก่', unit: 'ฟอง', min: 10 });
+    let r = await s.call('POST', '/api/stock/move', { id: rice.id, type: 'receive', qty: 5, cost: 40 });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    await s.call('POST', '/api/stock/move', { id: egg.id, type: 'receive', qty: 30, cost: 4 });
+    r = await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: rice.id, q: 0.2 }, { s: egg.id, q: 1 }] });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return { rice, egg };
+  };
+  const stock = async s => { const j = (await s.call('GET', '/api/stock')).json; return id => j.items.find(i => i.id === id); };
+
+  test('สั่งอาหารแล้วตัดวัตถุดิบตามสูตรทันที ยกเลิกบางรายการ/ทั้งใบคืนสต็อก (ตามสูตรตอนสั่ง แม้แก้สูตรทีหลัง)', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const { rice, egg } = await setup(s);
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 3 }] });
+    let g = await stock(s);
+    assert.deepEqual([g(rice.id).qty, g(egg.id).qty], [4.4, 27]);
+    const seen = (await s.guest('GET', '/api/table?t=1&k=' + keys[1])).json.tickets[0].items[0];
+    assert.ok(!('cost' in seen) && !('use' in seen), 'หน้าลูกค้าไม่เห็นทุนและสูตร');
+    await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: egg.id, q: 5 }] });   // แก้สูตรหลังสั่ง
+    const k = (await s.call('GET', '/api/state')).json.tickets.find(x => x.table === 1);
+    await s.call('POST', '/api/ticket/item/void', { id: k.id, index: 0, item: 1, from: 3, qty: 1, reason: 'ลูกค้าเปลี่ยนใจ' });
+    g = await stock(s);
+    assert.deepEqual([g(rice.id).qty, g(egg.id).qty], [4.6, 28], 'คืนตามสูตรตอนสั่ง');
+    await s.call('POST', '/api/ticket/void', { id: k.id, reason: 'ลูกค้าเปลี่ยนใจ' });
+    g = await stock(s);
+    assert.deepEqual([g(rice.id).qty, g(egg.id).qty], [5, 30]);
+    const log = (await s.call('GET', '/api/stock')).json.log;
+    assert.ok(log.some(e => e.type === 'sale') && log.filter(e => e.type === 'void').length === 2, 'บันทึกการตัด/คืนสต็อก');
+    // ของไม่พอก็ยังรับออเดอร์ (สต็อกติดลบ ให้คนตรวจ) ไม่บล็อกลูกค้า
+    await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 7 }] });
+    g = await stock(s);
+    assert.equal(g(egg.id).qty, -5, 'สูตรใหม่ 5 ฟอง × 7 = 35 จาก 30');
+    await s.stop();
+  });
+
+  test('ต้นทุนต่อจาน (ราคาทุนเฉลี่ย) ลงในบิล รายงานบอกต้นทุนวัตถุดิบและกำไรขั้นต้น · รับเข้าราคาใหม่ใช้ทุนเฉลี่ยถ่วงน้ำหนัก', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const { rice } = await setup(s);
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] });
+    let r = await s.call('POST', '/api/pay', { table: 1, expectedSub: 120, method: 'cash' });
+    assert.deepEqual([r.json.sale.cogs, r.json.sale.items[0].cost], [24, 12], 'ต้นทุนต่อจาน 0.2×40 + 1×4 = 12');
+    const rep = (await s.call('GET', '/api/report/range?period=today')).json;
+    assert.deepEqual([rep.cogs, rep.gross], [24, 96], 'กำไรขั้นต้น = ค่าอาหารหลังส่วนลด 120 − ทุน 24');
+    assert.equal(rep.best[0].cost, 24, 'ต้นทุนรายเมนู');
+    await s.call('POST', '/api/stock/move', { id: rice.id, type: 'receive', qty: 4.6, cost: 60 });   // มี 4.6 @40 รับ 4.6 @60
+    assert.equal((await stock(s))(rice.id).cost, 50);
+    const csv = (await s.call('GET', '/api/export.csv')).text;
+    assert.ok(csv.split('\r\n')[0].includes('"ต้นทุนวัตถุดิบ"'), 'CSV มีต้นทุน');
+    await s.stop();
+  });
+
+  test('ของเสียต้องมีเหตุผล · ตรวจนับปรับยอดต้องส่ง from (ยอดที่เห็น) · ใกล้หมดแจ้งทุกบทบาท · สิทธิ์: ครัวดูได้ แคชเชียร์รับเข้า/เบิกได้ เจ้าของเท่านั้นแก้วัตถุดิบ/สูตร', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011'), kc = await device(s, '520022');
+    const { rice, egg } = await setup(s);
+    assert.equal((await c.call('POST', '/api/stock/move', { id: egg.id, type: 'waste', qty: 2 })).status, 400, 'ของเสียต้องมีเหตุผล');
+    let r = await c.call('POST', '/api/stock/move', { id: egg.id, type: 'waste', qty: 21, note: 'ไข่แตก' });
+    assert.equal(r.status, 200);
+    const low = (await kc.call('GET', '/api/state')).json.stockLow;
+    assert.ok(low.some(x => x.id === egg.id && x.qty === 9) && !low.some(x => x.id === rice.id), 'ไข่เหลือ 9 ต่ำกว่าขั้นต่ำ 10: แจ้งใกล้หมด (ครัวเห็น)');
+    assert.equal((await kc.call('GET', '/api/stock')).status, 200, 'ครัวดูสต็อกได้');
+    assert.equal((await kc.call('POST', '/api/stock/move', { id: egg.id, type: 'receive', qty: 1 })).status, 403);
+    assert.equal((await c.call('POST', '/api/stock/item', { name: 'น้ำปลา', unit: 'ขวด' })).status, 403, 'แคชเชียร์เพิ่มวัตถุดิบไม่ได้');
+    assert.equal((await c.call('POST', '/api/stock/recipe', { menu: 1, lines: [] })).status, 403);
+    assert.equal((await c.call('POST', '/api/stock/move', { id: rice.id, type: 'adjust', qty: 4, from: 3 })).status, 409, 'ยอดเปลี่ยนระหว่างนับ');
+    r = await c.call('POST', '/api/stock/move', { id: rice.id, type: 'adjust', qty: 4.5, from: 5, note: 'ตรวจนับสิ้นวัน' });
+    assert.equal(r.status, 200);
+    assert.equal((await stock(s))(rice.id).qty, 4.5);
+    const log = (await s.call('GET', '/api/stock')).json.log;
+    const adj = log.find(e => e.type === 'adjust');
+    assert.deepEqual([adj.qty, adj.by.name], [-0.5, 'สมใจ'], 'ปรับยอดบันทึกส่วนต่างและคนนับ');
+    for (const bad of [{ type: 'receive', qty: 0 }, { type: 'receive', qty: -1 }, { type: 'issue', qty: 'x' }, { type: 'steal', qty: 1 }, { type: 'receive', qty: 1, cost: -2 }, { type: 'adjust', qty: -1, from: 4.5 }])
+      assert.equal((await s.call('POST', '/api/stock/move', Object.assign({ id: rice.id }, bad))).status, 400, JSON.stringify(bad));
+    const ev = readLog(s.dir, 'audit').map(e => e.action);
+    assert.ok(['stock.item.created', 'stock.moved', 'stock.recipe.changed'].every(a => ev.includes(a)));
+    await s.stop();
+  });
+
+  test('ตรวจข้อมูล: ชื่อซ้ำ/หน่วยว่าง = 400 · สูตรอ้างวัตถุดิบ/เมนูที่ไม่มี = 400 · ลบวัตถุดิบที่ใช้ในสูตร = 409 · ลบเมนูแล้วสูตรหาย · เปิดโปรแกรมใหม่ข้อมูลอยู่ครบ ข้อมูลเสียถูกล้าง', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.login();
+    const { rice, egg } = await setup(s);
+    assert.equal((await s.call('POST', '/api/stock/item', { name: 'ข้าวสาร', unit: 'กก.' })).status, 400, 'ชื่อซ้ำ');
+    assert.equal((await s.call('POST', '/api/stock/item', { name: 'เกลือ', unit: '' })).status, 400);
+    assert.equal((await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: 999, q: 1 }] })).status, 400);
+    assert.equal((await s.call('POST', '/api/stock/recipe', { menu: 9999, lines: [{ s: rice.id, q: 1 }] })).status, 400);
+    assert.equal((await s.call('POST', '/api/stock/recipe', { menu: 2, lines: [{ s: rice.id, q: 0 }] })).status, 400);
+    assert.equal((await s.call('POST', '/api/stock/item/delete', { id: egg.id })).status, 409, 'ใช้อยู่ในสูตร');
+    const salt = (await s.call('POST', '/api/stock/item', { name: 'เกลือ', unit: 'กรัม' })).json.item;
+    assert.equal((await s.call('POST', '/api/stock/item/delete', { id: salt.id })).status, 200);
+    const r = await s.call('POST', '/api/stock/item', { id: rice.id, name: 'ข้าวหอมมะลิ', unit: 'กก.', min: 3 });
+    assert.equal(r.status, 200);
+    assert.equal((await stock(s))(rice.id).qty, 5, 'แก้ชื่อ/ขั้นต่ำ ไม่แตะยอดคงเหลือ');
+    await s.stop();
+    s = start(dir); await s.ready; await s.login();
+    let j = (await s.call('GET', '/api/stock')).json;
+    assert.deepEqual([j.items.length, j.recipes[1].length], [2, 2], 'เปิดโปรแกรมใหม่ข้อมูลอยู่ครบ');
+    await s.call('POST', '/api/menu/item/delete', { id: 1 });
+    assert.ok(!(await s.call('GET', '/api/stock')).json.recipes[1], 'ลบเมนูแล้วสูตรหาย');
+    await s.stop();
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    d.stock.items.push(null, { id: 'x' }, { id: 50, name: 5 });
+    d.recipes = { 2: [{ s: 999, q: 1 }, { s: egg.id, q: 1 }], 3: 'x' };
+    d.stockLog = [null, 'x'];
+    fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready; await s.login();
+    j = (await s.call('GET', '/api/stock')).json;
+    assert.deepEqual([j.items.length, j.recipes[2], j.recipes[3]], [2, [{ s: egg.id, q: 1 }], undefined], 'ข้อมูลเสียถูกตัด ส่วนที่ดียังอยู่');
+    await s.stop();
+  });
+});
