@@ -1847,3 +1847,91 @@ describe('กู้คืนไฟล์สำรองที่รูปขอ�
   });
 });
 
+
+describe('POS: ยกเลิกทีละรายการในตั๋ว', () => {
+  const order = async (s, t, items) => {
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const r = await s.guest('POST', '/api/order', { table: t, key: keys[t], items });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return (await s.call('GET', '/api/state')).json.tickets.filter(k => k.table === t);
+  };
+  const sub = async (s, t) => ((await s.call('GET', '/api/state')).json.bills[t] || { sub: 0 }).sub;
+
+  test('ยกเลิกบางจำนวนของรายการ: ยอดบิลลดตามจริง ตั๋วยังอยู่ มี audit พร้อมเหตุผลและมูลค่า', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    const [k] = await order(s, 1, [{ id: 1, qty: 3 }, { id: 2, qty: 1 }]);
+    const i = k.items.findIndex(x => x.id === 1), price = k.items[i].price, before = await sub(s, 1);
+    const r = await c.call('POST', '/api/ticket/item/void', { id: k.id, index: i, item: 1, from: 3, qty: 2, reason: 'ลูกค้าสั่งเกิน' });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const k2 = (await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id);
+    assert.equal(k2.items.find(x => x.id === 1).qty, 1);
+    assert.equal(await sub(s, 1), before - 2 * price);
+    const ev = readLog(s.dir, 'audit').find(e => e.action === 'ticket.item_voided');
+    assert.ok(ev, 'มี audit');
+    assert.deepEqual([ev.ticket, ev.table, ev.qty, ev.value, ev.reason, ev.name], [k.id, 1, 2, 2 * price, 'ลูกค้าสั่งเกิน', 'สมใจ']);
+    assert.equal(ev.itemName, k.items[i].name);
+    await s.stop();
+  });
+
+  test('ยกเลิกจนไม่เหลือรายการ: ตั๋วหายไปเอง โต๊ะไม่มีบิลค้าง', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const [k] = await order(s, 2, [{ id: 1, qty: 1 }]);
+    assert.equal((await s.call('POST', '/api/ticket/item/void', { id: k.id, index: 0, item: 1, from: 1, qty: 1, reason: 'สั่งผิด' })).status, 200);
+    const st = (await s.call('GET', '/api/state')).json;
+    assert.ok(!st.tickets.some(x => x.id === k.id) && !st.bills[2]);
+    await s.stop();
+  });
+
+  test('ครัวเริ่มทำแล้ว: แคชเชียร์ต้องมี PIN เจ้าของ (ผิด/ไม่มี = 403 need_approval) เจ้าของยกเลิกเองได้', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    const [k] = await order(s, 3, [{ id: 1, qty: 2 }]);
+    await s.call('POST', '/api/ticket', { id: k.id, from: 'new', status: 'cooking' });
+    const body = { id: k.id, index: 0, item: 1, from: 2, qty: 1, reason: 'ของหมด' };
+    let r = await c.call('POST', '/api/ticket/item/void', body);
+    assert.equal(r.status, 403); assert.equal(r.json.code, 'need_approval');
+    r = await c.call('POST', '/api/ticket/item/void', Object.assign({ approvePin: '000000' }, body));
+    assert.equal(r.status, 403); assert.equal(r.json.code, 'need_approval', 'PIN ผิด');
+    r = await c.call('POST', '/api/ticket/item/void', Object.assign({ approvePin: PIN }, body));
+    assert.equal(r.status, 200);
+    const ev = readLog(s.dir, 'audit').find(e => e.action === 'ticket.item_voided');
+    assert.equal(ev.approvedBy.id, 'owner');
+    assert.ok(!JSON.stringify(readLog(s.dir, 'audit')).includes(PIN), 'ไม่มี PIN ใน log');
+    assert.equal((await s.call('POST', '/api/ticket/item/void', Object.assign({}, body, { from: 1 }))).status, 200, 'เจ้าของยกเลิกเองไม่ต้องใส่ PIN');
+    await s.stop();
+  });
+
+  test('กันข้อมูลผิดและแก้ทับกัน: ไม่มีเหตุผล/จำนวนเกิน = 400, อีกเครื่องแก้ไปก่อน = 409, พนักงานเสิร์ฟ/ครัว = 403', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    await s.call('POST', '/api/staff', { name: 'เสิร์ฟ', role: 'waiter', pin: '520033' });
+    const w = await device(s, '520033'), kc = await device(s, '520022');
+    const [k] = await order(s, 4, [{ id: 1, qty: 2 }, { id: 2, qty: 1 }]);
+    const i = k.items.findIndex(x => x.id === 1);
+    const ok = { id: k.id, index: i, item: 1, from: 2, qty: 1, reason: 'สั่งผิด' };
+    const st = async b => (await s.call('POST', '/api/ticket/item/void', b)).status;
+    assert.equal(await st(Object.assign({}, ok, { reason: '' })), 400, 'ต้องมีเหตุผล');
+    assert.equal(await st(Object.assign({}, ok, { qty: 3 })), 400, 'ยกเลิกเกินจำนวนที่มี');
+    assert.equal(await st(Object.assign({}, ok, { qty: 0 })), 400);
+    assert.equal(await st(Object.assign({}, ok, { from: 5 })), 409, 'จำนวนที่เห็นไม่ตรง (อีกเครื่องแก้ไปแล้ว)');
+    assert.equal(await st(Object.assign({}, ok, { item: 2 })), 409, 'รายการที่ตำแหน่งนั้นไม่ใช่เมนูที่เห็น');
+    assert.equal(await st(Object.assign({}, ok, { id: 99999 })), 404);
+    assert.equal((await w.call('POST', '/api/ticket/item/void', ok)).status, 403, 'พนักงานเสิร์ฟยกเลิกไม่ได้ (เรื่องเงิน)');
+    assert.equal((await kc.call('POST', '/api/ticket/item/void', ok)).status, 403, 'ครัวยกเลิกไม่ได้');
+    assert.equal(await st(ok), 200);
+    await s.stop();
+  });
+
+  test('ยกเลิกบางรายการระหว่างแคชเชียร์กำลังคิดเงิน: ปิดบิลด้วยยอดเดิมได้ 409 ไม่เก็บเงินเกิน', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const [k] = await order(s, 5, [{ id: 1, qty: 2 }]);
+    const seen = await sub(s, 5);
+    await s.call('POST', '/api/ticket/item/void', { id: k.id, index: 0, item: 1, from: 2, qty: 1, reason: 'สั่งผิด' });
+    assert.equal((await s.call('POST', '/api/pay', { table: 5, expectedSub: seen, method: 'cash' })).status, 409);
+    assert.equal((await s.call('POST', '/api/pay', { table: 5, expectedSub: await sub(s, 5), method: 'cash' })).status, 200);
+    await s.stop();
+  });
+});

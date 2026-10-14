@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1135,6 +1135,45 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: ยกเลิกทีละรายการจากรายละเอียดโต๊ะ: เลือกจำนวน เหตุผล ยอดบิลลดทันที ครัวทำแล้วต้อง PIN เจ้าของ พนักงานเสิร์ฟไม่เห็นปุ่ม */
+  async itemvoid(browser) {
+    const ok = checker('itemvoid'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    await s.call('POST', '/api/staff', { name: 'เสิร์ฟ', role: 'waiter', pin: '520033' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 3 }, { id: 2, qty: 1 }] }, { staff: false });
+    const login = async pin => { const ctx = await browser.newContext({ baseURL: s.B }); const p = await ctx.newPage(); watch(p, errors, pin); await p.goto('/staff'); await p.fill('#pin', pin); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab'); return p; };
+    const c = await login('520011');
+    await tab(c, 'tables'); await c.click('[data-a="sel"][data-id="1"]'); await c.waitForSelector('.receipt .grand .a');
+    const total0 = (await c.textContent('.receipt .grand .a')).trim();
+    const btns = await c.$$eval('[data-a="voiditem"]', x => x.length);
+    ok(btns === 2, 'แคชเชียร์เห็นปุ่มยกเลิกข้างแต่ละรายการ', btns);
+    const st = (await s.call('GET', '/api/state')).json, k = st.tickets.find(x => x.table === 1), i1 = k.items.findIndex(x => x.id === 1);
+    await c.click('[data-a="voiditem"][data-i="' + i1 + '"]'); await c.waitForSelector('#void-dlg[open]');
+    ok(await c.isVisible('#void-qty') && await c.inputValue('#void-qty') === '3', 'หน้าต่างยกเลิกมีช่องจำนวน ค่าเริ่มต้น = ทั้งหมดของรายการนั้น');
+    await c.fill('#void-qty', '2'); await c.check('#void-form input[value="ลูกค้าเปลี่ยนใจ"]'); await c.click('#void-ok');
+    await c.waitForSelector('#void-dlg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.find(x => x.id === 1).qty === 1, 6000).catch(() => {});
+    const qty = (await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.find(x => x.id === 1).qty;
+    await c.waitForFunction(t0 => document.querySelector('.receipt .grand .a').textContent.trim() !== t0, total0, { timeout: 5000 }).catch(() => {});
+    ok(qty === 1 && (await c.textContent('.receipt .grand .a')).trim() !== total0, 'ยกเลิก 2 จาก 3: เหลือ 1 จาน ยอดบนใบแจ้งยอดลดทันที', { qty, total0 });
+    // ครัวเริ่มทำแล้ว: ขอ PIN เจ้าของในหน้าต่างเดียวกัน
+    await s.call('POST', '/api/ticket', { id: k.id, from: 'new', status: 'cooking' }); await sleep(800);
+    await c.click('[data-a="voiditem"][data-i="' + i1 + '"]'); await c.waitForSelector('#void-dlg[open]');
+    ok(await c.isVisible('#void-pin'), 'ครัวทำแล้ว: หน้าต่างขอ PIN เจ้าของ');
+    await c.check('#void-form input[value="ของหมด"]'); await c.fill('#void-pin', PIN); await c.click('#void-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.some(x => x.id === 1), 6000).catch(() => {});
+    ok(!(await s.call('GET', '/api/state')).json.tickets.find(x => x.id === k.id).items.some(x => x.id === 1), 'PIN เจ้าของถูก: ยกเลิกจานสุดท้ายของรายการนั้น');
+    const w = await login('520033');
+    await tab(w, 'tables'); await w.click('[data-a="sel"][data-id="1"]'); await w.waitForSelector('.receipt .grand .a');
+    ok(!(await w.$('[data-a="voiditem"]')), 'พนักงานเสิร์ฟไม่เห็นปุ่มยกเลิก (เรื่องเงิน)');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await c.context().close(); await w.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

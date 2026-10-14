@@ -110,6 +110,8 @@ button.pill{border:0}
 .receipt td{padding:2px 0;vertical-align:top}
 .receipt td.q{width:2.4em;color:var(--paper-muted)} .receipt td.a{text-align:right;white-space:nowrap}
 .receipt .grand td{font-size:1.3rem;font-weight:700;padding-top:6px}
+.sent-row .vi{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:var(--ctl)}
+.btn.xs{min-height:36px;padding:2px 12px;font-size:.82rem}
 .qr{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:6px;text-align:center}
 .qr svg{width:10.5rem;height:10.5rem;background:#fff}
 .qr small{color:var(--paper-muted)}
@@ -336,6 +338,8 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
   <form method="dialog" id="void-form">
     <h3 id="void-h">ยกเลิกออเดอร์</h3>
     <div class="muted small" id="void-items"></div>
+    <div id="void-qty-row" hidden style="margin:8px 0"><label class="small" for="void-qty">จำนวนที่จะยกเลิก</label>
+      <input class="in" id="void-qty" type="number" min="1" step="1" inputmode="numeric" style="width:7rem"></div>
     <fieldset class="reasons" style="border:0;padding:0"><legend class="small">เหตุผล (ต้องเลือก)</legend>
       <label><input type="radio" name="vr" value="ลูกค้าเปลี่ยนใจ">ลูกค้าเปลี่ยนใจ</label>
       <label><input type="radio" name="vr" value="สั่งผิด หรือกดซ้ำ">สั่งผิด/กดซ้ำ</label>
@@ -483,13 +487,17 @@ $('#cf-no').addEventListener('click',function(){if(cfDone)cfDone(false);});
 $('#confirm-dlg').addEventListener('close',function(){if(cfDone)cfDone(false);});   // Esc
 
 /* ยกเลิกออเดอร์: ต้องมีเหตุผลเสมอ ถ้าครัวเริ่มทำแล้วและไม่ใช่เจ้าของ ต้องมี PIN เจ้าของ (เซิร์ฟเวอร์ตรวจซ้ำ) */
-var voidId=null;
+var voidId=null,voidItem=null;      // voidItem = {index,item,from} เมื่อยกเลิกทีละรายการ
 function needPin(k){return k&&k.status!=='new'&&!isOwner();}
-function openVoid(id){
+function openVoid(id,index){
   var k=S.d.tickets.filter(function(x){return x.id===id;})[0];if(!k)return;
   voidId=id;var f=$('#void-form');f.reset();
-  $('#void-h').textContent='ยกเลิกออเดอร์ โต๊ะ '+k.table;
-  $('#void-items').textContent=k.items.map(function(i){return i.name+' ×'+i.qty;}).join(', ');
+  var it=index!==undefined?k.items[index]:null;
+  voidItem=it?{index:index,item:it.id,from:it.qty}:null;
+  $('#void-h').textContent=(it?'ยกเลิกรายการ โต๊ะ ':'ยกเลิกออเดอร์ โต๊ะ ')+k.table;
+  $('#void-items').textContent=it?it.name+' ×'+it.qty+(it.note&&it.note.length?' ('+it.note.join(' · ')+')':''):k.items.map(function(i){return i.name+' ×'+i.qty;}).join(', ');
+  $('#void-qty-row').hidden=!it;
+  if(it){var q=$('#void-qty');q.max=it.qty;q.value=it.qty;}
   $('#void-pin-row').hidden=!needPin(k);$('#void-err').textContent='';$('#void-ok').disabled=false;
   $('#void-dlg').showModal();
 }
@@ -505,11 +513,18 @@ $('#void-form').addEventListener('submit',function(e){
   if(!document.querySelector('#void-form input[name=vr]:checked')){err.textContent='เลือกเหตุผลก่อน';return;}
   if(reason.length<2){err.textContent='พิมพ์รายละเอียดเหตุผล';$('#void-note').focus();return;}
   var body={id:voidId,reason:reason},pin=$('#void-pin').value;
+  if(voidItem){
+    var q=+$('#void-qty').value;
+    if(!(q>=1&&q<=voidItem.from&&Math.floor(q)===q)){err.textContent='จำนวนต้องอยู่ระหว่าง 1 ถึง '+voidItem.from;$('#void-qty').focus();return;}
+    body.index=voidItem.index;body.item=voidItem.item;body.from=voidItem.from;body.qty=q;
+  }
   if(!$('#void-pin-row').hidden){if(!pin){err.textContent='ใส่ PIN เจ้าของ';$('#void-pin').focus();return;}body.approvePin=pin;}
   $('#void-ok').disabled=true;err.textContent='';
-  api('/api/ticket/void',body).then(function(r){
+  api(voidItem?'/api/ticket/item/void':'/api/ticket/void',body).then(function(r){
     $('#void-ok').disabled=false;$('#void-pin').value='';
-    if(r.ok){$('#void-dlg').close();toast('ยกเลิกออเดอร์แล้ว');load();return;}
+    if(r.ok){$('#void-dlg').close();toast(voidItem?'ยกเลิกรายการแล้ว':'ยกเลิกออเดอร์แล้ว');load();return;}
+    // อีกเครื่องแก้รายการนี้ไปก่อน: ปิดหน้าต่าง โหลดใหม่ให้เห็นของล่าสุด
+    if(r.status===409){$('#void-dlg').close();toast(r.j.error||'รายการเปลี่ยนแล้ว');load();return;}
     if(r.j.code==='need_approval'){$('#void-pin-row').hidden=false;$('#void-pin').focus();}
     err.textContent=r.j.error||'ยกเลิกไม่สำเร็จ';
     if(r.status===401){$('#void-dlg').close();showLogin();}
@@ -831,7 +846,10 @@ function renderTables(){
   }
   if(!tk2.length)h+='<div class="muted">โต๊ะนี้ยังไม่มีออเดอร์</div>';
   tk2.forEach(function(k){
-    h+='<div class="sent-row"><span>'+k.items.map(function(i){return esc(i.name)+' ×'+i.qty;}).join(', ')+(k.memo?'<br><span class="muted">'+esc(k.memo)+'</span>':'')+'</span><span style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><span class="pill '+SL[k.status][1]+'">'+SL[k.status][0]+'</span>'+(k.status==='ready'?'<button class="btn sm" data-a="adv" data-id="'+k.id+'" data-from="ready" data-st="served">เสิร์ฟแล้ว</button>':'')+'</span></div>';
+    h+='<div class="sent-row"><span>'+k.items.map(function(i,ix){
+      return '<span class="vi">'+esc(i.name)+' ×'+i.qty+(i.note&&i.note.length?' <span class="muted small">('+esc(i.note.join(' · '))+')</span>':'')+
+        (canMoney()?' <button class="btn xs" data-a="voiditem" data-id="'+k.id+'" data-i="'+ix+'" aria-label="ยกเลิก '+esc(i.name)+' โต๊ะ '+t2+'">ยกเลิก</button>':'')+'</span>';
+    }).join('')+(k.memo?'<br><span class="muted">'+esc(k.memo)+'</span>':'')+'</span><span style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><span class="pill '+SL[k.status][1]+'">'+SL[k.status][0]+'</span>'+(k.status==='ready'?'<button class="btn sm" data-a="adv" data-id="'+k.id+'" data-from="ready" data-st="served">เสิร์ฟแล้ว</button>':'')+'</span></div>';
   });
   h+='</div>';
   if(bill&&canMoney()){
@@ -1466,6 +1484,7 @@ document.addEventListener('click',function(e){
   else if(a==='kst'){S.kStation=b.dataset.s;render();}
   else if(a==='adv'){act('/api/ticket',{id:id,from:b.dataset.from,status:b.dataset.st},b.dataset.st==='ready'?'แจ้งพนักงานไปรับอาหารแล้ว':null);}
   else if(a==='void'){openVoid(id);}
+  else if(a==='voiditem'){openVoid(id,+b.dataset.i);}
   else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}
   else if(a==='bsvc'){S.bSvc=!S.bSvc;render();}
