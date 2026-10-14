@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1295,6 +1295,53 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: รายงานช่วงเวลา: วันนี้แยกคนรับเงิน ยกเลิกพร้อมเหตุผล เจ้าของสลับเป็นเดือน/ปี (รวมบิลเก่าใน sales/) แคชเชียร์เห็นแค่วันนี้ มือถือไม่ล้นจอ */
+  async report(browser) {
+    const ok = checker('report'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: 120, method: 'cash', received: 120 });
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 2, qty: 1 }] }, { staff: false });
+    const k = (await s.call('GET', '/api/state')).json.tickets.find(x => x.table === 2);
+    await s.call('POST', '/api/ticket/void', { id: k.id, reason: 'ลูกค้ารอนานเกินไป' });
+    const d = new Date(), month = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    fs.mkdirSync(path.join(app.code, 'sales'), { recursive: true });
+    fs.appendFileSync(path.join(app.code, 'sales', month + '.jsonl'), JSON.stringify({ no: 9001, at: new Date(d.getFullYear(), d.getMonth(), 1, 12).getTime(), table: 4, sub: 1000, svc: 0, vat: 0, total: 1000, method: 'transfer', items: [{ name: 'เมนูเก่า', qty: 5, price: 200 }] }) + '\n');
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'report'); await p.waitForSelector('#range .kpis', { timeout: 6000 }).catch(() => {});
+    const t0 = await p.textContent('#range').catch(() => '');
+    ok(/รายงานวันนี้/.test(t0) && /฿120/.test(t0), 'รายงานวันนี้: ยอด 120', t0.slice(0, 120));
+    ok(/เจ้าของร้าน/.test(t0), 'แยกตามคนรับเงิน: มีชื่อคนที่รับเงิน');
+    ok(/ลูกค้ารอนานเกินไป/.test(t0) && /1 รายการ/.test(t0), 'รายการยกเลิก: จำนวนและเหตุผล');
+    ok(/ไม่มีใครสั่งวันนี้/.test(t0), 'บอกเมนูที่ไม่มีใครสั่ง');
+    await p.click('[data-a="rperiod"][data-p="month"]');
+    await p.waitForFunction(() => /รายงานเดือนนี้/.test(document.querySelector('#range').textContent) && /฿1,120/.test(document.querySelector('#range').textContent), null, { timeout: 6000 }).catch(() => {});
+    const t1 = await p.textContent('#range');
+    ok(/฿1,120/.test(t1) && /ไม่ระบุ/.test(t1) && /เมนูเก่า/.test(t1), 'เดือนนี้: รวมบิลเก่าใน sales/ (คนรับเงินไม่ระบุ) และเมนูเก่า', t1.slice(0, 160));
+    ok(await p.evaluate(() => document.activeElement && document.activeElement.dataset.p === 'month'), 'กดเลือกช่วงแล้วโฟกัสอยู่ที่ปุ่มเดิม (ใช้คีย์บอร์ดต่อได้)');
+    // ออเดอร์เข้าระหว่างดูรายงานเดือน: แผงไม่กลับไปเป็นวันนี้ ไม่โหลดทั้งเดือนใหม่ทุกครั้ง
+    await s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await sleep(1200);
+    ok(/รายงานเดือนนี้/.test(await p.textContent('#range')), 'ออเดอร์เข้า: ยังอยู่ที่รายงานเดือนนี้');
+    await p.click('[data-a="rperiod"][data-p="year"]');
+    await p.waitForFunction(() => /รายงานปีนี้/.test(document.querySelector('#range').textContent) && /฿1,120/.test(document.querySelector('#range').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/รายเดือน/.test(await p.textContent('#range')), 'ปีนี้: กราฟรายเดือน');
+    // แคชเชียร์: เห็นรายงานวันนี้ ไม่มีปุ่มเดือน/ปี
+    const ctx = await browser.newContext({ baseURL: s.B, viewport: { width: 390, height: 844 } });
+    const c = await ctx.newPage(); watch(c, errors, 'cashier');
+    await c.goto('/staff'); await c.fill('#pin', '520011'); await c.press('#pin', 'Enter'); await c.waitForSelector('#tabs .tab');
+    await tab(c, 'report'); await c.waitForSelector('#range .kpis', { timeout: 6000 }).catch(() => {});
+    ok(/฿120/.test(await c.textContent('#range')) && !(await c.$('[data-a="rperiod"]')), 'แคชเชียร์: เห็นรายงานวันนี้ ไม่มีปุ่มเดือน/ปี');
+    const of = await overflow(c);
+    ok(!of, 'มือถือ: รายงานไม่ล้นจอแนวนอน', of);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await ctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

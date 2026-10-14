@@ -138,6 +138,7 @@ button.pill{border:0}
 .two{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;margin-bottom:14px}
 @media (min-width:860px){.two{grid-template-columns:1fr 1fr}}
 .bars{display:flex;flex-direction:column;gap:10px}
+h4.sub{font-size:.95rem;margin:4px 0 10px}
 .bar-row{display:grid;grid-template-columns:minmax(5rem,10rem) minmax(0,1fr) 4.6rem;gap:10px;align-items:center}
 .bar-row>span:first-child{min-width:0;overflow-wrap:anywhere}
 .bar-row .tr{background:var(--surface2);border-radius:5px;height:14px;overflow:hidden}
@@ -821,7 +822,14 @@ function load(){
     if(again){again=false;load();}
   });
 }
-function loadReport(){
+/* รายงานตามช่วงเวลา: วันนี้โหลดใหม่ทุกครั้งที่มีอะไรเปลี่ยน เดือน/ปี อ่านไฟล์ทั้งเดือน จึงโหลดเมื่อเปิดแท็บ กดเลือกช่วง หรือกดโหลดใหม่ */
+S.rp='today';
+function loadRange(){
+  var p=S.rp;
+  return api('/api/report/range?period='+p).then(function(r){if(r.ok&&S.rp===p){S.range=r.j;S.rangeAt=Date.now();if(S.tab==='report'&&!S.viewSale)renderReport();}},function(){});
+}
+function loadReport(force){
+  if(force||S.rp==='today'||!S.range)loadRange();
   api('/api/shift').then(function(r){if(r.ok){S.shift=r.j;if(S.tab==='report'&&!S.viewSale)renderReport();}},function(){});
   if(isOwner())api('/api/audit').then(function(r){if(r.ok){S.audit=r.j;if(S.tab==='report'&&!S.viewSale)renderReport();}},function(){});
   return api('/api/report').then(function(r){if(r.ok){S.report=r.j;if(S.tab==='report')renderReport();}},function(){});
@@ -1106,9 +1114,46 @@ function shiftHtml(){
   }
   return h+'</div>';
 }
+/* ---------- รายงานตามช่วงเวลา: ยอด ช่องทาง คนรับเงิน ขายดี/ขายไม่ดี รายการยกเลิก ---------- */
+var RP={today:'วันนี้',month:'เดือนนี้',year:'ปีนี้'};
+function barsHtml(rows,val,fmt){
+  var mx=Math.max.apply(null,rows.map(val).concat([1]));
+  return '<div class="bars">'+rows.map(function(x){return '<div class="bar-row"><span>'+esc(x.label)+'</span><div class="tr"><div class="fi" style="width:'+Math.round(val(x)/mx*100)+'%"></div></div><span class="n">'+fmt(x)+'</span></div>';}).join('')+'</div>';
+}
+function rangeHtml(){
+  var g=S.range,p=S.rp;
+  var h='<div class="panel" id="range"><div class="sec-title"><h3>รายงาน'+RP[p]+'</h3>';
+  if(isOwner())h+='<div class="tools" role="group" aria-label="ช่วงเวลา">'+['today','month','year'].map(function(k){return '<button class="cat" data-a="rperiod" data-p="'+k+'" aria-pressed="'+(p===k)+'">'+RP[k]+'</button>';}).join('')+'</div>';
+  h+='</div>';
+  if(!g||g.period!==p)return h+'<div class="muted">กำลังโหลด…</div></div>';
+  var m=g.byMethod;
+  if(p!=='today')h+='<p class="muted small" style="margin:0 0 10px">ข้อมูล ณ '+new Date(S.rangeAt).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' <button class="btn sm" data-a="rreload">โหลดใหม่</button></p>';
+  h+='<div class="kpis"><div class="kpi"><div class="l">ยอดขาย'+RP[p]+'</div><div class="v">'+baht(g.total)+'</div><div class="x">'+g.count+' บิล · เฉลี่ย '+baht(g.avg)+'</div></div>'+
+    '<div class="kpi"><div class="l">เงินสด</div><div class="v">'+baht(m.cash)+'</div></div>'+
+    '<div class="kpi"><div class="l">โอน / QR</div><div class="v">'+baht(m.transfer)+'</div></div>'+
+    (m.card?'<div class="kpi"><div class="l">บัตร</div><div class="v">'+baht(m.card)+'</div></div>':'')+
+    (m.other?'<div class="kpi"><div class="l">ช่องทางอื่น</div><div class="v">'+baht(m.other)+'</div></div>':'')+
+    '<div class="kpi"><div class="l">ยกเลิก</div><div class="v">'+g.voids.count+' รายการ</div><div class="x">มูลค่า '+baht(g.voids.value)+'</div></div></div>';
+  var ser=g.series.filter(function(x){return x.count||p==='year';}).map(function(x){
+    var lb=p==='today'?pad(x.key,2)+':00 น.':p==='month'?x.key+' '+new Date(g.from).toLocaleDateString('th-TH',{month:'short'}):new Date(+x.key.slice(0,4),+x.key.slice(5)-1,1).toLocaleDateString('th-TH',{month:'long'});
+    return {label:lb,total:x.total,count:x.count};
+  });
+  h+='<div class="two"><div><h4 class="sub">ยอดขาย'+(p==='today'?'รายชั่วโมง':p==='month'?'รายวัน':'รายเดือน')+'</h4>'+(ser.length?barsHtml(ser,function(x){return x.total;},function(x){return baht(x.total);}):'<div class="muted">ยังไม่มีบิล</div>')+'</div>';
+  h+='<div><h4 class="sub">แยกตามคนรับเงิน</h4>'+(g.byCashier.length?'<div class="tbl-wrap"><table class="list"><thead><tr><th>พนักงาน</th><th class="r">บิล</th><th class="r">ยอด</th></tr></thead><tbody>'+g.byCashier.map(function(c){return '<tr><td>'+esc(c.name)+'</td><td class="r">'+c.count+'</td><td class="r">'+baht(c.total)+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="muted">ยังไม่มีบิล</div>')+'</div></div>';
+  var it=function(x){return {label:x.name,qty:x.qty,amount:x.amount};};
+  h+='<div class="two"><div><h4 class="sub">ขายดี (จำนวนจาน)</h4>'+(g.best.length?barsHtml(g.best.map(it),function(x){return x.qty;},function(x){return x.qty;}):'<div class="muted">ยังไม่มีบิล</div>')+'</div>';
+  h+='<div><h4 class="sub">ขายไม่ดี (น้อยไปมาก)</h4>'+(g.worst.length?'<div class="tbl-wrap"><table class="list"><tbody>'+g.worst.map(function(x){return '<tr><td>'+esc(x.name)+'</td><td class="r">'+x.qty+' จาน</td><td class="r">'+baht(x.amount)+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="muted">ยังไม่มีบิล</div>')+
+    (g.notSold.length?'<p class="small" style="margin:10px 0 0"><b>ไม่มีใครสั่ง'+RP[p]+' ('+g.notSold.length+')</b><br><span class="muted">'+g.notSold.map(esc).join(' · ')+'</span></p>':'')+'</div></div>';
+  h+='<h4 class="sub">รายการยกเลิก</h4>';
+  if(!g.voids.count)h+='<div class="muted">ไม่มีการยกเลิก'+RP[p]+'</div>';
+  else h+='<div class="two"><div class="tbl-wrap"><table class="list"><thead><tr><th>เหตุผล</th><th class="r">ครั้ง</th><th class="r">มูลค่า</th></tr></thead><tbody>'+g.voids.reasons.map(function(x){return '<tr><td>'+esc(x.reason)+'</td><td class="r">'+x.count+'</td><td class="r">'+baht(x.value)+'</td></tr>';}).join('')+'</tbody></table></div>'+
+    '<div class="tbl-wrap"><table class="list"><thead><tr><th>คนที่กดยกเลิก</th><th class="r">ครั้ง</th><th class="r">มูลค่า</th></tr></thead><tbody>'+g.voids.byStaff.map(function(x){return '<tr><td>'+esc(x.name)+'</td><td class="r">'+x.count+'</td><td class="r">'+baht(x.value)+'</td></tr>';}).join('')+'</tbody></table></div></div>';
+  return h+'</div>';
+}
 function renderReport(){
   var r=S.report;
   var fa=document.activeElement&&/^sh-/.test(document.activeElement.id)?document.activeElement.id:null;
+  var ae=document.activeElement,fr=ae&&ae.dataset&&(ae.dataset.a==='rperiod'||ae.dataset.a==='rreload')?'[data-a="'+ae.dataset.a+'"]'+(ae.dataset.p?'[data-p="'+ae.dataset.p+'"]':''):null;
   if(!r){$('#v-report').innerHTML='<div class="panel empty">กำลังโหลด…</div>';return;}
   if(S.viewSale){
     $('#v-report').innerHTML='<div class="detail"><div class="panel np stack"><h3>ใบเสร็จย้อนหลัง</h3><button class="btn primary block" data-a="printr">พิมพ์ซ้ำ</button><button class="btn block" data-a="closesale">กลับไปหน้าสรุปยอด</button></div><div class="receipt-box"><div class="receipt">'+saleReceipt(S.viewSale)+'</div></div></div>';
@@ -1128,6 +1173,7 @@ function renderReport(){
   h+='</div><div class="panel"><div class="sec-title"><h3>ยอดขาย 7 วันล่าสุด</h3></div><div class="bars">'+r.days.map(function(x){
     return '<div class="bar-row"><span>'+new Date(x.date).toLocaleDateString('th-TH',{weekday:'short',day:'numeric',month:'short'})+'</span><div class="tr"><div class="fi" style="width:'+Math.round(x.total/dmx*100)+'%"></div></div><span class="n">'+baht(x.total)+'</span></div>';
   }).join('')+'</div></div></div>';
+  h+=rangeHtml();
   if(isOwner())h+=auditHtml(month);
   h+='<div class="panel"><div class="sec-title"><h3>บิลวันนี้</h3>'+(isOwner()?'<a class="btn sm" href="/api/export.csv?month='+month+'">ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a>':'')+'</div>';
   if(!r.bills.length)h+='<div class="muted">ยังไม่มีบิล</div>';
@@ -1136,6 +1182,7 @@ function renderReport(){
   }).join('')+'</tbody></table></div>';
   h+='</div>';
   $('#v-report').innerHTML=shiftHtml()+h;
+  if(fr){var fq=$(fr);if(fq)fq.focus();}
   if(fa){var fe=$('#'+fa);if(fe){fe.focus();var n=fe.value.length;if(fe.setSelectionRange)fe.setSelectionRange(n,n);}}
 }
 
@@ -1654,12 +1701,14 @@ document.addEventListener('click',function(e){
   if(['void','pay','edel','catdel','rsgo','cashq'].indexOf(a)<0)disarm();
   if(a==='tab'){
     S.tab=b.dataset.v;S.viewSale=null;
-    if(S.tab==='report')loadReport();
+    if(S.tab==='report')loadReport(true);
     if(S.tab==='settings'){if(!S.dirty)renderSettings();loadBackups();loadStaff();}
     if(S.tab==='menu')renderMenu();
     render();
   }
   else if(a==='kst'){S.kStation=b.dataset.s;render();}
+  else if(a==='rperiod'){S.rp=b.dataset.p;S.range=null;renderReport();loadRange();var fp=$('[data-a="rperiod"][data-p="'+S.rp+'"]');if(fp)fp.focus();}
+  else if(a==='rreload'){loadRange();}
   else if(a==='adv'){act('/api/ticket',{id:id,from:b.dataset.from,status:b.dataset.st},b.dataset.st==='ready'?'แจ้งพนักงานไปรับอาหารแล้ว':null);}
   else if(a==='void'){openVoid(id);}
   else if(a==='voiditem'){openVoid(id,+b.dataset.i);}
