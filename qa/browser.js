@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1258,6 +1258,40 @@ const cases = {
     ok(r.cash === 100 && r.transfer === 70 && r.other === 50 && r.card === 66, 'สรุปยอดแยกทุกช่องทางถูกต้อง', r);
     await tab(p, 'report'); await p.waitForSelector('.kpis');
     ok(/บัตร/.test(await p.textContent('.kpis')) && /ช่องทางอื่น/.test(await p.textContent('.kpis')) && /หลายช่องทาง/.test(await p.textContent('#v-report')), 'หน้าสรุปยอดมีบัตร/ช่องทางอื่น และรายการบิลบอกช่องทาง');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: เปิด-ปิดกะ: เปิดกะด้วยเงินทอนตั้งต้น ขายเงินสด เงินที่ควรมีเพิ่มตาม พิมพ์ยอดนับอยู่แล้วมีออเดอร์เข้า ตัวเลขไม่หาย ปิดกะถามยืนยันพร้อมบอกขาด/เกิน */
+  async shift(browser) {
+    const ok = checker('shift'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'report'); await p.waitForSelector('#sh-float');
+    await p.fill('#sh-float', '500'); await p.click('[data-a="shopen"]');
+    await p.waitForSelector('#sh-count', { timeout: 6000 }).catch(() => {});
+    ok(await p.$('#sh-count') && /500/.test(await p.textContent('#v-report .panel')), 'เปิดกะ: แผงแสดงเงินทอนตั้งต้นและช่องนับเงิน');
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: 60, method: 'cash', received: 100 });
+    await tab(p, 'kitchen'); await tab(p, 'report');
+    await p.waitForFunction(() => /฿560/.test(document.querySelector('#v-report .panel').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/฿560/.test(await p.textContent('#v-report .panel')), 'ขายเงินสด 60: เงินที่ควรมี 500 + 60 = 560');
+    await p.click('#sh-count'); await p.keyboard.type('55');
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 2, qty: 1 }] }, { staff: false });    // ออเดอร์เข้าระหว่างพิมพ์
+    await sleep(1200);
+    await p.keyboard.type('0');
+    ok(await p.inputValue('#sh-count') === '550' && await p.evaluate(() => document.activeElement.id === 'sh-count'), 'ออเดอร์เข้าระหว่างพิมพ์ยอดนับ: ตัวเลขไม่หาย โฟกัสอยู่ที่ช่องเดิม', await p.inputValue('#sh-count'));
+    await p.click('[data-a="shclose"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(/เงินขาด ฿10/.test(await p.textContent('#confirm-dlg')), 'ก่อนปิดกะ: ถามยืนยันพร้อมบอกว่าขาด 10');
+    await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/shift')).json.open, 6000).catch(() => {});
+    const h = (await s.call('GET', '/api/shift')).json;
+    ok(!h.open && h.history[0].diff === -10, 'ปิดกะแล้ว บันทึกเงินขาด 10');
+    await p.waitForSelector('#sh-float', { timeout: 6000 }).catch(() => {});
+    ok(/ขาด ฿10/.test(await p.textContent('#v-report .panel')), 'ประวัติกะแสดงขาด/เกิน');
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);

@@ -604,6 +604,7 @@ function splitUpdate(){
   $('#sp-recv-row').hidden=!(cash>0);
 }
 document.addEventListener('input',function(e){if(e.target.closest&&e.target.closest('#split-form'))splitUpdate();});
+document.addEventListener('input',function(e){if(/^sh-/.test(e.target.id||''))S.shv[e.target.id]=e.target.value;});
 $('#split-cancel').addEventListener('click',function(){$('#split-dlg').close();split=null;});
 $('#split-form').addEventListener('submit',function(e){
   e.preventDefault();if(!split)return;
@@ -821,6 +822,7 @@ function load(){
   });
 }
 function loadReport(){
+  api('/api/shift').then(function(r){if(r.ok){S.shift=r.j;if(S.tab==='report'&&!S.viewSale)renderReport();}},function(){});
   if(isOwner())api('/api/audit').then(function(r){if(r.ok){S.audit=r.j;if(S.tab==='report'&&!S.viewSale)renderReport();}},function(){});
   return api('/api/report').then(function(r){if(r.ok){S.report=r.j;if(S.tab==='report')renderReport();}},function(){});
 }
@@ -1075,8 +1077,38 @@ function auditHtml(month){
   }).join('')+'</div>';
   return h+'</div>';
 }
+/* ---------- กะ: เงินในลิ้นชัก (แผงบนสุดของสรุปยอด) ----------
+   ช่องที่กำลังพิมพ์เก็บค่าใน S.shv และคืนโฟกัสหลังวาดใหม่ (ออเดอร์เข้าระหว่างนับเงิน ตัวเลขต้องไม่หาย กฎข้อ 32) */
+S.shv={};
+function shiftHtml(){
+  var sh=S.shift;if(!sh)return '';
+  var v=function(id){return esc(S.shv[id]||'');};
+  var h='<div class="panel"><div class="sec-title"><h3>กะ / เงินในลิ้นชัก</h3>'+(sh.open?'<span class="pill ok">เปิดกะอยู่</span>':'<span class="pill">ยังไม่ได้เปิดกะ</span>')+'</div>';
+  if(!sh.open){
+    h+='<p class="muted small" style="margin:0 0 10px">เปิดกะตอนเริ่มขาย ใส่เงินทอนที่อยู่ในลิ้นชัก ตอนปิดกะระบบจะบอกว่าเงินขาดหรือเกิน (ไม่เปิดกะก็ขายได้ตามปกติ)</p>'+
+      '<div class="inline"><label class="small" for="sh-float">เงินทอนตั้งต้น (บาท)</label><input class="in" id="sh-float" inputmode="decimal" autocomplete="off" value="'+v('sh-float')+'" style="width:9rem"><button class="btn primary" data-a="shopen">เปิดกะ</button></div>';
+  } else {
+    var o=sh.open,x=o.sales;
+    h+='<div class="kpis"><div class="kpi"><div class="l">เปิดกะ</div><div class="v" style="font-size:1.1rem">'+esc(o.openedBy.name)+'</div><div class="x">'+fmtDate(o.openedAt)+'</div></div>'+
+      '<div class="kpi"><div class="l">เงินทอนตั้งต้น</div><div class="v">'+baht(o.float)+'</div></div>'+
+      '<div class="kpi"><div class="l">รับเงินสดในกะ</div><div class="v">'+baht(x.cash)+'</div><div class="x">'+o.bills+' บิล · โอน '+baht(x.transfer)+(x.card?' · บัตร '+baht(x.card):'')+(x.other?' · อื่นๆ '+baht(x.other):'')+'</div></div>'+
+      '<div class="kpi"><div class="l">เงินที่ควรมีในลิ้นชัก</div><div class="v">'+baht(o.expectedCash)+'</div><div class="x">ตั้งต้น + เงินสดที่รับ (หักเงินทอนแล้ว)</div></div></div>'+
+      '<div class="inline" style="flex-wrap:wrap"><label class="small" for="sh-count">นับเงินได้จริง (บาท)</label><input class="in" id="sh-count" inputmode="decimal" autocomplete="off" value="'+v('sh-count')+'" style="width:9rem">'+
+      '<label class="small" for="sh-note">หมายเหตุ</label><input class="in" id="sh-note" maxlength="80" autocomplete="off" value="'+v('sh-note')+'" placeholder="เช่น ทอนผิด จ่ายค่าน้ำแข็ง" style="width:14rem">'+
+      '<button class="btn primary" data-a="shclose" data-id="'+o.id+'" data-exp="'+o.expectedCash+'">ปิดกะ</button></div>';
+  }
+  if(sh.history&&sh.history.length){
+    h+='<div class="tbl-wrap" style="margin-top:12px"><table class="list"><thead><tr><th>กะ</th><th>เปิด–ปิด</th><th>โดย</th><th class="r">ควรมี</th><th class="r">นับได้</th><th class="r">ขาด/เกิน</th></tr></thead><tbody>'+
+      sh.history.slice(0,10).map(function(c){
+        return '<tr><td>'+c.id+'</td><td>'+fmtDate(c.openedAt)+' – '+new Date(c.closedAt).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+'</td><td>'+esc(c.closedBy?c.closedBy.name:'')+'</td><td class="r">'+baht(c.expectedCash)+'</td><td class="r">'+baht(c.counted)+'</td>'+
+          '<td class="r"><span class="pill '+(c.diff<0?'crit':c.diff>0?'warn':'ok')+'">'+(c.diff<0?'ขาด '+baht(-c.diff):c.diff>0?'เกิน '+baht(c.diff):'ตรง')+'</span>'+(c.note?'<div class="muted small">'+esc(c.note)+'</div>':'')+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  }
+  return h+'</div>';
+}
 function renderReport(){
   var r=S.report;
+  var fa=document.activeElement&&/^sh-/.test(document.activeElement.id)?document.activeElement.id:null;
   if(!r){$('#v-report').innerHTML='<div class="panel empty">กำลังโหลด…</div>';return;}
   if(S.viewSale){
     $('#v-report').innerHTML='<div class="detail"><div class="panel np stack"><h3>ใบเสร็จย้อนหลัง</h3><button class="btn primary block" data-a="printr">พิมพ์ซ้ำ</button><button class="btn block" data-a="closesale">กลับไปหน้าสรุปยอด</button></div><div class="receipt-box"><div class="receipt">'+saleReceipt(S.viewSale)+'</div></div></div>';
@@ -1103,7 +1135,8 @@ function renderReport(){
     return '<tr><td>'+billNo(b.no,b.at)+'</td><td>'+new Date(b.at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+'</td><td>'+b.table+'</td><td>'+esc(payLabel(b))+'</td><td class="r">'+baht(b.total)+'</td><td class="r"><button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบเสร็จ</button></td></tr>';
   }).join('')+'</tbody></table></div>';
   h+='</div>';
-  $('#v-report').innerHTML=h;
+  $('#v-report').innerHTML=shiftHtml()+h;
+  if(fa){var fe=$('#'+fa);if(fe){fe.focus();var n=fe.value.length;if(fe.setSelectionRange)fe.setSelectionRange(n,n);}}
 }
 
 var SOCIAL=[['facebook','เพจ Facebook','https://www.facebook.com/ชื่อเพจ'],['instagram','Instagram','@ชื่อบัญชี'],['line','LINE Official Account','@ไอดีร้าน หรือ https://lin.ee/...'],['tiktok','TikTok','@ชื่อบัญชี']];
@@ -1631,6 +1664,21 @@ document.addEventListener('click',function(e){
   else if(a==='void'){openVoid(id);}
   else if(a==='voiditem'){openVoid(id,+b.dataset.i);}
   else if(a==='movetable'){openMove(id);}
+  else if(a==='shopen'){
+    var fl=(S.shv['sh-float']||'').trim();
+    if(fl===''||!(+fl>=0)){toast('ใส่เงินทอนตั้งต้นเป็นตัวเลข (ไม่มีให้ใส่ 0)');var ff=$('#sh-float');if(ff)ff.focus();return;}
+    act('/api/shift/open',{float:+fl},'เปิดกะแล้ว').then(function(r){if(r&&r.ok){S.shv={};loadReport();}});
+  }
+  else if(a==='shclose'){
+    var ct=(S.shv['sh-count']||'').trim(),exp=+b.dataset.exp,shid=+b.dataset.id;
+    if(ct===''||!(+ct>=0)){toast('ใส่จำนวนเงินที่นับได้จริง');var fc=$('#sh-count');if(fc)fc.focus();return;}
+    var df=round2(+ct-exp);
+    confirmBox({title:'ปิดกะ?',lines:['เงินที่ควรมี '+baht(exp)+' · นับได้ '+baht(+ct),df<0?'เงินขาด '+baht(-df):df>0?'เงินเกิน '+baht(df):'เงินตรงพอดี','ปิดกะแล้วแก้ตัวเลขไม่ได้'],ok:'ปิดกะ',no:'กลับไปนับใหม่'})
+      .then(function(ok){if(!ok)return;act('/api/shift/close',{id:shid,counted:+ct,note:S.shv['sh-note']||''}).then(function(r){
+        if(r&&r.ok){var d2=r.j.shift.diff;toast('ปิดกะแล้ว '+(d2<0?'เงินขาด '+baht(-d2):d2>0?'เงินเกิน '+baht(d2):'เงินตรงพอดี'));S.shv={};}
+        loadReport();
+      });});
+  }
   else if(a==='split'){disarm();openSplit(id,+b.dataset.sub,+b.dataset.due);}
   else if(a==='kprint'){printKitchen(id);}
   else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}

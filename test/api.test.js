@@ -2083,3 +2083,72 @@ describe('POS: ชำระด้วยบัตร/ช่องทางอื�
     await s.stop();
   });
 });
+
+describe('POS: เปิด-ปิดกะ และนับเงินในลิ้นชัก', () => {
+  const sell = async (s, t, items, pay) => {
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: t, key: keys[t], items });
+    const sub = (await s.call('GET', '/api/state')).json.bills[t].sub;
+    const r = await s.call('POST', '/api/pay', Object.assign({ table: t, expectedSub: sub }, pay));
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return r.json.sale;
+  };
+
+  test('ปิดกะ: เงินที่ควรมี = ตั้งต้น + ส่วนเงินสดของทุกบิลในกะ (ไม่นับโอน/บัตร) บอกขาด/เกิน เก็บประวัติ + audit', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    await sell(s, 9, [{ id: 1, qty: 1 }], { method: 'cash' });                       // ก่อนเปิดกะ ไม่นับ
+    let r = await c.call('POST', '/api/shift/open', { float: 500 });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal((await c.call('POST', '/api/shift/open', { float: 100 })).status, 409, 'เปิดซ้อนไม่ได้');
+    await sell(s, 1, [{ id: 1, qty: 1 }], { method: 'cash', received: 100 });         // เงินสด 60 (รับ 100 ทอน 40)
+    await sell(s, 2, [{ id: 2, qty: 1 }], { method: 'transfer' });                    // โอน 80 ไม่เข้าลิ้นชัก
+    await sell(s, 3, [{ id: 1, qty: 2 }], { payments: [{ method: 'cash', amount: 20 }, { method: 'card', amount: 100 }] });
+    const live = (await c.call('GET', '/api/shift')).json;
+    assert.deepEqual([live.open.float, live.open.sales.cash, live.open.sales.transfer, live.open.sales.card, live.open.expectedCash, live.open.bills], [500, 80, 80, 100, 580, 3]);
+    r = await c.call('POST', '/api/shift/close', { id: live.open.id, counted: 570, note: 'ทอนผิด 10 บาท' });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.deepEqual([r.json.shift.expectedCash, r.json.shift.counted, r.json.shift.diff], [580, 570, -10], 'ขาด 10');
+    const after = (await c.call('GET', '/api/shift')).json;
+    assert.ok(!after.open && after.history[0].diff === -10 && after.history[0].closedBy.name === 'สมใจ' && after.history[0].note === 'ทอนผิด 10 บาท');
+    const ev = readLog(s.dir, 'audit').map(e => e.action);
+    assert.ok(ev.includes('shift.opened') && ev.includes('shift.closed'));
+    await s.stop();
+  });
+
+  test('ปิดกะผิด: ไม่มีกะเปิด / ปิดกะที่ไม่ใช่กะปัจจุบัน (อีกเครื่องปิดไปแล้ว) = 409 · ยอดนับ/เงินตั้งต้นผิด = 400', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.equal((await s.call('POST', '/api/shift/close', { id: 1, counted: 0 })).status, 409, 'ยังไม่ได้เปิดกะ');
+    assert.equal((await s.call('POST', '/api/shift/open', { float: -1 })).status, 400);
+    assert.equal((await s.call('POST', '/api/shift/open', { float: 'x' })).status, 400);
+    const id = (await s.call('POST', '/api/shift/open', { float: 0 })).json.shift.id;
+    assert.equal((await s.call('POST', '/api/shift/close', { id, counted: -5 })).status, 400);
+    assert.equal((await s.call('POST', '/api/shift/close', { id: id + 1, counted: 0 })).status, 409, 'คนละกะ');
+    assert.equal((await s.call('POST', '/api/shift/close', { id, counted: 0 })).status, 200);
+    assert.equal((await s.call('POST', '/api/shift/close', { id, counted: 0 })).status, 409, 'ปิดซ้ำไม่ได้');
+    await s.stop();
+  });
+
+  test('สิทธิ์: เจ้าของ/แคชเชียร์เท่านั้น · กะที่เปิดอยู่และประวัติไม่หายเมื่อเปิดโปรแกรมใหม่ · ข้อมูลเสียถูกล้าง', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.login();
+    await withStaff(s);
+    await s.call('POST', '/api/staff', { name: 'เสิร์ฟ', role: 'waiter', pin: '520033' });
+    const w = await device(s, '520033'), kc = await device(s, '520022');
+    assert.equal((await w.call('POST', '/api/shift/open', { float: 100 })).status, 403);
+    assert.equal((await kc.call('GET', '/api/shift')).status, 403);
+    await s.call('POST', '/api/shift/open', { float: 300 });
+    await s.stop();
+    s = start(dir); await s.ready; await s.login();
+    assert.equal((await s.call('GET', '/api/shift')).json.open.float, 300, 'เปิดโปรแกรมใหม่ กะยังเปิดอยู่');
+    await s.stop();
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    d.shift = { id: 'x', float: 'y' }; d.shiftLog = [null, { id: 1 }, 'z'];
+    fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready; await s.login();
+    const sh = (await s.call('GET', '/api/shift')).json;
+    assert.ok(sh.open === null && Array.isArray(sh.history) && sh.history.length === 0, 'กะที่เสียถูกล้าง ไม่ทำให้ระบบพัง');
+    await s.stop();
+  });
+});
