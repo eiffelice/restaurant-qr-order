@@ -1132,6 +1132,19 @@ const cases = {
     const b = await pdfOf(2);
     ok(b.h > 200 && b.pages === Math.ceil(b.h / 200) && b.grand === 1, 'ใบเสร็จยาวเกินหน้า: ไหลต่อหน้าตามความยาวจริง ไม่ทับกัน (เดิมหัวใบเสร็จพิมพ์ทับยอดรวม)', b);
     ok(!(await p.evaluate(() => document.body.className.includes('pm-receipt'))) && !(await p.evaluate(() => document.querySelector('#print-area').innerHTML)), 'พิมพ์เสร็จ: กลับหน้าจอปกติ ล้างสำเนาใบเสร็จ');
+    // ใบสั่งอาหารครัว: ปุ่มพิมพ์บนการ์ดครัว หน้าเดียว ไม่มีราคา มีเลขโต๊ะและหมายเหตุ
+    await tab(p, 'kitchen'); await p.waitForSelector('#v-kitchen [data-a="kprint"]');
+    const kid = await p.getAttribute('#v-kitchen .card:has-text("โต๊ะ 2") [data-a="kprint"]', 'data-id');
+    const n0 = await p.evaluate(() => window.__printed);
+    await p.click('#v-kitchen [data-a="kprint"][data-id="' + kid + '"]');
+    await p.waitForFunction(n => window.__printed > n, n0, { timeout: 5000 }).catch(() => {});
+    await p.emulateMedia({ media: 'print' });
+    const kt = await p.evaluate(() => { const pa = document.querySelector('#print-area'); return { text: pa.textContent, table: (pa.querySelector('.kt-h b') || {}).textContent, notes: pa.querySelectorAll('.kn').length }; });
+    const kbuf = await p.pdf({ width: '80mm', height: '200mm', margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+    await p.emulateMedia({ media: 'screen' });
+    const kpages = (kbuf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+    ok(kt.table === '2' && !/฿/.test(kt.text) && kt.notes > 0 && /ไม่เผ็ด/.test(kt.text), 'ใบสั่งครัว: เลขโต๊ะตัวใหญ่ หมายเหตุครบ ไม่มีราคา', kt);
+    ok(kpages >= 1 && kpages <= 2, 'ใบสั่งครัวไหลต่อหน้าตามความยาว ไม่ซ้ำ', kpages);
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);

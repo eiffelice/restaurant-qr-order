@@ -219,6 +219,11 @@ select.in{appearance:auto}
    เดิมซ่อนด้วย visibility + position:fixed: ส่วนที่ซ่อนยังกินความยาวกระดาษ ใบสั้นพิมพ์ออกมา 2 ใบซ้ำ ใบยาวหน้าถัดไปพิมพ์หัวใบเสร็จทับยอดรวม */
 @page receipt{margin:0}
 #print-area{display:none}
+.kticket .kt-h{display:flex;align-items:baseline;justify-content:center;gap:8px;font-weight:700}
+.kticket .kt-h b{font-size:34pt;line-height:1}
+.kticket td{font-size:13pt;font-weight:600;vertical-align:top}
+.kticket .kn{font-size:11pt;font-weight:700}
+.kticket .km{font-size:12pt;font-weight:700;text-align:center}
 dialog.dlg{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);color:var(--ink);padding:18px;width:min(28rem,calc(100% - 32px))}
 dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
 .dlg h3{margin:0 0 6px}
@@ -543,6 +548,19 @@ $('#void-form').addEventListener('submit',function(e){
   },function(){$('#void-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
 });
 
+/* ---------- ใบสั่งอาหารครัว (กระดาษ 80 มม. ไม่มีราคา) ---------- */
+function printKitchen(id){
+  var k=S.d.tickets.filter(function(x){return x.id===id;})[0];if(!k){toast('ไม่พบออเดอร์นี้แล้ว');return;}
+  var el=document.createElement('div');el.className='receipt kticket';
+  var t=new Date(k.createdAt);
+  el.innerHTML='<div class="kt-h"><span>โต๊ะ</span><b>'+k.table+'</b></div>'+
+    '<div class="meta"><span>'+esc(S.d.stations[k.station]||k.station)+'</span><span>ใบที่ '+k.id+'</span></div>'+
+    '<div class="meta"><span>'+pad(t.getHours(),2)+':'+pad(t.getMinutes(),2)+'</span><span>'+(k.by==='staff'?'พนักงานสั่ง':'ลูกค้าสั่ง')+'</span></div><hr>'+
+    '<table>'+k.items.map(function(i){return '<tr><td class="q">'+i.qty+'×</td><td>'+esc(i.name)+(i.note&&i.note.length?'<div class="kn">'+esc(i.note.join(' · '))+'</div>':'')+'</td></tr>';}).join('')+'</table>'+
+    (k.memo?'<hr><div class="km">'+esc(k.memo)+'</div>':'');
+  printMode('receipt',null,el);
+}
+
 /* ---------- ย้ายโต๊ะ / รวมโต๊ะ ----------
    ส่งยอดที่เห็นตอนเปิดหน้าต่าง (expectedSub) ลูกค้าสั่งเพิ่มระหว่างนั้นเซิร์ฟเวอร์ตอบ 409
    ปลายทางมีออเดอร์ = 409 need_merge → ถามยืนยันรวมบิลแล้วส่งซ้ำพร้อม merge */
@@ -806,7 +824,7 @@ function renderKitchen(){
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">'+esc(d.stations[k.station]||k.station)+'</span>'+pill+(cls==='w-crit'?'<span class="pill crit">รอนาน</span>':cls==='w-warn'?'<span class="pill warn">เริ่มช้า</span>':'')+(k.by==='staff'?'<span class="pill">พนักงานสั่ง</span>':'')+'</div>'+
       '<ul>'+k.items.map(function(it){return '<li><b>×'+it.qty+'</b><span>'+esc(it.name)+(it.note.length?'<br><span class="note-txt">'+esc(it.note.join(' · '))+'</span>':'')+'</span></li>';}).join('')+'</ul>'+
       (k.memo?'<div class="memo-txt">'+esc(k.memo)+'</div>':'')+
-      '<div class="card-act"><button class="btn primary" data-a="adv" data-id="'+k.id+'" data-from="'+k.status+'" data-st="'+NEXT[k.status][0]+'">'+NEXT[k.status][1]+'</button>'+
+      '<div class="card-act"><button class="btn" data-a="kprint" data-id="'+k.id+'" aria-label="พิมพ์ใบสั่ง โต๊ะ '+k.table+'">พิมพ์</button><button class="btn primary" data-a="adv" data-id="'+k.id+'" data-from="'+k.status+'" data-st="'+NEXT[k.status][0]+'">'+NEXT[k.status][1]+'</button>'+
       (k.status==='ready'||!canMoney()?'':'<button class="btn" data-a="void" data-id="'+k.id+'">ยกเลิก</button>')+'</div></div>';
   }).join('')+'</div>';
   $('#v-kitchen').innerHTML=h;
@@ -1473,12 +1491,12 @@ function render(){
 }
 
 /* ---------- events ---------- */
-function printMode(mode,extra){
+function printMode(mode,extra,node){
   var pa=$('#print-area');
   if(mode==='receipt'){
-    var src=document.querySelector('.view:not([hidden]) .receipt');
+    var src=node||document.querySelector('.view:not([hidden]) .receipt');
     if(!src){toast('ไม่พบใบเสร็จที่จะพิมพ์');return;}
-    pa.innerHTML='';pa.appendChild(src.cloneNode(true));
+    pa.innerHTML='';pa.appendChild(node?src:src.cloneNode(true));
   }
   document.body.classList.add('pm-'+mode);if(extra)document.body.classList.add(extra);
   var done=function(){document.body.classList.remove('pm-'+mode);if(extra)document.body.classList.remove(extra);pa.innerHTML='';document.querySelectorAll('.qcard.pick').forEach(function(c){c.classList.remove('pick');});window.removeEventListener('afterprint',done);};
@@ -1536,6 +1554,7 @@ document.addEventListener('click',function(e){
   else if(a==='void'){openVoid(id);}
   else if(a==='voiditem'){openVoid(id,+b.dataset.i);}
   else if(a==='movetable'){openMove(id);}
+  else if(a==='kprint'){printKitchen(id);}
   else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}
   else if(a==='bsvc'){S.bSvc=!S.bSvc;render();}
