@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, discount, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1342,6 +1342,51 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: ส่วนลดท้ายบิล: แคชเชียร์ต้องมี PIN เจ้าของ ใบแจ้งยอดมีบรรทัดส่วนลด ยอดหลังลด อีกเครื่องแก้ส่วนลดระหว่างกดรับเงิน = ไม่ปิดบิลด้วยยอดเก่า */
+  async discount(browser) {
+    const ok = checker('discount'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] }, { staff: false });
+    const ctx = await browser.newContext({ baseURL: s.B }); const c = await ctx.newPage(); watch(c, errors, 'cashier');
+    await c.goto('/staff'); await c.fill('#pin', '520011'); await c.press('#pin', 'Enter'); await c.waitForSelector('#tabs .tab');
+    await tab(c, 'tables'); await c.click('[data-a="sel"][data-id="1"]'); await c.waitForSelector('[data-a="disc"]');
+    await c.click('[data-a="disc"]'); await c.waitForSelector('#disc-dlg[open]');
+    ok(await c.isVisible('#disc-pin-row'), 'แคชเชียร์: หน้าต่างส่วนลดมีช่อง PIN เจ้าของ');
+    await c.fill('#disc-val', '10');
+    ok(/ลด ฿20/.test(await c.textContent('#disc-prev')), 'แสดงตัวอย่าง: ลด 10% ของ 200 = 20', await c.textContent('#disc-prev'));
+    await c.check('#disc-form input[value="ลูกค้าประจำ"]');
+    await c.click('#disc-ok');
+    ok(/PIN/.test(await c.textContent('#disc-err')), 'ไม่ใส่ PIN เจ้าของ: ยังให้ส่วนลดไม่ได้');
+    await c.fill('#disc-pin', PIN); await c.click('#disc-ok');
+    await c.waitForSelector('#disc-dlg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    await c.waitForFunction(() => /ส่วนลด/.test(document.querySelector('.receipt') && document.querySelector('.receipt').textContent), null, { timeout: 6000 }).catch(() => {});
+    const rc = await c.textContent('.receipt');
+    ok(/ส่วนลด 10%/.test(rc) && /−฿20/.test(rc) && /ค่าอาหารหลังลด/.test(rc), 'ใบแจ้งยอด: บรรทัดส่วนลดและค่าอาหารหลังลด', rc.slice(0, 200));
+    ok((await c.textContent('.receipt .grand .a')).trim() === '฿198', 'ยอดสุทธิ: ค่าอาหารหลังลด 180 + ค่าบริการ 18 = 198 (ค่าบริการคิดจากยอดหลังลด)');
+    ok(/อนุมัติโดย เจ้าของร้าน/.test(await c.textContent('#v-tables')), 'บอกว่าใครอนุมัติส่วนลด');
+    // กดรับโอนครั้งแรก แล้วอีกเครื่องแก้ส่วนลดก่อนกดยืนยัน
+    await c.click('[data-a="pay"][data-m="transfer"]');
+    await s.call('POST', '/api/table/discount', { table: 1, kind: 'amt', value: 50, reason: 'โปรโมชัน' });
+    await sleep(800);
+    await c.click('[data-a="pay"][data-m="transfer"]');
+    await sleep(1200);
+    let st = (await s.call('GET', '/api/state')).json;
+    ok(st.bills[1] && st.bills[1].disc === 50, 'ส่วนลดเปลี่ยนระหว่างคิดเงิน: ไม่ปิดบิลด้วยยอดเก่า', st.bills[1]);
+    await c.waitForFunction(() => document.querySelector('.receipt .grand .a').textContent.trim() === '฿165', null, { timeout: 6000 }).catch(() => {});
+    await c.click('[data-a="pay"][data-m="transfer"]'); await c.click('[data-a="pay"][data-m="transfer"]');
+    await until(async () => !(await s.call('GET', '/api/state')).json.bills[1], 6000).catch(() => {});
+    const sale = (await s.call('GET', '/api/report')).json.bills[0];
+    ok(sale && sale.disc === 50 && sale.total === 165, 'กดใหม่หลังเห็นยอดใหม่: ปิดบิล ส่วนลด 50 ยอด 150 + ค่าบริการ 15 = 165', sale && [sale.disc, sale.total]);
+    await c.waitForSelector('.receipt', { timeout: 5000 }).catch(() => {});
+    ok(/ส่วนลด/.test(await c.textContent('.receipt').catch(() => '')), 'ใบเสร็จรับเงินมีบรรทัดส่วนลด');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await ctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

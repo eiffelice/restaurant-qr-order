@@ -369,6 +369,34 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" type="button" id="move-cancel">ยกเลิก</button><button class="btn primary" id="move-ok">ย้ายโต๊ะ</button></div>
   </form>
 </dialog>
+<dialog class="dlg" id="disc-dlg" aria-labelledby="disc-h">
+  <form method="dialog" id="disc-form">
+    <h3 id="disc-h">ให้ส่วนลด</h3>
+    <div class="muted small" id="disc-sub"></div>
+    <fieldset class="reasons" style="border:0;padding:0"><legend class="small">ลดเป็น</legend>
+      <label><input type="radio" name="dk" value="pct" checked>เปอร์เซ็นต์ (%)</label>
+      <label><input type="radio" name="dk" value="amt">จำนวนเงิน (บาท)</label>
+    </fieldset>
+    <label class="small" for="disc-val">จำนวน</label>
+    <input class="in" id="disc-val" inputmode="decimal" autocomplete="off" style="width:9rem">
+    <div class="small" id="disc-prev" aria-live="polite" style="margin:6px 0"></div>
+    <fieldset class="reasons" style="border:0;padding:0"><legend class="small">เหตุผล (ต้องเลือก)</legend>
+      <label><input type="radio" name="dr" value="ลูกค้าประจำ">ลูกค้าประจำ</label>
+      <label><input type="radio" name="dr" value="โปรโมชัน">โปรโมชัน</label>
+      <label><input type="radio" name="dr" value="ชดเชยความผิดพลาด">ชดเชยความผิดพลาด</label>
+      <label><input type="radio" name="dr" value="พนักงาน/คนรู้จัก">พนักงาน/คนรู้จัก</label>
+      <label><input type="radio" name="dr" value="อื่นๆ">อื่นๆ</label>
+    </fieldset>
+    <label class="small" for="disc-note">รายละเอียดเพิ่มเติม (เช่น ชื่อโปรโมชัน)</label>
+    <input class="in" id="disc-note" maxlength="60" autocomplete="off">
+    <div id="disc-pin-row" hidden style="margin-top:10px">
+      <label class="small" for="disc-pin">ให้ส่วนลดต้องให้เจ้าของใส่ PIN อนุมัติ</label>
+      <input class="in" id="disc-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+    </div>
+    <div class="err" id="disc-err" role="alert"></div>
+    <div class="row"><button type="button" class="btn" id="disc-cancel">ไม่ให้ส่วนลด</button><button type="submit" class="btn primary" id="disc-ok">ให้ส่วนลด</button></div>
+  </form>
+</dialog>
 <dialog class="dlg" id="void-dlg" aria-labelledby="void-h">
   <form method="dialog" id="void-form">
     <h3 id="void-h">ยกเลิกออเดอร์</h3>
@@ -567,6 +595,68 @@ $('#void-form').addEventListener('submit',function(e){
   },function(){$('#void-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
 });
 
+/* ---------- ส่วนลดท้ายบิล ----------
+   ลดจากค่าอาหารก่อนค่าบริการ/VAT · แคชเชียร์ต้องมี PIN เจ้าของ · เซิร์ฟเวอร์ตรวจซ้ำทุกอย่าง หน้านี้แค่แสดงตัวอย่างยอด */
+var discT=null;
+function discBill(){return discT&&S.d.bills[discT];}
+function openDisc(t){
+  var bl=S.d.bills[t];if(!bl){toast('โต๊ะนี้ไม่มีรายการแล้ว');return;}
+  discT=t;$('#disc-form').reset();
+  $('#disc-h').textContent='ให้ส่วนลด โต๊ะ '+t;
+  if(bl.discount){
+    document.querySelector('#disc-form input[name=dk][value="'+bl.discount.kind+'"]').checked=true;$('#disc-val').value=bl.discount.value;
+    var dr=document.querySelector('#disc-form input[name=dr][value="'+bl.discount.reason.replace(/"/g,'')+'"]');
+    if(dr)dr.checked=true;else{document.querySelector('#disc-form input[name=dr][value="อื่นๆ"]').checked=true;$('#disc-note').value=bl.discount.reason;}
+  }
+  $('#disc-pin-row').hidden=isOwner();$('#disc-err').textContent='';$('#disc-ok').disabled=false;
+  discPreview();
+  $('#disc-dlg').showModal();$('#disc-val').focus();
+}
+function discInput(){
+  var k=document.querySelector('#disc-form input[name=dk]:checked').value,v=$('#disc-val').value.trim();
+  return {kind:k,raw:v,value:v===''?NaN:Math.round(+v*100)/100};
+}
+function discAmount(sub,d){return d.kind==='pct'?Math.min(Math.round(sub*d.value/100),sub):Math.min(d.value,sub);}
+function discPreview(){
+  var bl=discBill();if(!bl)return;
+  var d=discInput(),el=$('#disc-prev');
+  $('#disc-sub').textContent='ค่าอาหาร '+baht(bl.sub)+' · ลดจากค่าอาหารก่อนคิดค่าบริการและ VAT';
+  if(!(d.value>0)){el.textContent='';return;}
+  if(d.kind==='pct'&&d.value>100){el.textContent='เปอร์เซ็นต์ต้องไม่เกิน 100';return;}
+  if(d.kind==='amt'&&d.value>bl.sub){el.textContent='ส่วนลดเกินค่าอาหาร';return;}
+  var c=calc(bl.sub,S.bSvc,S.bVat,discAmount(bl.sub,d));
+  el.textContent='ลด '+baht(c.disc)+' · ยอดสุทธิ '+baht(c.total);
+}
+function discReason(){
+  var r=document.querySelector('#disc-form input[name=dr]:checked'),n=$('#disc-note').value.trim();
+  if(!r)return '';
+  return r.value==='อื่นๆ'?n:(n?r.value+': '+n:r.value);
+}
+document.addEventListener('input',function(e){if(e.target.closest&&e.target.closest('#disc-form'))discPreview();});
+document.addEventListener('change',function(e){if(e.target.closest&&e.target.closest('#disc-form'))discPreview();});
+$('#disc-cancel').addEventListener('click',function(){$('#disc-dlg').close();discT=null;});
+$('#disc-form').addEventListener('submit',function(e){
+  e.preventDefault();
+  var bl=discBill(),err=$('#disc-err'),d=discInput(),reason=discReason();
+  if(!bl){$('#disc-dlg').close();toast('โต๊ะนี้ไม่มีรายการแล้ว');return;}
+  if(!(d.value>0)){err.textContent='ใส่จำนวนส่วนลดเป็นตัวเลขมากกว่า 0';$('#disc-val').focus();return;}
+  if(d.kind==='pct'&&d.value>100){err.textContent='เปอร์เซ็นต์ต้องไม่เกิน 100';$('#disc-val').focus();return;}
+  if(d.kind==='amt'&&d.value>bl.sub){err.textContent='ส่วนลดเกินค่าอาหาร ('+baht(bl.sub)+')';$('#disc-val').focus();return;}
+  if(!document.querySelector('#disc-form input[name=dr]:checked')){err.textContent='เลือกเหตุผลก่อน';return;}
+  if(reason.length<2){err.textContent='พิมพ์รายละเอียดเหตุผล';$('#disc-note').focus();return;}
+  var body={table:discT,kind:d.kind,value:d.value,reason:reason},pin=$('#disc-pin').value;
+  if(!$('#disc-pin-row').hidden){if(!pin){err.textContent='ใส่ PIN เจ้าของ';$('#disc-pin').focus();return;}body.approvePin=pin;}
+  $('#disc-ok').disabled=true;err.textContent='';
+  api('/api/table/discount',body).then(function(r){
+    $('#disc-ok').disabled=false;$('#disc-pin').value='';
+    if(r.ok){$('#disc-dlg').close();discT=null;disarm();toast('ให้ส่วนลด '+baht(r.j.disc)+' แล้ว');load();return;}
+    if(r.j.code==='need_approval'){$('#disc-pin-row').hidden=false;$('#disc-pin').focus();}
+    err.textContent=r.j.error||'ให้ส่วนลดไม่สำเร็จ';
+    if(r.status===409){$('#disc-dlg').close();discT=null;toast(r.j.error);load();}
+    if(r.status===401){$('#disc-dlg').close();showLogin();}
+  },function(){$('#disc-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+});
+
 /* ---------- ใบสั่งอาหารครัว (กระดาษ 80 มม. ไม่มีราคา) ---------- */
 function printKitchen(id){
   var k=S.d.tickets.filter(function(x){return x.id===id;})[0];if(!k){toast('ไม่พบออเดอร์นี้แล้ว');return;}
@@ -584,8 +674,8 @@ function printKitchen(id){
    ยอดที่เห็นตอนเปิด (expectedSub) ส่งไปตรวจ ลูกค้าสั่งเพิ่มระหว่างนั้นเซิร์ฟเวอร์ตอบ 409 (กฎข้อ 2, 22) รวมทุกช่องต้องเท่ายอดพอดี */
 var split=null;
 var SPM=['cash','transfer','card','other'];
-function openSplit(t,sub,due){
-  split={t:t,sub:sub,due:due};
+function openSplit(t,sub,due,disc){
+  split={t:t,sub:sub,due:due,disc:disc||0};
   $('#split-form').reset();
   $('#split-h').textContent='แบ่งจ่าย / ช่องทางอื่น โต๊ะ '+t;
   $('#split-due').textContent=baht(due);
@@ -615,7 +705,7 @@ $('#split-form').addEventListener('submit',function(e){
   if(!pays.length){err.textContent='ใส่ยอดอย่างน้อยหนึ่งช่องทาง';return;}
   var sum=round2(pays.reduce(function(a,x){return a+x.amount;},0));
   if(sum!==split.due){err.textContent='รวม '+baht(sum)+' ไม่เท่ากับยอด '+baht(split.due);return;}
-  var body={table:split.t,svc:S.bSvc,vat:S.bVat,payments:pays,expectedSub:split.sub},recv=$('#sp-recv').value.trim();
+  var body={table:split.t,svc:S.bSvc,vat:S.bVat,payments:pays,expectedSub:split.sub,expectedDisc:split.disc},recv=$('#sp-recv').value.trim();
   if(pays[0].method==='cash'&&recv!==''){if(!(+recv>=pays[0].amount)){err.textContent='เงินสดที่รับมาน้อยกว่าส่วนที่จ่ายเงินสด';return;}body.received=+recv;}
   $('#split-ok').disabled=true;err.textContent='';
   api('/api/pay',body).then(function(r){
@@ -748,9 +838,11 @@ function staffOrderUrl(t){return '/order?t='+t+'&k='+encodeURIComponent(S.d.keys
 
 /* ---------- data ---------- */
 function tableTickets(t){return S.d.tickets.filter(function(k){return k.table===t;});}
-function calc(sub,svcOn,vatOn){
-  var svc=svcOn?Math.round(sub*.1):0,vat=vatOn?Math.round((sub+svc)*.07):0,total=Math.round((sub+svc+vat)*100)/100;
-  return {sub:sub,svc:svc,vat:vat,total:total};
+/* สูตรเงิน คู่กับ store.totals() ในเซิร์ฟเวอร์ ต้องแก้พร้อมกัน: ส่วนลดหักจากค่าอาหารก่อน ค่าบริการและ VAT คิดจากยอดหลังลด */
+function calc(sub,svcOn,vatOn,disc){
+  disc=Math.min(Math.max(+disc||0,0),sub);
+  var net=Math.round((sub-disc)*100)/100,svc=svcOn?Math.round(net*.1):0,vat=vatOn?Math.round((net+svc)*.07):0,total=Math.round((net+svc+vat)*100)/100;
+  return {sub:sub,disc:disc,net:net,svc:svc,vat:vat,total:total};
 }
 function pad(n,w){return String(n).padStart(w,'0');}
 function billNo(no,at){var d=new Date(at);return 'R'+d.getFullYear()+pad(d.getMonth()+1,2)+pad(d.getDate(),2)+'-'+pad(no,4);}
@@ -919,6 +1011,7 @@ function receiptHtml(o){
   h+='<div class="meta"><span>'+(o.no?'เลขที่ '+o.no:'ยังไม่ได้ชำระเงิน')+'</span><span>โต๊ะ '+o.table+'</span></div><div class="meta"><span>'+fmtDate(o.at)+'</span>'+(o.method?'<span>ชำระโดย '+esc(o.payLabel||(o.method==='transfer'?'โอน/QR':'เงินสด'))+'</span>':'')+'</div><hr>';
   h+='<table>'+o.lines.map(function(l){return '<tr><td class="q">'+l.qty+'×</td><td>'+esc(l.name)+'</td><td class="a">'+baht(l.price*l.qty)+'</td></tr>';}).join('')+'</table><hr>';
   h+='<table><tr><td>รวมค่าอาหาร</td><td class="a">'+baht(o.sub)+'</td></tr>';
+  if(o.disc)h+='<tr class="disc"><td>ส่วนลด'+(o.discount&&o.discount.kind==='pct'?' '+o.discount.value+'%':'')+(o.discount&&o.discount.reason?' ('+esc(o.discount.reason)+')':'')+'</td><td class="a">−'+baht(o.disc)+'</td></tr><tr><td>ค่าอาหารหลังลด</td><td class="a">'+baht(round2(o.sub-o.disc))+'</td></tr>';
   if(o.svc)h+='<tr><td>ค่าบริการ 10%</td><td class="a">'+baht(o.svc)+'</td></tr>';
   if(o.vat)h+='<tr><td>VAT 7%</td><td class="a">'+baht(o.vat)+'</td></tr>';
   h+='<tr class="grand"><td>รวมสุทธิ</td><td class="a">'+baht(o.total)+'</td></tr>';
@@ -943,7 +1036,7 @@ var PAYN={cash:'เงินสด',transfer:'โอน/QR',card:'บัตร',
 function paysOf(sale){return sale.payments&&sale.payments.length?sale.payments:[{method:PAYN[sale.method]?sale.method:'cash',amount:sale.total}];}
 function payLabel(sale){var p=paysOf(sale);return p.length>1?'หลายช่องทาง':PAYN[p[0].method]+(p[0].note?' ('+p[0].note+')':'');}
 function saleReceipt(sale,cash){
-  return receiptHtml({title:'ใบเสร็จรับเงิน',no:billNo(sale.no,sale.at),at:sale.at,table:sale.table,lines:sale.items,sub:sale.sub,svc:sale.svc,vat:sale.vat,total:sale.total,method:sale.method,pays:paysOf(sale),payLabel:payLabel(sale),
+  return receiptHtml({title:'ใบเสร็จรับเงิน',no:billNo(sale.no,sale.at),at:sale.at,table:sale.table,lines:sale.items,sub:sale.sub,disc:sale.disc||0,discount:sale.discount,svc:sale.svc,vat:sale.vat,total:sale.total,method:sale.method,pays:paysOf(sale),payLabel:payLabel(sale),
     received:cash?cash.received:null,change:cash?cash.change:null});
 }
 /* เงินทอน: คิดในหน้าจอ เซิร์ฟเวอร์ตรวจซ้ำและบันทึกลง audit log */
@@ -1006,13 +1099,15 @@ function renderTables(){
   h+='</div>';
   if(bill&&canMoney()){
     h+='<div class="panel stack"><div class="row"><span>ค่าบริการ 10%</span><button class="sw" data-a="bsvc" aria-pressed="'+S.bSvc+'">'+(S.bSvc?'เปิด':'ปิด')+'</button></div>';
-    h+='<div class="row"><span>VAT 7%</span><button class="sw" data-a="bvat" aria-pressed="'+S.bVat+'">'+(S.bVat?'เปิด':'ปิด')+'</button></div></div>';
+    h+='<div class="row"><span>VAT 7%</span><button class="sw" data-a="bvat" aria-pressed="'+S.bVat+'">'+(S.bVat?'เปิด':'ปิด')+'</button></div>';
+    h+='<div class="row"><span>ส่วนลด'+(bill.disc?' <b>−'+baht(bill.disc)+'</b>'+(bill.discount.approvedBy?' <span class="muted small">อนุมัติโดย '+esc(bill.discount.approvedBy.name)+'</span>':''):'')+'</span><span class="row" style="gap:6px">'+
+      (bill.disc?'<button class="btn sm" data-a="discdel" data-id="'+t2+'">เอาส่วนลดออก</button>':'')+'<button class="btn sm" data-a="disc" data-id="'+t2+'">'+(bill.disc?'แก้ส่วนลด':'ให้ส่วนลด')+'</button></span></div></div>';
   }
   h+='</div>';
   if(bill){
-    var c=calc(bill.sub,S.bSvc,S.bVat);
+    var c=calc(bill.sub,S.bSvc,S.bVat,bill.disc||0);
     var pending=tk2.filter(function(k){return k.status!=='served';}).reduce(function(n,k){return n+k.items.reduce(function(a,i){return a+i.qty;},0);},0);
-    h+='<div><div class="receipt-box"><div class="receipt">'+receiptHtml({title:'ใบแจ้งยอด',at:now(),table:t2,lines:bill.lines,sub:c.sub,svc:c.svc,vat:c.vat,total:c.total,qr:true})+'</div></div>';
+    h+='<div><div class="receipt-box"><div class="receipt">'+receiptHtml({title:'ใบแจ้งยอด',at:now(),table:t2,lines:bill.lines,sub:c.sub,disc:c.disc,discount:bill.discount,svc:c.svc,vat:c.vat,total:c.total,qr:true})+'</div></div>';
     h+='<div class="pay-wrap np">';
     if(pending)h+='<div class="banner warn" style="margin:0">ยังมี '+pending+' รายการที่ยังไม่ได้เสิร์ฟ ถ้าปิดบิลตอนนี้ รายการเหล่านี้จะหายจากจอครัว</div>';
     h+='<button class="btn block" data-a="printr">พิมพ์ใบแจ้งยอด</button>';
@@ -1029,9 +1124,9 @@ function renderTables(){
     h+='<div class="pay-two">';
     [['cash','รับเงินสด'],['transfer','รับโอน / QR'],['card','รับบัตร']].forEach(function(p){
       var key='pay:'+t2+':'+p[0];
-      h+='<button class="btn '+(armed(key)?'danger':'primary')+'" data-a="pay" data-id="'+t2+'" data-m="'+p[0]+'" data-sub="'+bill.sub+'" data-due="'+c.total+'"'+(p[0]==='cash'&&cashArmed&&cashState(c.total).short?' disabled':'')+'>'+(armed(key)?'ยืนยัน '+baht(c.total):p[1])+'</button>';
+      h+='<button class="btn '+(armed(key)?'danger':'primary')+'" data-a="pay" data-id="'+t2+'" data-m="'+p[0]+'" data-sub="'+bill.sub+'" data-disc="'+c.disc+'" data-due="'+c.total+'"'+(p[0]==='cash'&&cashArmed&&cashState(c.total).short?' disabled':'')+'>'+(armed(key)?'ยืนยัน '+baht(c.total):p[1])+'</button>';
     });
-    h+='<button class="btn" data-a="split" data-id="'+t2+'" data-sub="'+bill.sub+'" data-due="'+c.total+'">แบ่งจ่าย / อื่นๆ</button>';
+    h+='<button class="btn" data-a="split" data-id="'+t2+'" data-sub="'+bill.sub+'" data-disc="'+c.disc+'" data-due="'+c.total+'">แบ่งจ่าย / อื่นๆ</button>';
     h+='</div></div></div>';
     }
   } else {
@@ -1042,7 +1137,7 @@ function renderTables(){
 }
 
 /* ประวัติการแก้ไขวันนี้ จาก audit log: เน้นสิ่งที่เกี่ยวกับเงิน (ยกเลิกออเดอร์ แก้ราคา PromptPay กู้คืน ดาวน์โหลดข้อมูล) */
-var ACT={'ticket.voided':'ยกเลิกออเดอร์','bill.pay_rejected':'รับเงินไม่สำเร็จ ยอดเปลี่ยน','menu.item.updated':'แก้เมนู','menu.item.created':'เพิ่มเมนู',
+var ACT={'bill.discounted':'ให้ส่วนลด','bill.discount_removed':'เอาส่วนลดออก','ticket.voided':'ยกเลิกออเดอร์','bill.pay_rejected':'รับเงินไม่สำเร็จ ยอดเปลี่ยน','menu.item.updated':'แก้เมนู','menu.item.created':'เพิ่มเมนู',
   'menu.item.deleted':'ลบเมนู','menu.soldout':'เมนูหมด','settings.changed':'แก้ตั้งค่าร้าน','backup.restored':'กู้คืนข้อมูล','backup.restore_failed':'กู้คืนไม่สำเร็จ',
   'backup.downloaded':'ดาวน์โหลดไฟล์สำรอง','backup.created':'สำรองข้อมูล','report.exported':'ดาวน์โหลด CSV','log.downloaded':'ดาวน์โหลด log',
   'menu.image.updated':'เปลี่ยนรูปเมนู','menu.image.removed':'เอารูปเมนูออก','menu.category.created':'เพิ่มหมวด','menu.category.renamed':'แก้ชื่อหมวด',
@@ -1059,6 +1154,8 @@ function fv(v){
 function changes(e){return Object.keys(e.after||{}).map(function(k){return (FLD[k]||k)+' '+fv(e.before&&e.before[k])+' → '+fv(e.after[k]);}).join(', ');}
 function auditDetail(e){
   if(e.action==='ticket.voided')return 'โต๊ะ '+e.table+' · '+(e.items||[]).map(function(i){return i.name+' ×'+i.qty;}).join(', ')+' · มูลค่า '+baht(e.value)+(e.reason?' · เหตุผล: '+e.reason:'')+(e.approvedBy?' · อนุมัติโดย '+e.approvedBy.name:'');
+  if(e.action==='bill.discounted')return 'โต๊ะ '+e.table+' ลด '+(e.kind==='pct'?e.value+'% ':'')+baht(e.amount)+' จากค่าอาหาร '+baht(e.sub)+' เหตุผล: '+(e.reason||'')+(e.approvedBy?' อนุมัติโดย '+e.approvedBy.name:'');
+  if(e.action==='bill.discount_removed')return 'โต๊ะ '+e.table+' เอาส่วนลด '+(e.kind==='pct'?e.value+'%':baht(e.value))+' ออก';
   if(e.action==='bill.pay_rejected')return 'โต๊ะ '+e.table+' ยอดตอนกด '+baht(e.expectedSub)+' ยอดจริง '+baht(e.actualSub);
   if(e.action==='menu.item.updated')return (e.itemName||'')+' · '+changes(e);
   if(e.action==='staff.created')return (e.after&&e.after.name||'')+' · '+(S.d.roles[e.after&&e.after.role]||'');
@@ -1133,6 +1230,7 @@ function rangeHtml(){
     '<div class="kpi"><div class="l">โอน / QR</div><div class="v">'+baht(m.transfer)+'</div></div>'+
     (m.card?'<div class="kpi"><div class="l">บัตร</div><div class="v">'+baht(m.card)+'</div></div>':'')+
     (m.other?'<div class="kpi"><div class="l">ช่องทางอื่น</div><div class="v">'+baht(m.other)+'</div></div>':'')+
+    '<div class="kpi"><div class="l">ส่วนลด</div><div class="v">'+baht(g.discounts.value)+'</div><div class="x">'+g.discounts.count+' บิล</div></div>'+
     '<div class="kpi"><div class="l">ยกเลิก</div><div class="v">'+g.voids.count+' รายการ</div><div class="x">มูลค่า '+baht(g.voids.value)+'</div></div></div>';
   var ser=g.series.filter(function(x){return x.count||p==='year';}).map(function(x){
     var lb=p==='today'?pad(x.key,2)+':00 น.':p==='month'?x.key+' '+new Date(g.from).toLocaleDateString('th-TH',{month:'short'}):new Date(+x.key.slice(0,4),+x.key.slice(5)-1,1).toLocaleDateString('th-TH',{month:'long'});
@@ -1707,6 +1805,10 @@ document.addEventListener('click',function(e){
     render();
   }
   else if(a==='kst'){S.kStation=b.dataset.s;render();}
+  else if(a==='disc'){openDisc(id);}
+  else if(a==='discdel'){
+    act('/api/table/discount',{table:id,kind:'none'},'เอาส่วนลดออกแล้ว').then(function(){disarm();});
+  }
   else if(a==='rperiod'){S.rp=b.dataset.p;S.range=null;renderReport();loadRange();var fp=$('[data-a="rperiod"][data-p="'+S.rp+'"]');if(fp)fp.focus();}
   else if(a==='rreload'){loadRange();}
   else if(a==='adv'){act('/api/ticket',{id:id,from:b.dataset.from,status:b.dataset.st},b.dataset.st==='ready'?'แจ้งพนักงานไปรับอาหารแล้ว':null);}
@@ -1728,7 +1830,7 @@ document.addEventListener('click',function(e){
         loadReport();
       });});
   }
-  else if(a==='split'){disarm();openSplit(id,+b.dataset.sub,+b.dataset.due);}
+  else if(a==='split'){disarm();openSplit(id,+b.dataset.sub,+b.dataset.due,+b.dataset.disc||0);}
   else if(a==='kprint'){printKitchen(id);}
   else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}
@@ -1739,7 +1841,7 @@ document.addEventListener('click',function(e){
     var key='pay:'+id+':'+b.dataset.m;
     // จำยอดตอนกดครั้งแรก ถ้าลูกค้าสั่งเพิ่มก่อนกดยืนยัน ปุ่มจะแสดงยอดใหม่ แต่เงินที่รับมาเป็นยอดเดิม เซิร์ฟเวอร์จึงต้องปฏิเสธ
     if(!armed(key)){
-      S.paySub=+b.dataset.sub;S.cash='';
+      S.paySub=+b.dataset.sub;S.payDisc=+b.dataset.disc||0;S.cash='';
       // เงินสด: ให้เวลากรอกเงินที่รับมา 1 นาที
       arm(key,b.dataset.m==='cash'?60000:4000);
       // focus ทันทีในจังหวะที่แตะ (ไม่ใช้ setTimeout) ไม่อย่างนั้น iPhone ไม่เปิดคีย์บอร์ด และตัวเลขที่พิมพ์เร็วจะหาย
@@ -1751,7 +1853,7 @@ document.addEventListener('click',function(e){
     disarm();
     if(S.busy)return;
     S.busy=true;
-    act('/api/pay',{table:id,svc:S.bSvc,vat:S.bVat,method:b.dataset.m,expectedSub:S.paySub,received:isCash&&S.cash!==''?+S.cash:undefined}).then(function(r){
+    act('/api/pay',{table:id,svc:S.bSvc,vat:S.bVat,method:b.dataset.m,expectedSub:S.paySub,expectedDisc:S.payDisc,received:isCash&&S.cash!==''?+S.cash:undefined}).then(function(r){
       S.busy=false;S.cash='';
       if(document.activeElement&&document.activeElement.id==='cash-in')document.activeElement.blur();
       if(r&&r.ok){
