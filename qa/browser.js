@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1174,6 +1174,43 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await c.context().close(); await w.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: ย้ายโต๊ะ / รวมโต๊ะ จากรายละเอียดโต๊ะ: เลือกโต๊ะปลายทาง (บอกว่าว่างหรือมีออเดอร์) ปลายทางมีออเดอร์ถามยืนยันรวมบิลก่อน */
+  async movetable(browser) {
+    const ok = checker('movetable'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });
+    await s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 2, qty: 1 }] }, { staff: false });
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('[data-a="movetable"]');
+    await p.click('[data-a="movetable"]'); await p.waitForSelector('#move-dlg[open]');
+    const opts = await p.$$eval('#move-to option', x => x.map(o => o.textContent));
+    ok(opts.length === 11 && /โต๊ะ 3 · มีออเดอร์/.test(opts.join('|')) && /โต๊ะ 2 · ว่าง/.test(opts.join('|')), 'เลือกปลายทางได้ทุกโต๊ะยกเว้นโต๊ะเดิม บอกว่าโต๊ะไหนมีออเดอร์', opts.slice(0, 3));
+    ok(await p.inputValue('#move-to') === '2', 'เลือกโต๊ะว่างแรกให้ก่อน');
+    await p.selectOption('#move-to', '5'); await p.click('#move-ok');
+    await until(async () => !!(await s.call('GET', '/api/state')).json.bills[5], 6000).catch(() => {});
+    const st = (await s.call('GET', '/api/state')).json;
+    ok(st.bills[5] && !st.bills[1], 'ย้ายโต๊ะ 1 ไปโต๊ะ 5 แล้ว');
+    await p.waitForFunction(() => /โต๊ะ 5/.test((document.querySelector('#v-tables .detail h3') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+    ok(/โต๊ะ 5/.test(await p.textContent('#v-tables .detail h3')), 'หน้าจอไปที่โต๊ะใหม่ให้เลย');
+    // รวมเข้ากับโต๊ะ 3 ที่มีออเดอร์: ถามยืนยันก่อน กด "ไม่รวม" แล้วไม่มีอะไรเปลี่ยน
+    await p.click('[data-a="movetable"]'); await p.waitForSelector('#move-dlg[open]');
+    await p.selectOption('#move-to', '3'); await p.click('#move-ok');
+    await p.waitForSelector('#confirm-dlg[open]');
+    ok(/รวมโต๊ะ 5 เข้ากับโต๊ะ 3/.test(await p.textContent('#confirm-dlg')), 'ปลายทางมีออเดอร์: ถามยืนยันรวมบิลก่อน');
+    await p.click('#cf-no'); await sleep(500);
+    ok((await s.call('GET', '/api/state')).json.bills[5], 'กด "ไม่รวม": ไม่มีอะไรย้าย');
+    await p.click('[data-a="movetable"]'); await p.waitForSelector('#move-dlg[open]');
+    await p.selectOption('#move-to', '3'); await p.click('#move-ok'); await p.waitForSelector('#confirm-dlg[open]'); await p.click('#cf-ok');
+    await until(async () => !(await s.call('GET', '/api/state')).json.bills[5], 6000).catch(() => {});
+    const st2 = (await s.call('GET', '/api/state')).json;
+    ok(!st2.bills[5] && st2.tickets.filter(k => k.table === 3).length === 2, 'ยืนยันรวม: โต๊ะ 3 มีออเดอร์ของทั้งสองโต๊ะในบิลเดียว');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

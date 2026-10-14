@@ -1935,3 +1935,74 @@ describe('POS: ยกเลิกทีละรายการในตั๋�
     await s.stop();
   });
 });
+
+describe('POS: ย้ายโต๊ะ / รวมโต๊ะ', () => {
+  const order = async (s, t, items) => {
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const r = await s.guest('POST', '/api/order', { table: t, key: keys[t], items });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+  };
+  const state = async s => (await s.call('GET', '/api/state')).json;
+
+  test('ย้ายไปโต๊ะว่าง: ออเดอร์ การเรียก และสถานะเปิดโต๊ะไปด้วย โต๊ะเดิมว่าง ยอดเท่าเดิม มี audit', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { requireSeat: true });
+    await s.call('POST', '/api/table/seat', { table: 2, open: true });
+    await order(s, 2, [{ id: 1, qty: 2 }]);
+    const keys = (await state(s)).keys;
+    await s.guest('POST', '/api/call', { table: 2, key: keys[2], kind: 'bill' });
+    const before = await state(s), sub = before.bills[2].sub, ids = before.tickets.filter(k => k.table === 2).map(k => k.id);
+    const r = await s.call('POST', '/api/table/move', { from: 2, to: 7, expectedSub: sub });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const st = await state(s);
+    assert.ok(!st.bills[2] && st.bills[7].sub === sub, 'ยอดย้ายไปโต๊ะใหม่เท่าเดิม');
+    assert.deepEqual(st.tickets.filter(k => k.table === 7).map(k => k.id), ids);
+    assert.ok(!st.calls[2] && st.calls[7] && st.calls[7].kind === 'bill', 'การขอบิลไปด้วย');
+    assert.ok(!st.seated[2] && st.seated[7], 'สถานะเปิดโต๊ะไปด้วย โต๊ะเดิมปิด');
+    const ev = readLog(s.dir, 'audit').find(e => e.action === 'table.moved');
+    assert.deepEqual([ev.from, ev.to, ev.merge, ev.tickets, ev.value], [2, 7, false, ids, sub]);
+    await s.stop();
+  });
+
+  test('ปลายทางมีออเดอร์: ต้องยืนยันรวม (409 need_merge) รวมแล้วเป็นบิลเดียว ปิดบิลครั้งเดียวได้ยอดรวม', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await order(s, 3, [{ id: 1, qty: 1 }]);
+    await order(s, 4, [{ id: 2, qty: 2 }]);
+    const st0 = await state(s), a = st0.bills[3].sub, b = st0.bills[4].sub;
+    const r = await s.call('POST', '/api/table/move', { from: 3, to: 4, expectedSub: a });
+    assert.equal(r.status, 409); assert.equal(r.json.code, 'need_merge');
+    assert.ok((await state(s)).bills[3], 'ยังไม่ยืนยัน ไม่มีอะไรย้าย');
+    assert.equal((await s.call('POST', '/api/table/move', { from: 3, to: 4, expectedSub: a, merge: true })).status, 200);
+    const st = await state(s);
+    assert.ok(!st.bills[3] && st.bills[4].sub === Math.round((a + b) * 100) / 100);
+    assert.equal(readLog(s.dir, 'audit').find(e => e.action === 'table.moved').merge, true);
+    assert.equal((await s.call('POST', '/api/pay', { table: 4, expectedSub: a + b, method: 'cash' })).status, 200);
+    await s.stop();
+  });
+
+  test('ลูกค้าสั่งเพิ่มระหว่างย้าย: expectedSub ไม่ตรง = 409 ไม่มีอะไรย้าย · ข้อมูลผิด = 400', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await order(s, 5, [{ id: 1, qty: 1 }]);
+    const seen = (await state(s)).bills[5].sub;
+    await order(s, 5, [{ id: 2, qty: 1 }]);
+    assert.equal((await s.call('POST', '/api/table/move', { from: 5, to: 6, expectedSub: seen })).status, 409);
+    assert.ok((await state(s)).bills[5] && !(await state(s)).bills[6]);
+    const st = async b => (await s.call('POST', '/api/table/move', b)).status;
+    assert.equal(await st({ from: 5, to: 5, expectedSub: 0 }), 400, 'ย้ายไปโต๊ะเดิม');
+    assert.equal(await st({ from: 5, to: 99, expectedSub: 0 }), 400, 'ไม่มีโต๊ะนี้');
+    assert.equal(await st({ from: 8, to: 9, expectedSub: 0 }), 409, 'โต๊ะต้นทางไม่มีอะไรให้ย้าย');
+    await s.stop();
+  });
+
+  test('พนักงานเสิร์ฟย้าย/รวมโต๊ะได้ ครัวไม่ได้', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    await s.call('POST', '/api/staff', { name: 'เสิร์ฟ', role: 'waiter', pin: '520033' });
+    const w = await device(s, '520033'), kc = await device(s, '520022');
+    await order(s, 1, [{ id: 1, qty: 1 }]);
+    const sub = (await state(s)).bills[1].sub;
+    assert.equal((await kc.call('POST', '/api/table/move', { from: 1, to: 2, expectedSub: sub })).status, 403);
+    assert.equal((await w.call('POST', '/api/table/move', { from: 1, to: 2, expectedSub: sub })).status, 200);
+    await s.stop();
+  });
+});

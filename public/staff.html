@@ -334,6 +334,17 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
   </form>
 </dialog>
 <!-- ยกเลิกออเดอร์: อยู่นอกส่วนที่ re-render เหตุผลที่พิมพ์ค้างไว้จึงไม่หายเมื่อมีออเดอร์ใหม่เข้า -->
+<dialog class="dlg" id="move-dlg" aria-labelledby="move-h">
+  <form method="dialog" id="move-form">
+    <h3 id="move-h">ย้ายโต๊ะ</h3>
+    <p class="muted small" id="move-sub" style="margin:0 0 8px"></p>
+    <label class="small" for="move-to">ย้ายไปโต๊ะ</label>
+    <select class="in" id="move-to"></select>
+    <p class="muted small" style="margin:8px 0 0">ออเดอร์ การเรียกพนักงาน/ขอบิล และสถานะเปิดโต๊ะย้ายไปด้วย ถ้าโต๊ะปลายทางมีออเดอร์อยู่ ระบบจะถามก่อนรวมเป็นบิลเดียว · ลูกค้าที่จะสั่งเพิ่มให้สแกน QR ของโต๊ะใหม่</p>
+    <div class="err" id="move-err" role="alert"></div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" type="button" id="move-cancel">ยกเลิก</button><button class="btn primary" id="move-ok">ย้ายโต๊ะ</button></div>
+  </form>
+</dialog>
 <dialog class="dlg" id="void-dlg" aria-labelledby="void-h">
   <form method="dialog" id="void-form">
     <h3 id="void-h">ยกเลิกออเดอร์</h3>
@@ -531,6 +542,45 @@ $('#void-form').addEventListener('submit',function(e){
     if(r.status===404){$('#void-dlg').close();toast(r.j.error);load();}
   },function(){$('#void-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
 });
+
+/* ---------- ย้ายโต๊ะ / รวมโต๊ะ ----------
+   ส่งยอดที่เห็นตอนเปิดหน้าต่าง (expectedSub) ลูกค้าสั่งเพิ่มระหว่างนั้นเซิร์ฟเวอร์ตอบ 409
+   ปลายทางมีออเดอร์ = 409 need_merge → ถามยืนยันรวมบิลแล้วส่งซ้ำพร้อม merge */
+var moveFrom=null,moveSub=0;
+function openMove(t){
+  var d=S.d;moveFrom=t;moveSub=d.bills[t]?d.bills[t].sub:0;
+  $('#move-h').textContent='ย้ายโต๊ะ '+t;
+  $('#move-sub').textContent=d.bills[t]?'ยอดตอนนี้ '+baht(moveSub):'ยังไม่มีออเดอร์';
+  var sel=$('#move-to');sel.textContent='';
+  for(var i=1;i<=d.settings.tables;i++){
+    if(i===t)continue;
+    var o=document.createElement('option');o.value=i;
+    o.textContent='โต๊ะ '+i+(d.bills[i]?' · มีออเดอร์ '+baht(d.bills[i].sub)+' (รวมบิล)':' · ว่าง');
+    sel.appendChild(o);
+  }
+  var free=[].slice.call(sel.options).filter(function(o){return !d.bills[+o.value];})[0];if(free)sel.value=free.value;
+  $('#move-err').textContent='';$('#move-ok').disabled=false;
+  $('#move-dlg').showModal();sel.focus();
+}
+function doMove(merge){
+  var to=+$('#move-to').value,err=$('#move-err');
+  $('#move-ok').disabled=true;err.textContent='';
+  return api('/api/table/move',{from:moveFrom,to:to,expectedSub:moveSub,merge:!!merge}).then(function(r){
+    $('#move-ok').disabled=false;
+    if(r.ok){$('#move-dlg').close();S.sel=to;toast((r.j.merge?'รวมโต๊ะ '+moveFrom+' เข้ากับโต๊ะ ':'ย้ายโต๊ะ '+moveFrom+' ไปโต๊ะ ')+to+' แล้ว');load();return;}
+    if(r.j.code==='need_merge'){
+      $('#move-dlg').close();
+      return confirmBox({title:'รวมโต๊ะ '+moveFrom+' เข้ากับโต๊ะ '+to+'?',lines:['โต๊ะ '+to+' มีออเดอร์อยู่แล้ว รายการของทั้งสองโต๊ะจะรวมเป็นบิลเดียว','แยกกลับทีหลังไม่ได้ ถ้าจะแยกจ่ายให้ปิดบิลโต๊ะ '+moveFrom+' ก่อน'],ok:'รวมเป็นบิลเดียว',no:'ไม่รวม'})
+        .then(function(ok){if(ok)return doMove(true);});
+    }
+    err.textContent=r.j.error||'ย้ายโต๊ะไม่สำเร็จ';
+    if(!$('#move-dlg').open)toast(err.textContent);      // ยืนยันรวมจากหน้าต่างยืนยันแล้วล้ม: หน้าต่างย้ายปิดไปแล้ว
+    if(r.status===409)load();
+    if(r.status===401){$('#move-dlg').close();showLogin();}
+  },function(){$('#move-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+}
+$('#move-form').addEventListener('submit',function(e){e.preventDefault();doMove(false);});
+$('#move-cancel').addEventListener('click',function(){$('#move-dlg').close();});
 
 /* ---------- PromptPay ---------- */
 function crc16(s){var c=0xFFFF;for(var i=0;i<s.length;i++){c^=s.charCodeAt(i)<<8;for(var j=0;j<8;j++){c=(c&0x8000)?((c<<1)^0x1021):(c<<1);c&=0xFFFF;}}return c.toString(16).toUpperCase().padStart(4,'0');}
@@ -836,7 +886,7 @@ function renderTables(){
   if(!S.sel){h+='<div class="panel empty">เลือกโต๊ะด้านบน</div>';$('#v-tables').innerHTML=h;return;}
   var t2=S.sel,tk2=tableTickets(t2),bill=d.bills[t2],call2=d.calls[t2];
   var SL={new:['รอทำ','warn'],cooking:['กำลังทำ','acc'],ready:['พร้อมเสิร์ฟ','ok'],served:['เสิร์ฟแล้ว','']};
-  h+='<div class="detail"><div class="stack np"><div class="panel"><div class="sec-title"><h3>โต๊ะ '+t2+'</h3><a class="btn sm" href="'+esc(staffOrderUrl(t2))+'" target="_blank" rel="noopener">สั่งแทนลูกค้า</a></div>';
+  h+='<div class="detail"><div class="stack np"><div class="panel"><div class="sec-title"><h3>โต๊ะ '+t2+'</h3><span class="row" style="gap:6px;flex-wrap:wrap"><a class="btn sm" href="'+esc(staffOrderUrl(t2))+'" target="_blank" rel="noopener">สั่งแทนลูกค้า</a>'+(front()&&(tk2.length||call2||(d.seated&&d.seated[t2]))?'<button class="btn sm" data-a="movetable" data-id="'+t2+'">ย้าย/รวมโต๊ะ</button>':'')+'</span></div>';
   if(call2)h+='<div class="row" style="margin-bottom:10px"><span class="pill crit">'+(call2.kind==='bill'?'ลูกค้าขอเช็คบิล':'ลูกค้าเรียกพนักงาน')+'</span><button class="btn sm" data-a="clearcall" data-id="'+t2+'">รับทราบ</button></div>';
   if(d.settings.requireSeat&&!tk2.length){
     // โหมดต้องเปิดโต๊ะ: QR โต๊ะว่างสั่งไม่ได้จนกว่าจะกดเปิด
@@ -1485,6 +1535,7 @@ document.addEventListener('click',function(e){
   else if(a==='adv'){act('/api/ticket',{id:id,from:b.dataset.from,status:b.dataset.st},b.dataset.st==='ready'?'แจ้งพนักงานไปรับอาหารแล้ว':null);}
   else if(a==='void'){openVoid(id);}
   else if(a==='voiditem'){openVoid(id,+b.dataset.i);}
+  else if(a==='movetable'){openMove(id);}
   else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}
   else if(a==='bsvc'){S.bSvc=!S.bSvc;render();}
