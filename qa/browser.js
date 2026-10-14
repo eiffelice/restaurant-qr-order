@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1221,6 +1221,43 @@ const cases = {
     await until(async () => !(await s.call('GET', '/api/state')).json.bills[5], 6000).catch(() => {});
     const st2 = (await s.call('GET', '/api/state')).json;
     ok(!st2.bills[5] && st2.tickets.filter(k => k.table === 3).length === 2, 'ยืนยันรวม: โต๊ะ 3 มีออเดอร์ของทั้งสองโต๊ะในบิลเดียว');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: รับบัตร และแบ่งจ่ายหลายช่องทาง: บอกยอดที่ขาด/เกิน ไม่ครบยอดกดรับเงินไม่ได้ ใบเสร็จแสดงทุกช่องทาง สรุปยอดมีบัตร/อื่นๆ */
+  async splitpay(browser) {
+    const ok = checker('splitpay'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] }, { staff: false });                 // 60
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] }, { staff: false }); // 200
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('[data-a="pay"][data-m="card"]');
+    await p.click('[data-a="pay"][data-m="card"]'); await p.click('[data-a="pay"][data-m="card"]');
+    await until(async () => (await s.call('GET', '/api/report')).json.card > 0, 6000).catch(() => {});
+    ok((await s.call('GET', '/api/report')).json.card === 66, 'รับบัตร (กดสองครั้งแบบปุ่มเดิม) ยอด 60 + ค่าบริการ 6', (await s.call('GET', '/api/report')).json.card);
+    await p.click('[data-a="donesale"]').catch(() => {});
+    await p.click('[data-a="sel"][data-id="2"]'); await p.waitForSelector('[data-a="split"]');
+    await p.click('[data-a="split"]'); await p.waitForSelector('#split-dlg[open]');
+    ok(/220/.test(await p.textContent('#split-due')), 'หน้าต่างแบ่งจ่ายบอกยอดที่ต้องชำระ (200 + ค่าบริการ 20)');
+    await p.fill('#sp-cash', '100');
+    ok(/ยังขาด ฿120/.test(await p.textContent('#split-left')), 'ใส่บางส่วน: บอกยอดที่ยังขาด');
+    await p.click('#split-ok'); await sleep(300);
+    ok(await p.isVisible('#split-dlg') && /ไม่เท่ากับยอด/.test(await p.textContent('#split-err')), 'ยังไม่ครบยอด: รับเงินไม่ได้ บอกเหตุผล');
+    await p.fill('#sp-transfer', '70'); await p.fill('#sp-other', '50'); await p.fill('#sp-note', 'LINE MAN'); await p.fill('#sp-recv', '500');
+    ok(/ครบยอดพอดี · ทอน ฿400/.test(await p.textContent('#split-left')), 'ครบยอด: บอกเงินทอนจากส่วนเงินสด', await p.textContent('#split-left'));
+    await p.click('#split-ok');
+    await p.waitForSelector('#split-dlg', { state: 'hidden', timeout: 6000 }).catch(() => {});
+    await p.waitForSelector('[data-a="donesale"]', { timeout: 6000 }).catch(() => {});
+    const rc = await p.textContent('#v-tables .receipt');
+    ok(/หลายช่องทาง/.test(rc) && /LINE MAN/.test(rc) && /เงินทอน/.test(rc) && /฿400/.test(rc), 'ใบเสร็จ: ชำระโดยหลายช่องทาง แยกยอดแต่ละช่องทาง และเงินทอน');
+    const r = (await s.call('GET', '/api/report')).json;
+    ok(r.cash === 100 && r.transfer === 70 && r.other === 50 && r.card === 66, 'สรุปยอดแยกทุกช่องทางถูกต้อง', r);
+    await tab(p, 'report'); await p.waitForSelector('.kpis');
+    ok(/บัตร/.test(await p.textContent('.kpis')) && /ช่องทางอื่น/.test(await p.textContent('.kpis')) && /หลายช่องทาง/.test(await p.textContent('#v-report')), 'หน้าสรุปยอดมีบัตร/ช่องทางอื่น และรายการบิลบอกช่องทาง');
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await s.stop(); rmrf(app.base);

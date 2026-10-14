@@ -122,6 +122,7 @@ button.pill{border:0}
 .payqr-box .stack{flex:1;min-width:14rem}
 .pay-wrap{max-width:22rem;margin:12px auto 0;width:100%;display:flex;flex-direction:column;gap:8px}
 .pay-two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.split-rows{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center}
 .cash{display:flex;flex-direction:column;gap:8px}
 .cash .q{display:flex;gap:6px;flex-wrap:wrap}
 .cash-out{font-size:1.5rem;font-weight:700;line-height:1.3}
@@ -339,6 +340,23 @@ dialog.dlg::backdrop{background:rgba(0,0,0,.5)}
   </form>
 </dialog>
 <!-- ยกเลิกออเดอร์: อยู่นอกส่วนที่ re-render เหตุผลที่พิมพ์ค้างไว้จึงไม่หายเมื่อมีออเดอร์ใหม่เข้า -->
+<dialog class="dlg" id="split-dlg" aria-labelledby="split-h">
+  <form method="dialog" id="split-form">
+    <h3 id="split-h">แบ่งจ่าย</h3>
+    <p class="small" style="margin:0 0 8px">ยอดที่ต้องชำระ <b id="split-due"></b></p>
+    <div class="split-rows">
+      <label for="sp-cash">เงินสด</label><input class="in" id="sp-cash" inputmode="decimal" autocomplete="off">
+      <label for="sp-transfer">โอน / QR</label><input class="in" id="sp-transfer" inputmode="decimal" autocomplete="off">
+      <label for="sp-card">บัตร</label><input class="in" id="sp-card" inputmode="decimal" autocomplete="off">
+      <label for="sp-other">อื่นๆ</label><input class="in" id="sp-other" inputmode="decimal" autocomplete="off">
+      <label for="sp-note">ชื่อช่องทางอื่น</label><input class="in" id="sp-note" maxlength="30" placeholder="เช่น LINE MAN, Grab, คูปอง" autocomplete="off">
+    </div>
+    <p class="small" id="split-left" aria-live="polite" style="margin:8px 0"></p>
+    <div id="sp-recv-row"><label class="small" for="sp-recv">รับเงินสดมา (ถ้าต้องทอน)</label><input class="in" id="sp-recv" inputmode="decimal" autocomplete="off"></div>
+    <div class="err" id="split-err" role="alert"></div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" type="button" id="split-cancel">ยกเลิก</button><button class="btn primary" id="split-ok">รับเงิน</button></div>
+  </form>
+</dialog>
 <dialog class="dlg" id="move-dlg" aria-labelledby="move-h">
   <form method="dialog" id="move-form">
     <h3 id="move-h">ย้ายโต๊ะ</h3>
@@ -560,6 +578,57 @@ function printKitchen(id){
     (k.memo?'<hr><div class="km">'+esc(k.memo)+'</div>':'');
   printMode('receipt',null,el);
 }
+
+/* ---------- แบ่งจ่าย / ช่องทางอื่น ----------
+   ยอดที่เห็นตอนเปิด (expectedSub) ส่งไปตรวจ ลูกค้าสั่งเพิ่มระหว่างนั้นเซิร์ฟเวอร์ตอบ 409 (กฎข้อ 2, 22) รวมทุกช่องต้องเท่ายอดพอดี */
+var split=null;
+var SPM=['cash','transfer','card','other'];
+function openSplit(t,sub,due){
+  split={t:t,sub:sub,due:due};
+  $('#split-form').reset();
+  $('#split-h').textContent='แบ่งจ่าย / ช่องทางอื่น โต๊ะ '+t;
+  $('#split-due').textContent=baht(due);
+  $('#split-err').textContent='';$('#split-ok').disabled=false;
+  splitUpdate();
+  $('#split-dlg').showModal();$('#sp-cash').focus();
+}
+function splitPays(){
+  return SPM.map(function(m){var v=$('#sp-'+m).value.trim();return {method:m,amount:v===''?0:Math.round(+v*100)/100,raw:v};});
+}
+function splitUpdate(){
+  if(!split)return;
+  var p=splitPays(),sum=round2(p.reduce(function(a,x){return a+(isFinite(x.amount)?x.amount:0);},0)),left=round2(split.due-sum),cash=p[0].amount,recv=$('#sp-recv').value.trim();
+  var t=left>0?'ยังขาด '+baht(left):left<0?'เกินยอด '+baht(-left):'ครบยอดพอดี';
+  if(cash>0&&recv!==''&&+recv>=cash)t+=' · ทอน '+baht(round2(+recv-cash));
+  $('#split-left').textContent=t;
+  $('#sp-recv-row').hidden=!(cash>0);
+}
+document.addEventListener('input',function(e){if(e.target.closest&&e.target.closest('#split-form'))splitUpdate();});
+$('#split-cancel').addEventListener('click',function(){$('#split-dlg').close();split=null;});
+$('#split-form').addEventListener('submit',function(e){
+  e.preventDefault();if(!split)return;
+  var err=$('#split-err'),p=splitPays();
+  if(p.some(function(x){return x.raw!==''&&!(x.amount>0);})){err.textContent='ยอดแต่ละช่องทางต้องเป็นตัวเลขมากกว่า 0 หรือเว้นว่าง';return;}
+  var pays=p.filter(function(x){return x.amount>0;}).map(function(x){var o={method:x.method,amount:x.amount};if(x.method==='other'&&$('#sp-note').value.trim())o.note=$('#sp-note').value.trim();return o;});
+  if(!pays.length){err.textContent='ใส่ยอดอย่างน้อยหนึ่งช่องทาง';return;}
+  var sum=round2(pays.reduce(function(a,x){return a+x.amount;},0));
+  if(sum!==split.due){err.textContent='รวม '+baht(sum)+' ไม่เท่ากับยอด '+baht(split.due);return;}
+  var body={table:split.t,svc:S.bSvc,vat:S.bVat,payments:pays,expectedSub:split.sub},recv=$('#sp-recv').value.trim();
+  if(pays[0].method==='cash'&&recv!==''){if(!(+recv>=pays[0].amount)){err.textContent='เงินสดที่รับมาน้อยกว่าส่วนที่จ่ายเงินสด';return;}body.received=+recv;}
+  $('#split-ok').disabled=true;err.textContent='';
+  api('/api/pay',body).then(function(r){
+    $('#split-ok').disabled=false;
+    if(r.ok){
+      var t=split.t;$('#split-dlg').close();split=null;
+      S.lastCash=r.j.received!=null?{received:r.j.received,change:r.j.change}:null;
+      toast('ปิดโต๊ะ '+t+' แล้ว รับ '+baht(r.j.sale.total)+(S.lastCash?' ทอน '+baht(S.lastCash.change):''));
+      S.sel=null;S.lastSale=r.j.sale;render();return;
+    }
+    err.textContent=r.j.error||'รับเงินไม่สำเร็จ';
+    if(r.status===409){$('#split-dlg').close();split=null;toast(r.j.error);load();}
+    if(r.status===401){$('#split-dlg').close();showLogin();}
+  },function(){$('#split-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+});
 
 /* ---------- ย้ายโต๊ะ / รวมโต๊ะ ----------
    ส่งยอดที่เห็นตอนเปิดหน้าต่าง (expectedSub) ลูกค้าสั่งเพิ่มระหว่างนั้นเซิร์ฟเวอร์ตอบ 409
@@ -837,12 +906,13 @@ function receiptHtml(o){
   if(s.phone)h+='<div class="sub">โทร '+esc(s.phone)+'</div>';
   if(s.taxId)h+='<div class="sub">เลขประจำตัวผู้เสียภาษี '+esc(s.taxId)+'</div>';
   h+='<div class="doc">'+o.title+'</div><hr>';
-  h+='<div class="meta"><span>'+(o.no?'เลขที่ '+o.no:'ยังไม่ได้ชำระเงิน')+'</span><span>โต๊ะ '+o.table+'</span></div><div class="meta"><span>'+fmtDate(o.at)+'</span>'+(o.method?'<span>ชำระโดย '+(o.method==='transfer'?'โอน/QR':'เงินสด')+'</span>':'')+'</div><hr>';
+  h+='<div class="meta"><span>'+(o.no?'เลขที่ '+o.no:'ยังไม่ได้ชำระเงิน')+'</span><span>โต๊ะ '+o.table+'</span></div><div class="meta"><span>'+fmtDate(o.at)+'</span>'+(o.method?'<span>ชำระโดย '+esc(o.payLabel||(o.method==='transfer'?'โอน/QR':'เงินสด'))+'</span>':'')+'</div><hr>';
   h+='<table>'+o.lines.map(function(l){return '<tr><td class="q">'+l.qty+'×</td><td>'+esc(l.name)+'</td><td class="a">'+baht(l.price*l.qty)+'</td></tr>';}).join('')+'</table><hr>';
   h+='<table><tr><td>รวมค่าอาหาร</td><td class="a">'+baht(o.sub)+'</td></tr>';
   if(o.svc)h+='<tr><td>ค่าบริการ 10%</td><td class="a">'+baht(o.svc)+'</td></tr>';
   if(o.vat)h+='<tr><td>VAT 7%</td><td class="a">'+baht(o.vat)+'</td></tr>';
   h+='<tr class="grand"><td>รวมสุทธิ</td><td class="a">'+baht(o.total)+'</td></tr>';
+  if(o.pays&&o.pays.length>1)h+=o.pays.map(function(p){return '<tr><td>'+esc(PAYN[p.method]+(p.note?' ('+p.note+')':''))+'</td><td class="a">'+baht(p.amount)+'</td></tr>';}).join('');
   if(o.received!=null)h+='<tr><td>รับเงิน</td><td class="a">'+baht(o.received)+'</td></tr><tr><td>เงินทอน</td><td class="a">'+baht(o.change)+'</td></tr>';
   h+='</table>';
   if(o.qr){
@@ -858,8 +928,12 @@ function receiptHtml(o){
   if(s.footer)h+='<hr><div class="sub">'+esc(s.footer)+'</div>';
   return h;
 }
+var PAYN={cash:'เงินสด',transfer:'โอน/QR',card:'บัตร',other:'อื่นๆ'};
+// ช่องทางชำระของบิล (บิลเก่าไม่มี payments = ทั้งยอดด้วย method เดียว เหมือน store.paymentsOf ที่เซิร์ฟเวอร์)
+function paysOf(sale){return sale.payments&&sale.payments.length?sale.payments:[{method:PAYN[sale.method]?sale.method:'cash',amount:sale.total}];}
+function payLabel(sale){var p=paysOf(sale);return p.length>1?'หลายช่องทาง':PAYN[p[0].method]+(p[0].note?' ('+p[0].note+')':'');}
 function saleReceipt(sale,cash){
-  return receiptHtml({title:'ใบเสร็จรับเงิน',no:billNo(sale.no,sale.at),at:sale.at,table:sale.table,lines:sale.items,sub:sale.sub,svc:sale.svc,vat:sale.vat,total:sale.total,method:sale.method,
+  return receiptHtml({title:'ใบเสร็จรับเงิน',no:billNo(sale.no,sale.at),at:sale.at,table:sale.table,lines:sale.items,sub:sale.sub,svc:sale.svc,vat:sale.vat,total:sale.total,method:sale.method,pays:paysOf(sale),payLabel:payLabel(sale),
     received:cash?cash.received:null,change:cash?cash.change:null});
 }
 /* เงินทอน: คิดในหน้าจอ เซิร์ฟเวอร์ตรวจซ้ำและบันทึกลง audit log */
@@ -943,10 +1017,11 @@ function renderTables(){
         '<div id="cash-change" aria-live="polite">'+cashInfo(c.total)+'</div></div>';
     }
     h+='<div class="pay-two">';
-    [['cash','รับเงินสด'],['transfer','รับโอน / QR']].forEach(function(p){
+    [['cash','รับเงินสด'],['transfer','รับโอน / QR'],['card','รับบัตร']].forEach(function(p){
       var key='pay:'+t2+':'+p[0];
       h+='<button class="btn '+(armed(key)?'danger':'primary')+'" data-a="pay" data-id="'+t2+'" data-m="'+p[0]+'" data-sub="'+bill.sub+'" data-due="'+c.total+'"'+(p[0]==='cash'&&cashArmed&&cashState(c.total).short?' disabled':'')+'>'+(armed(key)?'ยืนยัน '+baht(c.total):p[1])+'</button>';
     });
+    h+='<button class="btn" data-a="split" data-id="'+t2+'" data-sub="'+bill.sub+'" data-due="'+c.total+'">แบ่งจ่าย / อื่นๆ</button>';
     h+='</div></div></div>';
     }
   } else {
@@ -1012,6 +1087,8 @@ function renderReport(){
   var h='<div class="kpis"><div class="kpi"><div class="l">ยอดขายวันนี้</div><div class="v">'+baht(r.total)+'</div><div class="x">'+r.count+' บิล · เฉลี่ย '+baht(r.avg)+'</div></div>'+
     '<div class="kpi"><div class="l">เงินสด</div><div class="v">'+baht(r.cash)+'</div><div class="x">ใช้นับเงินในลิ้นชักตอนปิดร้าน</div></div>'+
     '<div class="kpi"><div class="l">โอน / QR</div><div class="v">'+baht(r.transfer)+'</div><div class="x">ตรวจกับยอดเข้าบัญชี</div></div>'+
+    (r.card?'<div class="kpi"><div class="l">บัตร</div><div class="v">'+baht(r.card)+'</div><div class="x">ตรวจกับสลิปเครื่องรูดบัตร</div></div>':'')+
+    (r.other?'<div class="kpi"><div class="l">ช่องทางอื่น</div><div class="v">'+baht(r.other)+'</div><div class="x">เช่น แอปเดลิเวอรี คูปอง</div></div>':'')+
     '<div class="kpi"><div class="l">รอชำระ ('+r.openTables+' โต๊ะ)</div><div class="v">'+baht(r.pending)+'</div><div class="x">ยังไม่รวมค่าบริการ/VAT</div></div></div>';
   h+='<div class="two"><div class="panel"><div class="sec-title"><h3>เมนูขายดีวันนี้</h3><span class="muted" style="font-size:.85rem">จำนวนที่ขายได้</span></div>';
   if(!r.top.length)h+='<div class="muted">ยังไม่มีบิลที่ชำระวันนี้</div>';
@@ -1023,7 +1100,7 @@ function renderReport(){
   h+='<div class="panel"><div class="sec-title"><h3>บิลวันนี้</h3>'+(isOwner()?'<a class="btn sm" href="/api/export.csv?month='+month+'">ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a>':'')+'</div>';
   if(!r.bills.length)h+='<div class="muted">ยังไม่มีบิล</div>';
   else h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>เลขที่</th><th>เวลา</th><th>โต๊ะ</th><th>ชำระโดย</th><th class="r">ยอด</th><th></th></tr></thead><tbody>'+r.bills.map(function(b){
-    return '<tr><td>'+billNo(b.no,b.at)+'</td><td>'+new Date(b.at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+'</td><td>'+b.table+'</td><td>'+(b.method==='transfer'?'โอน/QR':'เงินสด')+'</td><td class="r">'+baht(b.total)+'</td><td class="r"><button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบเสร็จ</button></td></tr>';
+    return '<tr><td>'+billNo(b.no,b.at)+'</td><td>'+new Date(b.at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+'</td><td>'+b.table+'</td><td>'+esc(payLabel(b))+'</td><td class="r">'+baht(b.total)+'</td><td class="r"><button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบเสร็จ</button></td></tr>';
   }).join('')+'</tbody></table></div>';
   h+='</div>';
   $('#v-report').innerHTML=h;
@@ -1554,6 +1631,7 @@ document.addEventListener('click',function(e){
   else if(a==='void'){openVoid(id);}
   else if(a==='voiditem'){openVoid(id,+b.dataset.i);}
   else if(a==='movetable'){openMove(id);}
+  else if(a==='split'){disarm();openSplit(id,+b.dataset.sub,+b.dataset.due);}
   else if(a==='kprint'){printKitchen(id);}
   else if(a==='sel'){S.lastSale=null;S.sel=S.sel===id?null:id;S.bSvc=S.d.settings.svc;S.bVat=S.d.settings.vat;render();}
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}

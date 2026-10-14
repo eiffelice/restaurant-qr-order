@@ -2006,3 +2006,80 @@ describe('POS: ย้ายโต๊ะ / รวมโต๊ะ', () => {
     await s.stop();
   });
 });
+
+describe('POS: ชำระด้วยบัตร/ช่องทางอื่น และแบ่งจ่ายหลายวิธี', () => {
+  const setup = async (s, t, items) => {
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: t, key: keys[t], items });
+    return (await s.call('GET', '/api/state')).json.bills[t].sub;
+  };
+
+  test('จ่ายด้วยบัตรวิธีเดียว: บิลเก็บ method + payments + คนรับเงิน และอยู่ใน sales/', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await withStaff(s);
+    const c = await device(s, '520011');
+    const sub = await setup(s, 1, [{ id: 1, qty: 2 }]);
+    const r = await c.call('POST', '/api/pay', { table: 1, expectedSub: sub, method: 'card' });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.sale.method, 'card');
+    assert.deepEqual(r.json.sale.payments, [{ method: 'card', amount: r.json.sale.total }]);
+    assert.deepEqual(r.json.sale.cashier, { id: c.me.id, name: 'สมใจ' });
+    const line = JSON.parse(fs.readFileSync(path.join(s.dir, 'sales', fs.readdirSync(path.join(s.dir, 'sales'))[0]), 'utf8').trim().split('\n').pop());
+    assert.deepEqual(line.payments, r.json.sale.payments, 'ช่องทางชำระอยู่ในยอดขายถาวร');
+    await s.stop();
+  });
+
+  test('แบ่งจ่าย เงินสด + โอน + อื่นๆ (มีชื่อช่องทาง): รวมต้องเท่ายอดพอดี เงินทอนคิดจากส่วนเงินสดเท่านั้น', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const sub = await setup(s, 2, [{ id: 1, qty: 2 }, { id: 2, qty: 1 }]);    // 60*2 + 80 = 200
+    const total = sub + Math.round(sub * 0.1);                                  // ค่าบริการ 10% เริ่มต้น
+    const pays = [{ method: 'cash', amount: 100 }, { method: 'transfer', amount: total - 150 }, { method: 'other', amount: 50, note: 'LINE MAN' }];
+    const r = await s.call('POST', '/api/pay', { table: 2, expectedSub: sub, svc: true, payments: pays, received: 500 });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.sale.method, 'mixed');
+    assert.deepEqual(r.json.sale.payments, pays);
+    assert.deepEqual([r.json.received, r.json.change], [500, 400], 'รับเงินสด 500 สำหรับส่วนเงินสด 100 ทอน 400');
+    const ev = readLog(s.dir, 'audit').find(e => e.action === 'bill.paid');
+    assert.deepEqual(ev.payments, pays);
+    await s.stop();
+  });
+
+  test('แบ่งจ่ายผิด: รวมไม่เท่ายอด / วิธีไม่รู้จัก / ยอด 0 หรือติดลบ / วิธีซ้ำ / เงินสดที่รับน้อยกว่าส่วนเงินสด = 400 และบิลยังไม่ปิด', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const sub = await setup(s, 3, [{ id: 1, qty: 1 }]);                       // 60 ไม่มีค่าบริการ
+    const bad = async (payments, extra) => (await s.call('POST', '/api/pay', Object.assign({ table: 3, expectedSub: sub, payments }, extra || {}))).status;
+    assert.equal(await bad([{ method: 'cash', amount: 30 }, { method: 'card', amount: 20 }]), 400, 'รวม 50 ไม่เท่า 60');
+    assert.equal(await bad([{ method: 'bitcoin', amount: 60 }]), 400);
+    assert.equal(await bad([{ method: 'cash', amount: 0 }, { method: 'card', amount: 60 }]), 400);
+    assert.equal(await bad([{ method: 'cash', amount: -10 }, { method: 'card', amount: 70 }]), 400);
+    assert.equal(await bad([{ method: 'cash', amount: 30 }, { method: 'cash', amount: 30 }]), 400);
+    assert.equal(await bad([{ method: 'cash', amount: 30 }, { method: 'card', amount: 30 }], { received: 20 }), 400);
+    assert.equal(await bad([]), 400);
+    assert.ok((await s.call('GET', '/api/state')).json.bills[3], 'บิลยังเปิดอยู่');
+    await s.stop();
+  });
+
+  test('สรุปยอดแยกทุกช่องทาง (บิลแบ่งจ่ายนับแยกส่วน) และบิลแบบเดิมที่ไม่มี payments ยังนับถูก', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.login();
+    let sub = await setup(s, 1, [{ id: 1, qty: 1 }]);
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: sub, method: 'transfer' });
+    await s.stop();
+    // บิลจากเวอร์ชันเก่า: มีแค่ method
+    const f = path.join(dir, 'data.json'), d = JSON.parse(fs.readFileSync(f, 'utf8'));
+    delete d.sales[0].payments; delete d.sales[0].cashier;
+    fs.writeFileSync(f, JSON.stringify(d));
+    s = start(dir); await s.ready; await s.login();
+    sub = await setup(s, 2, [{ id: 2, qty: 1 }]);                               // 80
+    await s.call('POST', '/api/pay', { table: 2, expectedSub: sub, payments: [{ method: 'cash', amount: 30 }, { method: 'card', amount: 50 }] });
+    sub = await setup(s, 3, [{ id: 1, qty: 1 }]);                               // 60
+    await s.call('POST', '/api/pay', { table: 3, expectedSub: sub, payments: [{ method: 'other', amount: 60, note: 'Grab' }] });
+    const r = (await s.call('GET', '/api/report')).json;
+    assert.deepEqual([r.cash, r.transfer, r.card, r.other, r.total], [30, 60, 50, 60, 200]);
+    const csv = (await s.call('GET', '/api/export.csv')).text.split('\r\n');
+    assert.match(csv[0], /"ชำระโดย","เงินสด","โอน\/QR","บัตร","อื่นๆ","รับเงินโดย","รายการ"$/, 'คอลัมน์ใหม่อยู่ก่อนรายการ คอลัมน์เดิมไม่เลื่อน');
+    assert.match(csv[2], /"หลายช่องทาง","30","0","50","0"/);
+    assert.match(csv[3], /"อื่นๆ \(Grab\)","0","0","0","60"/);
+    await s.stop();
+  });
+});
