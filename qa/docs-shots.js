@@ -1,13 +1,13 @@
 'use strict';
 /* ภาพหน้าจอสำหรับคู่มือ (docs/GUIDE.md) ข้อมูลตัวอย่างสมจริง: ร้าน "ครัวป้าแดง" มีรูปเมนู โลโก้ ออเดอร์ บิล ยอดขาย
-   รัน: node qa/docs-shots.js   ภาพไปที่ docs/screenshots/ (เขียนทับของเดิม) */
+   รัน: node qa/docs-shots.js   ภาพไปที่ docs/screenshots/ (เขียนทับของเดิม)
+   SHOTS_ONLY=staff ถ่ายเฉพาะหน้าพนักงาน (s*.png) ภาพหน้าลูกค้า (c*.png) ไม่ถูกเขียนทับ */
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, rmrf, PIN, fakePhoto, fakeCover } = require('./lib');
+const { makeApp, start, sleep, rmrf, PIN, fakePhoto, fakeCover, browserOpts } = require('./lib');
 
 const OUT = path.join(__dirname, '..', 'docs', 'screenshots');
-const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
 // รูปอาหาร/โลโก้/ภาพพื้นหลังจริง: ไฟล์ m<id>-*.jpg, logo-*, cover-* ในโฟลเดอร์นี้ (ค่าเริ่มต้น images/ ของร้านบนเครื่องนี้)
@@ -20,12 +20,13 @@ function photo(re) {
   } catch (e) { return null; }
 }
 const mime = b => b[0] === 0x89 ? 'image/png' : b[0] === 0xFF ? 'image/jpeg' : 'image/webp';
+const ONLY = process.env.SHOTS_ONLY || '';
 const SHOP = process.env.SHOTS_SHOP || 'ครัวป้าแดง', TAGLINE = process.env.SHOTS_TAGLINE || 'อาหารไทยรสชาติต้นตำรับ ปรุงสดใหม่ทุกวัน';
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
-  const browser = await chromium.launch({ channel: CHANNEL });
+  const browser = await chromium.launch(browserOpts());
   const png = { headers: { 'content-type': 'image/png' } };
   const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
 
@@ -79,36 +80,39 @@ const SHOP = process.env.SHOTS_SHOP || 'ครัวป้าแดง', TAGLINE
   const el = (p, sel, name) => p.locator(sel).first().screenshot({ path: path.join(OUT, name + '.png') });
 
   // ---------- ลูกค้า ----------
-  const cust = async (opts, t) => { const ctx = await browser.newContext(Object.assign({ baseURL: s.B }, PHONE, opts || {})); const p = await ctx.newPage(); await p.goto('/order?t=' + (t || 4) + '&k=' + keys[t || 4]); await p.waitForSelector('.item'); await sleep(500); return p; };
-  let p = await cust();
-  await shot(p, 'c01-menu');
-  await p.click('.item .open[data-id="1"]'); await sleep(500); await p.click('[data-a="dinc"]'); await sleep(150);
-  await shot(p, 'c02-detail');
-  await p.click('[data-a="dtab"][data-t="notes"]'); await p.click('[data-a="dnote"][data-n="ไม่เผ็ด"]'); await sleep(150);
-  await shot(p, 'c03-detail-notes');
-  await p.click('[data-a="dadd"]'); await sleep(2600);
-  await p.click('.item [data-a="inc"][data-id="2"]'); await sleep(300);
-  await shot(p, 'c04-menu-with-cart');
-  await p.click('[data-a="open"]'); await sleep(400);
-  await shot(p, 'c05-cart');
-  await p.click('[data-a="send"]'); await sleep(2800);
-  await p.evaluate(() => document.querySelector('#status').scrollIntoView({ block: 'start' })); await sleep(300);
-  await shot(p, 'c06-order-status');
-  await p.evaluate(() => window.scrollTo(0, 0));
-  await p.click('.item .open[data-id="4"]').catch(() => {}); await sleep(500);
-  if (!(await p.isHidden('#detail'))) await shot(p, 'c07-soldout');
-  if (!(await p.isHidden('#detail'))) { await p.click('[data-a="dback"]'); await sleep(300); }
-  await p.evaluate(() => window.scrollTo(0, 0)); await p.click('#bnav [data-v="shop"]'); await sleep(500);
-  await shot(p, 'c11-shop-info');
-  await p.click('[data-a="sclose"]'); await sleep(300); await p.fill('#q', 'กุ้ง'); await sleep(400);
-  await shot(p, 'c12-search');
-  await p.context().close();
-  await s.call('POST', '/api/settings', { look: 'light' });
-  p = await cust(); await shot(p, 'c08-menu-light'); await p.context().close();
-  await s.call('POST', '/api/settings', { look: 'dark' });
-  p = await cust({ colorScheme: 'dark' }); await shot(p, 'c08-menu-dark');
-  await p.click('.item .open[data-id="2"]'); await sleep(500); await shot(p, 'c09-detail-noimage-dark'); await p.context().close();
-  p = await cust({ viewport: { width: 768, height: 1024 }, isMobile: false, deviceScaleFactor: 1 }); await shot(p, 'c10-tablet-menu'); await p.context().close();
+  let p;
+  if (ONLY !== 'staff') {
+    const cust = async (opts, t) => { const ctx = await browser.newContext(Object.assign({ baseURL: s.B }, PHONE, opts || {})); const p = await ctx.newPage(); await p.goto('/order?t=' + (t || 4) + '&k=' + keys[t || 4]); await p.waitForSelector('.item'); await sleep(500); return p; };
+    p = await cust();
+    await shot(p, 'c01-menu');
+    await p.click('.item .open[data-id="1"]'); await sleep(500); await p.click('[data-a="dinc"]'); await sleep(150);
+    await shot(p, 'c02-detail');
+    await p.click('[data-a="dtab"][data-t="notes"]'); await p.click('[data-a="dnote"][data-n="ไม่เผ็ด"]'); await sleep(150);
+    await shot(p, 'c03-detail-notes');
+    await p.click('[data-a="dadd"]'); await sleep(2600);
+    await p.click('.item [data-a="inc"][data-id="2"]'); await sleep(300);
+    await shot(p, 'c04-menu-with-cart');
+    await p.click('[data-a="open"]'); await sleep(400);
+    await shot(p, 'c05-cart');
+    await p.click('[data-a="send"]'); await sleep(2800);
+    await p.evaluate(() => document.querySelector('#status').scrollIntoView({ block: 'start' })); await sleep(300);
+    await shot(p, 'c06-order-status');
+    await p.evaluate(() => window.scrollTo(0, 0));
+    await p.click('.item .open[data-id="4"]').catch(() => {}); await sleep(500);
+    if (!(await p.isHidden('#detail'))) await shot(p, 'c07-soldout');
+    if (!(await p.isHidden('#detail'))) { await p.click('[data-a="dback"]'); await sleep(300); }
+    await p.evaluate(() => window.scrollTo(0, 0)); await p.click('#bnav [data-v="shop"]'); await sleep(500);
+    await shot(p, 'c11-shop-info');
+    await p.click('[data-a="sclose"]'); await sleep(300); await p.fill('#q', 'กุ้ง'); await sleep(400);
+    await shot(p, 'c12-search');
+    await p.context().close();
+    await s.call('POST', '/api/settings', { look: 'light' });
+    p = await cust(); await shot(p, 'c08-menu-light'); await p.context().close();
+    await s.call('POST', '/api/settings', { look: 'dark' });
+    p = await cust({ colorScheme: 'dark' }); await shot(p, 'c08-menu-dark');
+    await p.click('.item .open[data-id="2"]'); await sleep(500); await shot(p, 'c09-detail-noimage-dark'); await p.context().close();
+    p = await cust({ viewport: { width: 768, height: 1024 }, isMobile: false, deviceScaleFactor: 1 }); await shot(p, 'c10-tablet-menu'); await p.context().close();
+  }
 
   // ---------- พนักงาน ----------
   const lc = await browser.newContext({ baseURL: s.B, ...PHONE }); const lp = await lc.newPage();
@@ -116,7 +120,7 @@ const SHOP = process.env.SHOTS_SHOP || 'ครัวป้าแดง', TAGLINE
   await shot(lp, 's01-login');
   await lp.fill('#pin', PIN); await lp.press('#pin', 'Enter'); await lp.waitForSelector('#tabs .tab');
   const state = await lc.storageState();
-  await sleep(400); await shot(lp, 's02-kitchen-phone', true);
+  await sleep(400); await shot(lp, 's02-kitchen-phone');
   await lc.close();
   const staff = async (opts) => { const ctx = await browser.newContext(Object.assign({ baseURL: s.B, storageState: state, acceptDownloads: true }, DESK, opts || {})); const q = await ctx.newPage(); await q.goto('/staff'); await q.waitForSelector('#tabs .tab'); await sleep(500); return q; };
   p = await staff();
@@ -158,7 +162,14 @@ const SHOP = process.env.SHOTS_SHOP || 'ครัวป้าแดง', TAGLINE
   // แคชเชียร์: เห็นแท็บน้อยกว่าเจ้าของ
   const kc = await browser.newContext({ baseURL: s.B, ...DESK }); const kp = await kc.newPage();
   await kp.goto('/staff'); await kp.fill('#pin', '520011'); await kp.press('#pin', 'Enter'); await kp.waitForSelector('#tabs .tab'); await sleep(500);
-  await shot(kp, 's17-cashier-view'); await kc.close();
+  await shot(kp, 's17-cashier-view');
+  // ค้นหาและคำสั่ง (Ctrl+K)
+  await kp.keyboard.press('Control+k'); await kp.fill('#ck-q', 'ผัด'); await sleep(300);
+  await shot(kp, 's20-command'); await kc.close();
+  // จอครัวบนแท็บเล็ตแนวนอน (1180 px) และหน้าเข้าสู่ระบบบนแท็บเล็ต (แป้นตัวเลข)
+  const tc = await browser.newContext({ baseURL: s.B, viewport: { width: 1180, height: 820 }, hasTouch: true, storageState: state }); const tp = await tc.newPage();
+  await tp.goto('/staff'); await tp.waitForSelector('#tabs .tab'); await sleep(500);
+  await shot(tp, 's21-kitchen-tablet'); await tc.close();
 
   await browser.close(); await s.stop(); rmrf(app.base);
   console.log('ภาพอยู่ใน ' + OUT + ' (' + fs.readdirSync(OUT).length + ' ไฟล์)');

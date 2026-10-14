@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, PIN, checker } = require('./lib');
+const { makeApp, start, sleep, PIN, checker, browserOpts } = require('./lib');
 const AXE = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 
 async function scan(page, label) {
@@ -27,7 +27,7 @@ async function main() {
   await s.call('POST', '/api/settings', { tagline: 'อาหารไทยรสชาติต้นตำรับ', address: '88/8 ถ.สุขุมวิท', phone: '02-123-4567', social: { facebook: 'facebook.com/x', instagram: '@x', line: '@x', tiktok: '@x' }, shareUrl: 'https://maps.app.goo.gl/x' });
   const m3 = (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 3);
   await s.call('POST', '/api/menu/item', Object.assign({}, m3, { rec: true }));
-  const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge', headless: true });
+  const browser = await chromium.launch(browserOpts({ headless: true }));
   const all = [];
   for (const scheme of ['light', 'dark']) {
     const ctx = await browser.newContext({ baseURL: s.B, colorScheme: scheme, viewport: { width: 1280, height: 900 } });

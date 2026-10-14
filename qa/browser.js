@@ -8,12 +8,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto, fakeCover } = require('./lib');
+const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto, fakeCover, browserOpts } = require('./lib');
 
-const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const MOBILE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 
-async function launch() { return chromium.launch({ channel: CHANNEL, headless: process.env.QA_HEADED ? false : true }); }
+async function launch() { return chromium.launch(browserOpts({ headless: process.env.QA_HEADED ? false : true })); }
 // เก็บ error จาก console และ JS ทุกหน้า เพื่อสรุปท้ายเคส
 // ไม่นับ 4xx ที่เบราว์เซอร์ log เองแต่หน้าเว็บจัดการแล้ว (401 ก่อนกรอก PIN, 409 ยอดเปลี่ยน) นับ 5xx และ JS error ทุกตัว
 function watch(page, errors, label) {
@@ -182,7 +181,7 @@ const cases = {
     };
     const kitchen = await login('520022');
     const kt = (await kitchen.$$eval('#tabs .tab', b => b.map(x => x.dataset.v))).join(',');
-    ok(kt === 'kitchen,menu' && /ช่างต้ม \(ครัว\)/.test(await kitchen.textContent('#brand')), 'ครัวเห็นแค่แท็บครัวกับเมนูหมด และหัวจอบอกชื่อ', kt);
+    ok(kt === 'kitchen,menu' && /ช่างต้ม · ครัว/.test(await kitchen.textContent('#brand')), 'ครัวเห็นแค่แท็บครัวกับเมนูหมด และหัวจอบอกชื่อ', kt);
     await s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] }, { staff: false });
     await kitchen.waitForSelector('#v-kitchen .card');
     ok(!(await kitchen.$('#v-kitchen [data-a="void"]')), 'ครัวไม่มีปุ่มยกเลิกออเดอร์');
