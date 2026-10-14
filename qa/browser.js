@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, discount, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, discount, takeaway, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1387,6 +1387,43 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: กลับบ้าน/เดลิเวอรี: ขอเลขคิว → สั่งแทนลูกค้า (หน้าสั่งบอกเลขคิว) → จอครัวเห็นคิว+ชื่อ → คิดเงินไม่มีค่าบริการ → ใบเสร็จบอกคิว */
+  async takeaway(browser) {
+    const ok = checker('takeaway'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="qnew"][data-ch="takeaway"]'); await p.waitForSelector('#queue-dlg[open]');
+    await p.fill('#q-name', 'คุณเอ'); await p.click('#queue-ok');
+    await p.waitForFunction(() => /คิว 1 · กลับบ้าน · คุณเอ/.test(document.querySelector('#v-tables').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/คิว 1 · กลับบ้าน · คุณเอ/.test(await p.textContent('#v-tables')), 'ขอคิวแล้วเปิดรายละเอียดคิว 1 ทันที');
+    ok(await p.$('#v-tables .tbl[data-id="1001"]'), 'ผังมีช่องคิว Q1');
+    const href = await p.getAttribute('#v-tables a[href^="/order"]', 'href');
+    const o = await p.context().newPage(); watch(o, errors, 'order');
+    await o.goto(href); await o.waitForSelector('.item');
+    ok(/คิว 1/.test(await o.textContent('header.top')), 'หน้าสั่งอาหารบอกว่าเป็นคิว 1 ไม่ใช่โต๊ะ', await o.textContent('header.top .tchip').catch(() => ''));
+    await o.click('.item [data-a="inc"]'); await o.click('[data-a="open"]'); await o.click('[data-a="send"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 1001), 6000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 1001), 'สั่งเข้าคิวได้');
+    await o.close();
+    await tab(p, 'kitchen'); await p.waitForFunction(() => /คิว 1 · กลับบ้าน · คุณเอ/.test(document.querySelector('#v-kitchen').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/คิว 1 · กลับบ้าน · คุณเอ/.test(await p.textContent('#v-kitchen')), 'จอครัวเห็นคิวและชื่อลูกค้า');
+    await tab(p, 'tables');
+    if (await p.getAttribute('#v-tables .tbl[data-id="1001"]', 'aria-pressed') !== 'true') await p.click('#v-tables .tbl[data-id="1001"]');   // คลิกช่องที่เลือกอยู่ = ยกเลิกการเลือก
+    await p.waitForSelector('[data-a="pay"][data-m="cash"]', { timeout: 6000 }).catch(() => {});
+    ok(await p.getAttribute('[data-a="bsvc"]', 'aria-pressed') === 'false', 'คิวกลับบ้าน: ค่าบริการปิดเป็นค่าเริ่มต้น');
+    const due = await p.getAttribute('[data-a="pay"][data-m="cash"]', 'data-due'), sub = await p.getAttribute('[data-a="pay"][data-m="cash"]', 'data-sub');
+    ok(due === sub, 'ยอดที่ต้องจ่าย = ค่าอาหาร (ไม่มีค่าบริการ)', [due, sub]);
+    await p.click('[data-a="pay"][data-m="transfer"]'); await p.click('[data-a="pay"][data-m="transfer"]');
+    await p.waitForFunction(() => /ปิดบิลคิว 1 แล้ว/.test(document.querySelector('#v-tables').textContent), null, { timeout: 6000 }).catch(() => {});
+    const rc = await p.textContent('#v-tables');
+    ok(/ปิดบิลคิว 1 แล้ว/.test(rc) && /คิว 1 · กลับบ้าน · คุณเอ/.test(await p.textContent('.receipt')), 'ใบเสร็จบอกเลขคิวและชื่อ');
+    ok(!(await s.call('GET', '/api/state')).json.queue[1001], 'ปิดบิลแล้วคิวหาย');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
