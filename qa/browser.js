@@ -1488,6 +1488,55 @@ const cases = {
     return ok.done();
   },
 
+  /* คิด VAT (tasks/spec-vat.md): เจ้าของเปิด "ร้านจด VAT" ในตั้งค่า → บิลบวก VAT ถึงสตางค์ (120 + 12 = 132 → 141.24)
+     รับเงินสดยอดมีสตางค์ ทอนถูก · เปลี่ยนเป็น "ราคารวม VAT แล้ว" → ยอดเท่าราคา ใบแจ้งยอดบอกมูลค่าก่อน VAT · หน้าลูกค้าบอกโหมด
+     · ไม่มีสวิตช์ VAT ทีละบิลแล้ว */
+  async vat(browser) {
+    const ok = checker('vat'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    ok((await s.call('GET', '/api/state')).json.settings.vatRegistered === false, 'ร้านใหม่: ค่าเริ่มต้นไม่จด VAT');
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });   // 120 + ค่าบริการ 12
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('.receipt .grand .a');
+    ok((await p.textContent('.receipt .grand .a')).trim() === '฿132' && !/VAT/.test(await p.textContent('.receipt')) && !(await p.$('[data-a="bvat"]')), 'ไม่จด VAT: ยอด 132 ไม่มีบรรทัด VAT ไม่มีสวิตช์ VAT ในบิล');
+    await tab(p, 'settings'); await p.waitForSelector('#s-vreg');
+    await p.click('#s-vreg'); await p.click('[data-a="savesettings"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.vatRegistered, 8000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.settings.vatRegistered === true, 'เปิด "ร้านจด VAT" จากหน้าตั้งค่า');
+    await tab(p, 'tables'); await sleep(300);
+    if (!(await p.$('.receipt .grand .a'))) await p.click('[data-a="sel"][data-id="1"]');
+    await p.waitForFunction(() => /141.24/.test((document.querySelector('.receipt .grand .a') || {}).textContent || ''), null, { timeout: 6000 }).catch(() => {});
+    const rc = await p.textContent('.receipt');
+    ok(/VAT 7%฿9.24/.test(rc) && (await p.textContent('.receipt .grand .a')).trim() === '฿141.24' && /บวก VAT 7%/.test(await p.textContent('#v-tables')), 'จด VAT แบบแยก: บรรทัด VAT 7% ฿9.24 ยอด ฿141.24 และบอกโหมดในบิล', rc.slice(0, 200));
+    const pay = p.locator('[data-a="pay"][data-m="cash"]');
+    await pay.click(); await p.waitForSelector('#cash-in');
+    await p.keyboard.type('150');
+    ok(/ทอน ฿8.76/.test(await p.textContent('#cash-change')), 'รับเงินสด 150 จากยอด 141.24: ทอน ฿8.76', await p.textContent('#cash-change'));
+    await pay.click(); await p.waitForSelector('[data-a="donesale"]');
+    const sale = (await s.call('GET', '/api/report')).json.bills[0] || {};   // ใหม่สุดก่อน
+    ok(sale.total === 141.24 && sale.vat === 9.24 && sale.vatRate === 7, 'บิลที่บันทึก: ยอด 141.24 VAT 9.24 อัตรา 7%', [sale.total, sale.vat, sale.vatRate]);
+    await p.click('[data-a="donesale"]');
+    // ราคารวม VAT แล้ว
+    await tab(p, 'settings'); await p.waitForSelector('#s-vincl');
+    await p.click('#s-vincl'); await p.click('[data-a="savesettings"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.vatInclusive, 8000).catch(() => {});
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 1 }] }, { staff: false });   // 60 + ค่าบริการ 6 = 66 รวม VAT แล้ว
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="2"]');
+    await p.waitForFunction(() => /มูลค่าก่อน VAT/.test((document.querySelector('.receipt') || {}).textContent || ''), null, { timeout: 6000 }).catch(() => {});
+    const ri = await p.textContent('.receipt');
+    ok((await p.textContent('.receipt .grand .a')).trim() === '฿66' && /ราคารวม VAT 7% แล้ว/.test(ri) && /มูลค่าก่อน VAT฿61.68/.test(ri) && /VAT 7%฿4.32/.test(ri), 'ราคารวม VAT: ยอด ฿66 ใต้ยอดบอกมูลค่าก่อน VAT ฿61.68 และ VAT ฿4.32', ri.slice(0, 260));
+    const c = await customerPage(browser, s, 2, keys[2], errors);
+    await c.waitForFunction(() => /รวม VAT 7% แล้ว/.test(document.body.textContent), null, { timeout: 8000 }).catch(() => {});
+    ok(/ราคาในเมนูรวม VAT 7% แล้ว/.test(await c.textContent('body')), 'หน้าลูกค้า: บอกว่าราคาในเมนูรวม VAT แล้ว');
+    const of = await overflow(c);
+    ok(!of, 'มือถือ: หน้าลูกค้าไม่ล้นจอ', of);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
   /* เกณฑ์ตรวจรับ: มือถือจอแคบไม่เลื่อนแนวนอน, ราคาเปลี่ยนระหว่างสั่ง, เน็ตหลุด, ยกเลิกออเดอร์ต้องมีเหตุผลและ PIN เจ้าของ */
   /* คืนเงินบิลที่ปิดแล้ว (เจ้าของ): คืนบางรายการจากบิลวันนี้ → ใบคืนเงิน ยอดสรุปเป็นยอดสุทธิ · อีกเครื่องคืนไปก่อน = แจ้งและโหลดยอดใหม่
      · คืนบิลวันก่อนด้วยเลขที่ใบเสร็จ · แคชเชียร์ไม่เห็นปุ่มคืนเงิน */
@@ -1526,8 +1575,8 @@ const cases = {
     await p.check('#refund-form input[name=rfr][value="ลูกค้ายกเลิก"]');
     await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'cash', reason: 'อีกเครื่อง', expected: 140 });
     await p.click('#refund-ok');
-    await p.waitForFunction(() => /ระหว่างนั้น/.test(document.querySelector('#refund-err').textContent), null, { timeout: 6000 }).catch(() => {});
-    ok(/ระหว่างนั้น/.test(await p.textContent('#refund-err')) && /คืนได้อีก ฿0/.test(await p.textContent('#refund-sub')), 'อีกเครื่องคืนไปก่อน: แจ้งในหน้าต่าง และโหลดยอดที่ยังคืนได้ใหม่', await p.textContent('#refund-sub'));
+    await p.waitForFunction(() => /ระหว่างนั้น/.test(document.querySelector('#refund-err').textContent) && /คืนได้อีก ฿0/.test(document.querySelector('#refund-sub').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/ระหว่างนั้น/.test(await p.textContent('#refund-err')) && /คืนได้อีก ฿0/.test(await p.textContent('#refund-sub')), 'อีกเครื่องคืนไปก่อน: แจ้งในหน้าต่าง และโหลดยอดที่ยังคืนได้ใหม่', [await p.textContent('#refund-err'), await p.textContent('#refund-sub')]);
     await p.click('#refund-cancel');
     ok((await s.call('GET', '/api/report')).json.total === 0, 'ไม่คืนซ้ำ: ยอดสุทธิ 0');
     // คืนบิลวันก่อน: ใส่เลขที่ใบเสร็จเต็ม

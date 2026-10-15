@@ -24,14 +24,14 @@ const get = (s, p, cookie) => fetch(s.B + p, { headers: cookie ? { cookie } : {}
   const app = makeApp({ from: OLD });
   // ---------- เวอร์ชันเก่า: ร้านใช้งานจริง ----------
   let s = start(app.code); await s.ready; await s.login();
-  await s.call('POST', '/api/settings', { shop: 'ร้านเดิม', promptpay: '0812345678' });
+  await s.call('POST', '/api/settings', { shop: 'ร้านเดิม', promptpay: '0812345678', vat: true });   // ร้านเดิมเปิด VAT 7% (แบบเก่า: ค่าเริ่มต้นต่อบิล)
   await s.call('POST', '/api/staff', { name: 'แคชเชียร์เดิม', role: 'cashier', pin: '555111' });
   await s.call('POST', '/api/staff', { name: 'หุ้นส่วน', role: 'owner', pin: '555222' });
   const old = (await s.call('GET', '/api/state')).json;
   const keys = old.keys;
   for (const t of [1, 2]) await s.call('POST', '/api/order', { table: t, key: keys[t], items: [{ id: 1, qty: 2, note: ['ไม่เผ็ด'] }, { id: 3, qty: 1 }] }, { staff: false });
   const sub2 = (await s.call('GET', '/api/state')).json.bills[2].sub;
-  const paid = (await s.call('POST', '/api/pay', { table: 2, expectedSub: sub2, method: 'cash', received: 1000 })).json.sale;
+  const paid = (await s.call('POST', '/api/pay', { table: 2, expectedSub: sub2, vat: true, method: 'cash', received: 1000 })).json.sale;
   const cashOld = await loginCookie(s, '555111'), ownerOld = await loginCookie(s, PIN);
   const bk = (await s.call('POST', '/api/backup', {})).json.backup;
   const bkFile = fs.readFileSync(path.join(app.code, 'backups', bk.name));
@@ -56,6 +56,7 @@ const get = (s, p, cookie) => fetch(s.B + p, { headers: cookie ? { cookie } : {}
   ok(after.tickets.length === before.tickets.length && after.tickets.every(t => t.table === 1), 'ออเดอร์ค้างของโต๊ะ 1 ยังอยู่ครบ', after.tickets.length);
   ok(after.settings.shop === 'ร้านเดิม' && after.settings.promptpay === '0812345678', 'ข้อมูลร้านและ PromptPay เหมือนเดิม');
   ok(after.settings.requireSeat === false && after.settings.hours.on === false && after.settings.accent === '' && after.settings.logo === '', 'ฟีเจอร์ใหม่ปิดเป็นค่าเริ่มต้น ร้านทำงานเหมือนเดิม');
+  ok(after.settings.vatRegistered === true && after.settings.vatInclusive === false && after.settings.vatRate === 7 && !('vat' in after.settings), 'ร้านที่เคยเปิด VAT: เป็นจด VAT แบบบวกเพิ่ม 7% ให้เอง (tasks/spec-vat.md)', [after.settings.vatRegistered, after.settings.vatInclusive, after.settings.vatRate]);
   ok(after.nextBill === before.nextBill, 'เลขบิลถัดไปต่อเนื่อง', [before.nextBill, after.nextBill]);
   const tb = await get(s, '/api/table?t=1&k=' + keys[1]);
   ok(tb.status === 200 && tb.json.open === true && tb.json.tickets.length > 0, 'ลูกค้าโต๊ะ 1 ใช้ QR เดิมเห็นออเดอร์และสั่งต่อได้');
@@ -64,6 +65,9 @@ const get = (s, p, cookie) => fetch(s.B + p, { headers: cookie ? { cookie } : {}
   const sub1 = (await s.call('GET', '/api/state')).json.bills[1].sub;
   const p1 = (await s.call('POST', '/api/pay', { table: 1, expectedSub: sub1, method: 'transfer' })).json.sale;
   ok(p1 && p1.no === paid.no + 1, 'ปิดบิลต่อได้ เลขบิลต่อจากเวอร์ชันเก่า', [paid.no, p1 && p1.no]);
+  ok(p1 && p1.vatRate === 7 && p1.vatIncl === false && p1.vat === Math.round(sub1 * 7) / 100 && p1.total === Math.round(sub1 * 107) / 100, 'บิลแรกหลังอัปเดต: VAT 7% คิดถึงสตางค์ (หน้าเว็บไม่ต้องส่ง vat)', p1 && [sub1, p1.vat, p1.total]);
+  const oldBill = (await s.call('GET', '/api/report')).json.bills.find(b => b.no === paid.no);
+  ok(paid.vat > 0 && oldBill && oldBill.vat === paid.vat && oldBill.total === paid.total && oldBill.vatRate === undefined, 'บิลที่ปิดก่อนอัปเดตไม่ถูกคิดใหม่', oldBill && [paid.vat, oldBill.vat, paid.total, oldBill.total]);
   const csv = (await s.call('GET', '/api/export.csv')).text || '';
   ok(csv.includes(String(paid.total)) && csv.includes(String(p1.total)) && csv.split('\n').filter(l => l.trim()).length >= 3, 'CSV มีบิลทั้งจากเวอร์ชันเก่าและใหม่');
   const cl = await loginCookie(s, '555111'), po = await loginCookie(s, '555222');
