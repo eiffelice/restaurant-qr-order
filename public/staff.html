@@ -490,6 +490,24 @@ h4.sub{font-size:.9rem;font-weight:700;margin:2px 0 12px;color:var(--ink2)}
 .refund-sum{margin-top:14px;padding:10px 12px;border-radius:var(--r);background:var(--crit-bg);color:var(--crit);font-weight:700;min-height:1.5em}
 .refund-sum:empty{display:none}
 tr.refund td{color:var(--crit)}
+dialog.dlg.wide{width:min(62rem,calc(100% - 24px))}
+.tx-pick{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:10px 0 14px}
+.tx-pick label.f{flex:0 1 11rem}
+.tx-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.tx-acts .sp{flex:1}
+.taxdoc{font-size:.88rem}
+.taxdoc .td-h{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.taxdoc .td-h b{font-size:1.05rem}
+.taxdoc h4{font-size:.92rem;margin:14px 0 6px}
+.taxdoc table{width:100%;border-collapse:collapse}
+.taxdoc th,.taxdoc td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.taxdoc th:first-child,.taxdoc td:first-child{text-align:left}
+.taxdoc th{font-size:.76rem;color:var(--muted)}
+.taxdoc tr.sum td{font-weight:800;border-top:2px solid var(--line-strong)}
+.taxdoc .warn{background:var(--warn-bg);color:var(--warn);border-radius:var(--r-sm);padding:8px 10px;margin:4px 0;font-weight:600}
+.taxdoc .disc{margin-top:14px;font-size:.78rem;color:var(--muted)}
+.taxdoc .disc.top{margin:0 0 8px}
+@page doc{size:A4;margin:12mm}
 .card-act .xbtn.pr:hover{background:var(--surface2);color:var(--ink);border-color:var(--line-strong)}
 .qrsheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:12px}
 .qcard{background:#fff;color:#111;border:1px solid var(--line);border-radius:14px;padding:14px 12px;text-align:center;break-inside:avoid;display:flex;flex-direction:column;align-items:center;gap:2px;box-shadow:var(--sh-sm)}
@@ -641,6 +659,16 @@ dialog.cmdk{padding:0;border:1px solid var(--line);border-radius:20px;background
   body.pm-qr .side,body.pm-qr .top,body.pm-qr #health,body.pm-qr .np,body.pm-qr .snav,body.pm-qr #toast{display:none!important}
   body.pm-qr{background:#fff;padding:0}
   body.pm-receipt{padding:0}
+  /* สรุปยอดขายและภาษี: A4 ตัวหนังสือดำบนขาว หัวตารางซ้ำทุกหน้า */
+  body.pm-doc>*:not(#print-area){display:none!important}
+  body.pm-doc{background:#fff;padding:0}
+  body.pm-doc #print-area{display:block;page:doc;color:#000}
+  body.pm-doc .taxdoc{font-size:9.5pt;--line:#bbb;--line-strong:#555;--muted:#333;--warn-bg:#fff;--warn:#000}
+  body.pm-doc .taxdoc .warn{border:1px solid #000}
+  body.pm-doc .taxdoc tr{break-inside:avoid}
+  body.pm-doc .taxdoc th,body.pm-doc .taxdoc td{padding:2.5px 6px}
+  body.pm-doc .taxdoc h4{margin:10px 0 4px}
+  body.pm-doc .taxdoc thead{display:table-header-group}
   body.pm-qr .app,body.pm-qr .set{display:block}
   body.pm-qr .app{background:none}
   body.pm-qr .main{padding:0}
@@ -876,6 +904,30 @@ dialog.cmdk{padding:0;border:1px solid var(--line);border-radius:20px;background
     <label class="f" for="rff-no">เลขที่ใบเสร็จ<input class="in" id="rff-no" inputmode="numeric" autocomplete="off" maxlength="20"></label>
     <div class="err" id="rff-err" role="alert"></div>
     <div class="row"><button type="button" class="btn" id="rff-cancel">ปิด</button><button type="submit" class="btn primary" id="rff-ok">เปิดบิล</button></div>
+  </form>
+</dialog>
+<!-- สรุปยอดขายและภาษี (เจ้าของ): นอกส่วนที่วาดใหม่ วันที่ที่เลือกไม่หายเมื่อมีออเดอร์เข้า -->
+<dialog class="dlg wide" id="tax-dlg" aria-labelledby="tax-h">
+  <form method="dialog" id="tax-form">
+    <h3 id="tax-h">สรุปยอดขายและภาษี</h3>
+    <p class="muted small" style="margin:0">เลือกช่วงเวลา แล้วดาวน์โหลด CSV ให้นักบัญชี หรือพิมพ์ / บันทึกเป็น PDF (A4) ได้ไม่เกิน 366 วัน</p>
+    <div class="seg" role="group" aria-label="ช่วงเวลาสำเร็จรูป" id="tx-pre" style="margin-top:12px">
+      <button type="button" data-tp="week">สัปดาห์นี้</button><button type="button" data-tp="lastweek">สัปดาห์ก่อน</button><button type="button" data-tp="month">เดือนนี้</button><button type="button" data-tp="lastmonth">เดือนก่อน</button>
+    </div>
+    <div class="tx-pick">
+      <label class="f" for="tx-from">ตั้งแต่วันที่<input class="in" id="tx-from" type="date"></label>
+      <label class="f" for="tx-to">ถึงวันที่<input class="in" id="tx-to" type="date"></label>
+      <button type="submit" class="btn primary" id="tx-go">ดูสรุป</button>
+    </div>
+    <div class="err" id="tx-err" role="alert"></div>
+    <div id="tx-body" aria-live="polite"></div>
+    <div class="tx-acts">
+      <a class="btn" id="tx-csv-b" href="#" download>CSV รายบิล</a>
+      <a class="btn" id="tx-csv-d" href="#" download>CSV สรุปรายวัน</a>
+      <button type="button" class="btn" id="tx-print">พิมพ์ / บันทึก PDF</button>
+      <span class="sp"></span>
+      <button type="button" class="btn" id="tx-close">ปิด</button>
+    </div>
   </form>
 </dialog>
 <dialog class="dlg" id="void-dlg" aria-labelledby="void-h">
@@ -1324,6 +1376,71 @@ $('#rff-form').addEventListener('submit',function(e){
   var m=/(\d+)\s*$/.exec($('#rff-no').value.trim());
   if(!m){$('#rff-err').textContent='ใส่เลขที่ใบเสร็จ';return;}
   $('#rff-dlg').close();openRefund(+m[1]);
+});
+
+/* ---------- สรุปยอดขายและภาษี (เจ้าของ ดู tasks/spec-tax-report.md) ----------
+   ตัวเลขทั้งหมดมาจาก GET /api/report/tax (เซิร์ฟเวอร์คำนวณ) หน้านี้แค่จัดหน้า · CSV ดาวน์โหลดจากเซิร์ฟเวอร์ด้วยช่วงเดียวกัน
+   เอกสารไม่ใช่รายงานภาษีขาย/ใบกำกับภาษี (บอกท้ายเอกสารเสมอ) */
+var TAX_NOTE='เอกสารสรุปเพื่อประกอบการทำบัญชี ไม่ใช่รายงานภาษีขายหรือใบกำกับภาษีตามประมวลรัษฎากร';
+var tx=null;
+function ymdOf(t){var d=new Date(t);return d.getFullYear()+'-'+pad(d.getMonth()+1,2)+'-'+pad(d.getDate(),2);}
+function txPreset(k){
+  var d=new Date(now());d.setHours(12,0,0,0);
+  var a,b;
+  if(k==='week'||k==='lastweek'){var mon=new Date(d);mon.setDate(d.getDate()-(d.getDay()+6)%7-(k==='lastweek'?7:0));a=mon;b=new Date(mon);b.setDate(mon.getDate()+6);}
+  else{var m=d.getMonth()-(k==='lastmonth'?1:0);a=new Date(d.getFullYear(),m,1,12);b=new Date(d.getFullYear(),m+1,0,12);}
+  $('#tx-from').value=ymdOf(a);$('#tx-to').value=ymdOf(b);
+  document.querySelectorAll('#tx-pre [data-tp]').forEach(function(x){x.setAttribute('aria-pressed',String(x.dataset.tp===k));});
+  txLoad();
+}
+function txLinks(){
+  var q='from='+encodeURIComponent($('#tx-from').value)+'&to='+encodeURIComponent($('#tx-to').value);
+  $('#tx-csv-b').href='/api/export.csv?'+q+'&kind=bills';$('#tx-csv-d').href='/api/export.csv?'+q+'&kind=daily';
+}
+function openTax(){
+  $('#tx-err').textContent='';$('#tax-dlg').showModal();
+  if(!$('#tx-from').value)txPreset('week');else txLoad();
+}
+function txLoad(){
+  var a=$('#tx-from').value,b=$('#tx-to').value,err=$('#tx-err');
+  if(!a||!b){err.textContent='เลือกวันเริ่มต้นและวันสิ้นสุด';return;}
+  txLinks();err.textContent='';$('#tx-go').disabled=true;tx=null;
+  $('#tx-body').innerHTML='<p class="muted">กำลังโหลดสรุป '+esc(a)+' ถึง '+esc(b)+'…</p>';   // ไม่แสดงตัวเลขช่วงเดิมใต้วันที่ใหม่
+  return api('/api/report/tax?from='+encodeURIComponent(a)+'&to='+encodeURIComponent(b)).then(function(r){
+    // เลือกช่วงอื่นไปแล้วระหว่างรอ: ทิ้งผลเก่า ไม่ให้ตัวเลขช่วงเก่าทับช่วงที่เลือกอยู่ (เคยเกิด: เปิดหน้าต่างแล้วกดสัปดาห์ก่อนทันที)
+    if($('#tx-from').value!==a||$('#tx-to').value!==b)return;
+    $('#tx-go').disabled=false;
+    if(!r.ok){err.textContent=r.j.error||'โหลดสรุปไม่สำเร็จ';if(r.status===401){$('#tax-dlg').close();showLogin();}return;}
+    tx=r.j;$('#tx-body').innerHTML=taxDocHtml(tx);
+  },function(){$('#tx-go').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';});
+}
+function thDay(k){var p=k.split('-');return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString('th-TH',{weekday:'short',day:'numeric',month:'short',year:'numeric'});}
+function taxDocHtml(t){
+  var T=t.totals,sh=t.shop,V=t.vat;
+  var rowCells=function(x){return [x.bills,x.refunds,baht(x.sub),baht(x.disc),baht(x.svc),baht(x.beforeVat),baht(x.vat),baht(x.total),baht(x.refundValue)].map(function(v){return '<td>'+v+'</td>';}).join('');};
+  var h='<div class="taxdoc"><div class="td-h"><div><b>'+esc(sh.shop)+'</b>'+(sh.address?'<div class="small">'+esc(sh.address)+'</div>':'')+
+    '<div class="small">'+(sh.taxId?'เลขประจำตัวผู้เสียภาษี '+esc(sh.taxId):'ไม่ได้ระบุเลขประจำตัวผู้เสียภาษี')+'</div></div>'+
+    '<div class="small" style="text-align:right"><b>สรุปยอดขายและภาษี</b><br>'+thDay(t.from)+' – '+thDay(t.to)+'<br>ออกเมื่อ '+fmtDate(t.generatedAt)+' โดย '+esc(t.by)+
+    (t.firstNo!=null?'<br>เลขที่ '+t.firstNo+' – '+t.lastNo:'')+'</div></div><p class="disc top">'+TAX_NOTE+'</p>';   // ใต้หัวเอกสารด้วย: หน้าแรกที่พิมพ์ออกมามีข้อความนี้เสมอ
+  h+=t.warnings.map(function(w){return '<div class="warn">'+esc(w)+'</div>';}).join('');
+  h+='<h4>ยอดรวมทั้งช่วง</h4><div class="tbl-wrap"><table><tbody>'+
+    [['จำนวนบิล',T.bills+' บิล'+(T.refunds?' · ใบคืนเงิน '+T.refunds+' ใบ':'')],['ค่าอาหาร (ก่อนส่วนลด)',baht(T.sub)],['ส่วนลด',baht(T.disc)],['ค่าบริการ',baht(T.svc)],
+     ['มูลค่าก่อน VAT',baht(T.beforeVat)],['VAT 7%',baht(T.vat)],['ยอดรวมสุทธิ (หักคืนเงินแล้ว)',baht(T.total)],['คืนเงิน',baht(T.refundValue)]]
+    .map(function(r,i){return '<tr'+(i===6?' class="sum"':'')+'><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>';}).join('')+'</tbody></table></div>';
+  h+='<div class="two" style="margin:0"><div><h4>แยกตามช่องทาง</h4><table><tbody>'+['cash','transfer','card','other'].map(function(m){return '<tr><td>'+PAYN[m]+'</td><td>'+baht(t.byMethod[m])+'</td></tr>';}).join('')+'</tbody></table></div>'+
+    '<div><h4>บิลที่คิด / ไม่คิด VAT</h4><table><tbody><tr><td>คิด VAT</td><td>'+V.withVat.bills+' บิล · VAT '+baht(V.withVat.vat)+' · ยอด '+baht(V.withVat.total)+'</td></tr><tr><td>ไม่คิด VAT</td><td>'+V.withoutVat.bills+' บิล · ยอด '+baht(V.withoutVat.total)+'</td></tr></tbody></table></div></div>';
+  h+='<h4>รายวัน</h4><div class="tbl-wrap"><table><thead><tr><th>วันที่</th><th>บิล</th><th>คืนเงิน (ใบ)</th><th>ค่าอาหาร</th><th>ส่วนลด</th><th>ค่าบริการ</th><th>ก่อน VAT</th><th>VAT</th><th>สุทธิ</th><th>คืนเงิน</th></tr></thead><tbody>'+
+    t.days.map(function(d){return '<tr><td>'+thDay(d.date)+'</td>'+rowCells(d)+'</tr>';}).join('')+
+    '<tr class="sum"><td>รวม</td>'+rowCells(T)+'</tr></tbody></table></div>';
+  return h+'<p class="disc">'+TAX_NOTE+'</p></div>';
+}
+$('#tx-pre').addEventListener('click',function(e){var b=e.target.closest('[data-tp]');if(b)txPreset(b.dataset.tp);});
+document.addEventListener('change',function(e){if(e.target.id==='tx-from'||e.target.id==='tx-to'){document.querySelectorAll('#tx-pre [data-tp]').forEach(function(x){x.setAttribute('aria-pressed','false');});txLinks();}});
+$('#tax-form').addEventListener('submit',function(e){e.preventDefault();txLoad();});
+$('#tx-close').addEventListener('click',function(){$('#tax-dlg').close();});
+$('#tx-print').addEventListener('click',function(){
+  if(!tx||tx.from!==$('#tx-from').value||tx.to!==$('#tx-to').value){toast('กด "ดูสรุป" ก่อนพิมพ์');return;}
+  var d=document.createElement('div');d.innerHTML=taxDocHtml(tx);printMode('doc',null,d.firstChild);
 });
 
 /* ---------- สต็อกวัตถุดิบ ----------
@@ -2267,7 +2384,7 @@ function renderReport(){
   h+='</div></div>';
   h+=rangeHtml();
   if(isOwner())h+=auditHtml(month);
-  h+='<div class="panel"><div class="sec-title"><h3>'+ic('receipt')+'บิลวันนี้</h3>'+(isOwner()?'<span class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="refundfind">'+ic('history')+'คืนเงินบิลวันก่อน</button><a class="btn sm" href="/api/export.csv?month='+month+'">'+ic('download')+'ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a></span>':'')+'</div>';
+  h+='<div class="panel"><div class="sec-title"><h3>'+ic('receipt')+'บิลวันนี้</h3>'+(isOwner()?'<span class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="taxsum">'+ic('calendar')+'สรุปยอดขายและภาษี</button><button class="btn sm" data-a="refundfind">'+ic('history')+'คืนเงินบิลวันก่อน</button><a class="btn sm" href="/api/export.csv?month='+month+'">'+ic('download')+'ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a></span>':'')+'</div>';
   if(!r.bills.length)h+='<div class="muted small">ยังไม่มีบิล</div>';
   else h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>เลขที่</th><th>เวลา</th><th>โต๊ะ</th><th>ชำระโดย</th><th class="r">ยอด</th><th></th></tr></thead><tbody>'+r.bills.map(function(b){
     if(b.type==='refund')return '<tr class="refund"><td>'+billNo(b.no,b.at)+'</td><td>'+hhmm(b.at)+'</td><td>'+(b.queue?'คิว '+b.queue:b.table)+'</td><td><span class="pill crit">คืนเงิน · '+esc(payLabel(b))+'</span> <span class="small">ของบิล '+(b.refundOfAt?billNo(b.refundOf,b.refundOfAt):'#'+b.refundOf)+'</span></td><td class="r"><b>−'+baht(-b.total)+'</b></td><td class="r"><button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบคืนเงิน</button></td></tr>';
@@ -2806,6 +2923,7 @@ function cmdItems(){
     out.push({g:'คำสั่ง',t:'เพิ่มเมนูใหม่',i:'plus',k:'menu new',run:function(){goTab('menu');openEditor(null);}});
     out.push({g:'คำสั่ง',t:'สำรองข้อมูลตอนนี้',i:'db',k:'backup',run:function(){act('/api/backup',{},'สำรองข้อมูลแล้ว').then(function(){loadBackups();});}});
     out.push({g:'คำสั่ง',t:'พิมพ์ QR ทุกโต๊ะ',i:'printer',k:'qr print',run:function(){goTab('settings');qrLocalWarn();printMode('qr');}});
+    out.push({g:'คำสั่ง',t:'สรุปยอดขายและภาษี (สัปดาห์/เดือน, CSV, PDF)',i:'calendar',k:'tax vat ภาษี สรุป report pdf csv week month',run:function(){goTab('report');openTax();}});
     out.push({g:'คำสั่ง',t:'ดาวน์โหลดยอดขายเดือนนี้ (CSV)',i:'download',k:'csv excel export',run:function(){location.href='/api/export.csv?month='+month;}});
     out.push({g:'คำสั่ง',t:'เพิ่มพนักงาน',i:'users',k:'staff',run:function(){goTab('settings');S.stEdit='new';S.stErr='';S.sf=null;renderStaff();jump('stf');}});
   }
@@ -2880,7 +2998,7 @@ function logout(){api('/api/logout',{}).then(function(){S.d=null;kSeen=null;show
 /* ---------- events ---------- */
 function printMode(mode,extra,node){
   var pa=$('#print-area');
-  if(mode==='receipt'){
+  if(mode==='receipt'||mode==='doc'){
     var src=node||document.querySelector('.view:not([hidden]) .receipt');
     if(!src){toast('ไม่พบใบเสร็จที่จะพิมพ์');return;}
     pa.innerHTML='';pa.appendChild(node?src:src.cloneNode(true));
@@ -3015,6 +3133,7 @@ document.addEventListener('click',function(e){
   else if(a==='viewsale'){var no=+b.dataset.no;S.viewSale=(S.report.bills||[]).filter(function(x){return x.no===no;})[0]||null;renderReport();window.scrollTo(0,0);}
   else if(a==='closesale'){S.viewSale=null;renderReport();}
   else if(a==='refund'){openRefund(+b.dataset.no);}
+  else if(a==='taxsum'){openTax();}
   else if(a==='refundfind'){$('#rff-form').reset();$('#rff-err').textContent='';$('#rff-dlg').showModal();$('#rff-no').focus();}
   else if(a==='tog'){var on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);b.textContent=on?'เปิด':'ปิด';markDirty();}
   else if(a==='savesettings'){

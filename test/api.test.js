@@ -2726,7 +2726,7 @@ describe('คืนเงินบิลที่ปิดแล้ว (ใบ�
     const csv = (await s.call('GET', '/api/export.csv')).text.replace(/^﻿/, '').split('\r\n');
     const head = csv[0].split(',');
     const at = n => head.indexOf('"' + n + '"');
-    assert.ok(at('คืนเงินของบิล') === at('ต้นทุนวัตถุดิบ') + 1 && at('เหตุผลคืนเงิน') === at('คืนเงินของบิล') + 1 && at('ชำระโดย') === at('เหตุผลคืนเงิน') + 1, head.join(','));
+    assert.ok(at('คืนเงินของบิล') === at('ต้นทุนวัตถุดิบ') + 1 && at('เหตุผลคืนเงิน') === at('คืนเงินของบิล') + 1 && at('ชำระโดย') === at('เหตุผลคืนเงิน') + 2 /* + มูลค่าก่อน VAT */, head.join(','));
     assert.equal(head.slice(0, 8).join(','), '"เลขที่","วันที่","เวลา","โต๊ะ","ค่าอาหาร","ค่าบริการ","VAT","รวม"');
     const row = csv[2].split(',');
     assert.equal(row[0], '"' + r.json.refund.no + '"');
@@ -2739,6 +2739,98 @@ describe('คืนเงินบิลที่ปิดแล้ว (ใบ�
     const bills = (await s.call('GET', '/api/report')).json.bills;
     assert.ok(bills.some(b => b.type === 'refund' && b.refundOf === sale.no), 'เปิดใหม่แล้วใบคืนเงินยังอยู่');
     assert.equal((await s.call('GET', '/api/bill?no=' + sale.no)).json.remaining, 0);
+    await s.stop();
+  });
+});
+
+describe('สรุปยอดขายและภาษี (สัปดาห์/เดือน/ช่วงวันเอง)', () => {
+  const ymd = t => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  // บิลเก่าในไฟล์ยอดขายถาวร (สัปดาห์ จ. 28 ก.ย. – อา. 4 ต.ค. 2026 คาบสองเดือน) + บิลนอกช่วง
+  const fixture = dir => {
+    fs.mkdirSync(path.join(dir, 'sales'), { recursive: true });
+    const line = o => JSON.stringify(Object.assign({ table: 3, svc: 0, disc: undefined, items: [{ name: 'เมนูเก่า', qty: 1, price: o.sub }] }, o)) + '\n';
+    fs.appendFileSync(path.join(dir, 'sales', '2026-09.jsonl'), line({ no: 9001, at: new Date(2026, 8, 29, 12).getTime(), sub: 100, vat: 0, total: 100, method: 'cash' }));
+    fs.appendFileSync(path.join(dir, 'sales', '2026-10.jsonl'), line({ no: 9002, at: new Date(2026, 9, 2, 19).getTime(), sub: 200, vat: 14, total: 214, method: 'card' }));
+    fs.appendFileSync(path.join(dir, 'sales', '2026-10.jsonl'), line({ no: 9003, at: new Date(2026, 9, 5, 10).getTime(), sub: 50, vat: 0, total: 50, method: 'cash' }));
+  };
+
+  test('ยอดทั้งช่วง: VAT ค่าบริการ ส่วนลด ใบคืนเงิน แยกช่องทาง บิลมี/ไม่มี VAT และคำเตือนตามเลขผู้เสียภาษี', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] });            // 120
+    assert.equal((await s.call('POST', '/api/pay', { table: 1, expectedSub: 120, svc: true, vat: true, method: 'cash' })).json.sale.total, 141, '120 + 12 + VAT 9');
+    await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 2, qty: 1 }] });            // 80
+    await s.call('POST', '/api/table/discount', { table: 2, kind: 'amt', value: 10, reason: 'ลูกค้าประจำ' });
+    const b = (await s.call('POST', '/api/pay', { table: 2, expectedSub: 80, expectedDisc: 10, method: 'transfer' })).json.sale;
+    assert.equal(b.total, 70);
+    assert.equal((await s.call('POST', '/api/refund', { no: b.no, mode: 'all', method: 'transfer', reason: 'ลูกค้ายกเลิก', expected: 70 })).status, 200);
+    const day = ymd(Date.now());
+    const r = await s.call('GET', '/api/report/tax?from=' + day + '&to=' + day);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const j = r.json;
+    assert.deepEqual(j.totals, { bills: 2, refunds: 1, sub: 120, disc: 0, svc: 12, beforeVat: 132, vat: 9, total: 141, refundValue: 70 }, 'บิลที่อยู่ทั้ง sales/ และ data.json นับครั้งเดียว');
+    assert.deepEqual(j.byMethod, { cash: 141, transfer: 0, card: 0, other: 0 });
+    assert.deepEqual(j.vat, { withVat: { bills: 1, vat: 9, total: 141 }, withoutVat: { bills: 1, total: 70 } });
+    assert.equal(j.days.length, 1); assert.equal(j.days[0].date, day); assert.equal(j.days[0].total, 141);
+    assert.ok(j.firstNo < j.lastNo);
+    assert.ok(j.warnings.some(w => /ไม่ควรเก็บ VAT/.test(w)), 'ไม่มีเลขผู้เสียภาษีแต่มีบิลคิด VAT: ' + JSON.stringify(j.warnings));
+    assert.equal((await s.call('POST', '/api/settings', { taxId: '1234567890123' })).status, 200);
+    const w2 = (await s.call('GET', '/api/report/tax?from=' + day + '&to=' + day)).json.warnings;
+    assert.ok(w2.some(w => /1 บิลไม่ได้คิด VAT/.test(w)) && !w2.some(w => /ไม่ควรเก็บ VAT/.test(w)), 'จด VAT แล้วมีบิลไม่คิด VAT: ' + JSON.stringify(w2));
+    assert.equal((await s.call('GET', '/api/report/tax?from=' + day + '&to=' + day)).json.shop.taxId, '1234567890123');
+    await s.stop();
+  });
+
+  test('สัปดาห์ จันทร์–อาทิตย์ข้ามเดือน: อ่านไฟล์สองเดือน วันไม่มีบิลเป็น 0 · ช่วงผิด/เกิน 366 วัน = 400 · แคชเชียร์ = 403', async () => {
+    const app = makeApp(); fixture(app);
+    const s = start(app); await s.ready; await s.login();
+    await withStaff(s);
+    const r = await s.call('GET', '/api/report/tax?from=2026-09-28&to=2026-10-04');
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const j = r.json;
+    assert.deepEqual(j.days.map(d => d.date), ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04']);
+    assert.deepEqual(j.days.map(d => d.total), [0, 100, 0, 0, 214, 0, 0]);
+    assert.deepEqual([j.totals.total, j.totals.vat, j.totals.beforeVat, j.totals.bills], [314, 14, 300, 2], 'บิล 9003 (5 ต.ค.) อยู่นอกช่วง');
+    assert.deepEqual([j.firstNo, j.lastNo], [9001, 9002]);
+    assert.deepEqual(j.byMethod, { cash: 100, transfer: 0, card: 214, other: 0 });
+    const bad = async q => (await s.call('GET', '/api/report/tax?' + q)).status;
+    assert.equal(await bad('from=2026-10-04&to=2026-09-28'), 400, 'to ก่อน from');
+    assert.equal(await bad('from=2026-02-30&to=2026-03-01'), 400, 'วันที่ไม่มีจริง');
+    assert.equal(await bad('from=2025-01-01&to=2026-01-02'), 400, 'เกิน 366 วัน');
+    assert.equal(await bad('from=2026-09-28'), 400, 'ไม่มีวันสิ้นสุด');
+    assert.equal(await bad('from=2025-10-01&to=2026-09-30'), 200, '365 วันได้');
+    const c = await device(s, '520011');
+    assert.equal((await c.call('GET', '/api/report/tax?from=2026-09-28&to=2026-10-04')).status, 403, 'แคชเชียร์ดูไม่ได้');
+    assert.equal((await c.call('GET', '/api/export.csv?from=2026-09-28&to=2026-10-04&kind=daily')).status, 403);
+    await s.stop();
+  });
+
+  test('CSV ช่วงวันที่: สรุปรายวันมีแถวรวมท้ายสุดตรงกับ API · รายบิลมี "มูลค่าก่อน VAT" ก่อน "ชำระโดย" · month= แบบเดิมยังใช้ได้', async () => {
+    const app = makeApp(); fixture(app);
+    const s = start(app); await s.ready; await s.login();
+    const get = async q => { const r = await fetch(s.B + '/api/export.csv?' + q, { headers: { cookie: s.cookie } }); return { status: r.status, cd: r.headers.get('content-disposition'), rows: (await r.text()).replace(/^﻿/, '').split('\r\n').map(l => l.split(',')) }; };
+    const d = await get('from=2026-09-28&to=2026-10-04&kind=daily');
+    assert.equal(d.status, 200);
+    assert.match(d.cd, /summary-2026-09-28_2026-10-04\.csv/);
+    const h = d.rows[0], col = n => h.indexOf('"' + n + '"');
+    assert.ok(['วันที่', 'จำนวนบิล', 'ใบคืนเงิน', 'มูลค่าก่อน VAT', 'VAT', 'ยอดรวมสุทธิ', 'คืนเงิน', 'เงินสด', 'บัตร'].every(n => col(n) >= 0), h.join(','));
+    assert.equal(d.rows.length, 1 + 7 + 1, 'หัว + 7 วัน + แถวรวม');
+    const last = d.rows[d.rows.length - 1];
+    assert.equal(last[0], '"รวม"');
+    assert.deepEqual([last[col('ยอดรวมสุทธิ')], last[col('VAT')], last[col('มูลค่าก่อน VAT')], last[col('จำนวนบิล')]], ['"314"', '"14"', '"300"', '"2"']);
+    assert.equal(d.rows[2][col('ยอดรวมสุทธิ')], '"100"', '29 ก.ย.');
+    const b = await get('from=2026-09-28&to=2026-10-04&kind=bills');
+    const bh = b.rows[0], bc = n => bh.indexOf('"' + n + '"');
+    assert.ok(bc('มูลค่าก่อน VAT') === bc('เหตุผลคืนเงิน') + 1 && bc('ชำระโดย') === bc('มูลค่าก่อน VAT') + 1, bh.join(','));
+    assert.equal(bh.slice(0, 8).join(','), '"เลขที่","วันที่","เวลา","โต๊ะ","ค่าอาหาร","ค่าบริการ","VAT","รวม"', 'คอลัมน์เดิมไม่เลื่อน');
+    assert.deepEqual(b.rows.slice(1).map(r => r[0]), ['"9001"', '"9002"']);
+    assert.equal(b.rows[2][bc('มูลค่าก่อน VAT')], '"200"');
+    const m = await get('month=2026-10');
+    assert.equal(m.status, 200);
+    assert.deepEqual(m.rows.slice(1).map(r => r[0]), ['"9002"', '"9003"'], 'month= แบบเดิม: ทั้งเดือนตุลาคม');
+    assert.equal((await get('from=2026-10-04&to=2026-09-28&kind=daily')).status, 400);
+    const ev = readLog(s.dir, 'audit').filter(e => e.action === 'report.exported');
+    assert.ok(ev.some(e => e.kind === 'daily' && e.from === '2026-09-28' && e.to === '2026-10-04'), JSON.stringify(ev));
     await s.stop();
   });
 });
