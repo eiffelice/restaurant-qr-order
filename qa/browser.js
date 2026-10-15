@@ -1489,6 +1489,69 @@ const cases = {
   },
 
   /* เกณฑ์ตรวจรับ: มือถือจอแคบไม่เลื่อนแนวนอน, ราคาเปลี่ยนระหว่างสั่ง, เน็ตหลุด, ยกเลิกออเดอร์ต้องมีเหตุผลและ PIN เจ้าของ */
+  /* คืนเงินบิลที่ปิดแล้ว (เจ้าของ): คืนบางรายการจากบิลวันนี้ → ใบคืนเงิน ยอดสรุปเป็นยอดสุทธิ · อีกเครื่องคืนไปก่อน = แจ้งและโหลดยอดใหม่
+     · คืนบิลวันก่อนด้วยเลขที่ใบเสร็จ · แคชเชียร์ไม่เห็นปุ่มคืนเงิน */
+  async refund(browser) {
+    const ok = checker('refund'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const sell = async (t, items) => {
+      await s.call('POST', '/api/order', { table: t, key: keys[t], items }, { staff: false });
+      const sub = (await s.call('GET', '/api/state')).json.bills[t].sub;
+      return (await s.call('POST', '/api/pay', { table: t, expectedSub: sub, method: 'cash' })).json.sale;
+    };
+    const sale = await sell(1, [{ id: 1, qty: 2 }, { id: 2, qty: 1 }]);          // 120 + 80 = 200 ไม่มีค่าบริการ
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'report'); await p.waitForSelector('[data-a="refund"][data-no="' + sale.no + '"]', { timeout: 6000 });
+    await p.click('[data-a="refund"][data-no="' + sale.no + '"]'); await p.waitForSelector('#refund-dlg[open]');
+    ok(/฿200/.test(await p.textContent('#refund-prev')) && /เงินสด/.test(await p.textContent('#refund-prev')), 'เปิดหน้าต่าง: ค่าเริ่มต้นคืนทั้งบิล ทางเดิม (เงินสด)', await p.textContent('#refund-prev'));
+    await p.check('#refund-form input[name=rfm][value=items]');
+    const i1 = sale.items.findIndex(i => i.price === 60);
+    await p.fill('#rfq-' + i1, '1');
+    ok(/฿60/.test(await p.textContent('#refund-prev')), 'คืนบางรายการ: ผัดกะเพรา 1 จาน = 60', await p.textContent('#refund-prev'));
+    await p.click('#refund-ok');
+    ok(/เหตุผล/.test(await p.textContent('#refund-err')), 'ไม่เลือกเหตุผล: คืนไม่ได้');
+    await p.check('#refund-form input[name=rfr][value="อาหารมีปัญหา"]'); await p.click('#refund-ok');
+    await p.waitForSelector('#refund-dlg', { state: 'hidden', timeout: 6000 }).catch(() => {});
+    await p.waitForFunction(() => /ใบคืนเงิน/.test(document.querySelector('#v-report').textContent), null, { timeout: 6000 }).catch(() => {});
+    const rc = await p.textContent('#v-report .receipt').catch(() => '');
+    ok(/ใบคืนเงิน/.test(rc) && /อ้างอิงใบเสร็จเลขที่ R\d{8}-0*1\b/.test(rc) && /คืนเงินรวม฿60/.test(rc) && /อาหารมีปัญหา/.test(rc), 'หลังคืน: แสดงใบคืนเงินอ้างอิงใบเสร็จเดิม ยอดคืน เหตุผล', rc.slice(0, 220));
+    const r1 = (await s.call('GET', '/api/report')).json;
+    ok(r1.total === 140 && r1.refunds.count === 1, 'ยอดวันนี้เป็นยอดสุทธิ 200 − 60', [r1.total, r1.refunds]);
+    await p.click('[data-a="closesale"]'); await p.waitForSelector('.kpis');
+    ok(/คืนเงิน−฿60/.test(await p.textContent('.kpis')) && /คืนแล้ว ฿60/.test(await p.textContent('#v-report')), 'สรุปยอด: การ์ดคืนเงิน และบิลบอกว่าคืนไปแล้ว');
+    // อีกเครื่องคืนส่วนที่เหลือไปก่อน ระหว่างหน้าต่างเปิดค้าง
+    await p.click('[data-a="refund"][data-no="' + sale.no + '"]'); await p.waitForSelector('#refund-dlg[open]');
+    await p.check('#refund-form input[name=rfr][value="ลูกค้ายกเลิก"]');
+    await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'cash', reason: 'อีกเครื่อง', expected: 140 });
+    await p.click('#refund-ok');
+    await p.waitForFunction(() => /ระหว่างนั้น/.test(document.querySelector('#refund-err').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/ระหว่างนั้น/.test(await p.textContent('#refund-err')) && /คืนได้อีก ฿0/.test(await p.textContent('#refund-sub')), 'อีกเครื่องคืนไปก่อน: แจ้งในหน้าต่าง และโหลดยอดที่ยังคืนได้ใหม่', await p.textContent('#refund-sub'));
+    await p.click('#refund-cancel');
+    ok((await s.call('GET', '/api/report')).json.total === 0, 'ไม่คืนซ้ำ: ยอดสุทธิ 0');
+    // คืนบิลวันก่อน: ใส่เลขที่ใบเสร็จเต็ม
+    const s2 = await sell(2, [{ id: 2, qty: 1 }]);
+    const d = new Date(s2.at), full = 'R' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + String(s2.no).padStart(4, '0');
+    await p.click('[data-a="refundfind"]'); await p.waitForSelector('#rff-dlg[open]');
+    await p.fill('#rff-no', full); await p.click('#rff-ok');
+    await p.waitForSelector('#refund-dlg[open]', { timeout: 6000 }).catch(() => {});
+    ok(new RegExp(full).test(await p.textContent('#refund-h')), 'คืนบิลวันก่อนด้วยเลขที่ใบเสร็จ: เปิดบิลนั้น', await p.textContent('#refund-h'));
+    await p.click('#refund-cancel');
+    // แคชเชียร์: ไม่มีปุ่มคืนเงิน มือถือไม่ล้นจอ
+    const ctx = await browser.newContext({ baseURL: s.B, viewport: { width: 390, height: 844 } });
+    const c = await ctx.newPage(); watch(c, errors, 'cashier');
+    await c.goto('/staff'); await c.fill('#pin', '520011'); await c.press('#pin', 'Enter'); await c.waitForSelector('#tabs .tab');
+    await tab(c, 'report'); await c.waitForSelector('.kpis');
+    ok(!(await c.$('[data-a="refund"]')) && !(await c.$('[data-a="refundfind"]')) && /คืนเงิน/.test(await c.textContent('#v-report')), 'แคชเชียร์: เห็นใบคืนเงินในรายการ แต่ไม่มีปุ่มคืนเงิน');
+    const of = await overflow(c);
+    ok(!of, 'มือถือ: สรุปยอดที่มีใบคืนเงินไม่ล้นจอ', of);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
   async acceptance(browser) {
     const ok = checker('acceptance'); const errors = [];
     const app = makeApp(); const s = start(app.code); await s.ready; await s.login();

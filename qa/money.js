@@ -50,7 +50,7 @@ async function main() {
     const lines = [{ price: A.price, qty }, { price: B.price, qty: qty + 1 }, { price: C.price, qty: 2 }];
     await order(t, [{ id: A.id, qty }, { id: B.id, qty: qty + 1 }, { id: C.id, qty: 2 }]);
     const r = await pay(t, svc, vat, qty % 2 ? 'cash' : 'transfer');
-    const e = expected(lines, svc, vat), c = P.calc(e.sub, svc, vat, 1);
+    const e = expected(lines, svc, vat), c = P.calc(e.sub, svc, vat, 0);   // อาร์กิวเมนต์ที่ 4 = ส่วนลด (เดิมคือ split=1 เปลี่ยนตอนเพิ่มส่วนลด POS งาน 7 สคริปต์นี้ไม่ได้แก้ตาม)
     sales.push(r.json.sale);
     ok(r.status === 200 && ['sub', 'svc', 'vat', 'total'].every(k => r.json.sale[k] === e[k] && c[k] === e[k]), 'svc=' + svc + ' vat=' + vat + ' qty=' + qty + ': เซิร์ฟเวอร์ = หน้าพนักงาน = คำนวณเอง', { server: r.json.sale.total, page: c.total, expect: e.total });
   }

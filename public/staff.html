@@ -482,6 +482,14 @@ h4.sub{font-size:.9rem;font-weight:700;margin:2px 0 12px;color:var(--ink2)}
 .shift-f label.f.grow{flex:2 1 14rem;max-width:none}
 .card-h .t{min-width:0;overflow-wrap:anywhere}
 .card-h .t.q{font-size:1.15rem}
+.rf-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)}
+.rf-row:first-child{border-top:0}
+.rf-row label{flex:1;min-width:0;font-size:.9rem;overflow-wrap:anywhere}
+.rf-row label small{display:block;color:var(--muted)}
+.rf-row .in{width:5.5rem;flex:none}
+.refund-sum{margin-top:14px;padding:10px 12px;border-radius:var(--r);background:var(--crit-bg);color:var(--crit);font-weight:700;min-height:1.5em}
+.refund-sum:empty{display:none}
+tr.refund td{color:var(--crit)}
 .card-act .xbtn.pr:hover{background:var(--surface2);color:var(--ink);border-color:var(--line-strong)}
 .qrsheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:12px}
 .qcard{background:#fff;color:#111;border:1px solid var(--line);border-radius:14px;padding:14px 12px;text-align:center;break-inside:avoid;display:flex;flex-direction:column;align-items:center;gap:2px;box-shadow:var(--sh-sm)}
@@ -832,6 +840,44 @@ dialog.cmdk{padding:0;border:1px solid var(--line);border-radius:20px;background
   </form>
 </dialog>
 <!-- ยกเลิกออเดอร์: อยู่นอกส่วนที่ re-render เหตุผลที่พิมพ์ค้างไว้จึงไม่หายเมื่อมีออเดอร์ใหม่เข้า -->
+<!-- คืนเงินบิลที่ปิดแล้ว (เจ้าของ): อยู่นอกส่วนที่วาดใหม่ จำนวน/เหตุผลที่เลือกค้างไว้ไม่หายเมื่อมีออเดอร์เข้า -->
+<dialog class="dlg" id="refund-dlg" aria-labelledby="refund-h">
+  <form method="dialog" id="refund-form">
+    <h3 id="refund-h">คืนเงิน</h3>
+    <div class="muted small" id="refund-sub"></div>
+    <fieldset class="reasons"><legend>คืนแบบ</legend>
+      <label><input type="radio" name="rfm" value="all" checked>ทั้งบิล</label>
+      <label><input type="radio" name="rfm" value="items">บางรายการ</label>
+    </fieldset>
+    <div id="refund-lines" class="stack" style="gap:6px" hidden></div>
+    <fieldset class="reasons"><legend>เหตุผล (ต้องเลือก)</legend>
+      <label><input type="radio" name="rfr" value="กดรับเงินผิด">กดรับเงินผิด</label>
+      <label><input type="radio" name="rfr" value="ลูกค้ายกเลิก">ลูกค้ายกเลิก</label>
+      <label><input type="radio" name="rfr" value="อาหารมีปัญหา">อาหารมีปัญหา</label>
+      <label><input type="radio" name="rfr" value="อื่นๆ">อื่นๆ</label>
+    </fieldset>
+    <label class="f" for="refund-note">รายละเอียดเพิ่มเติม<input class="in" id="refund-note" maxlength="60" autocomplete="off"></label>
+    <fieldset class="reasons"><legend>คืนเงินทาง</legend>
+      <label><input type="radio" name="rfp" value="cash" checked>เงินสด</label>
+      <label><input type="radio" name="rfp" value="transfer">โอน/QR</label>
+      <label><input type="radio" name="rfp" value="card">บัตร</label>
+      <label><input type="radio" name="rfp" value="other">อื่นๆ</label>
+    </fieldset>
+    <div class="refund-sum" id="refund-prev" aria-live="polite"></div>
+    <div class="err" id="refund-err" role="alert"></div>
+    <div class="row"><button type="button" class="btn" id="refund-cancel">ไม่คืนเงิน</button><button type="submit" class="btn danger" id="refund-ok">ยืนยันคืนเงิน</button></div>
+  </form>
+</dialog>
+<!-- คืนเงินบิลวันก่อน (ไม่อยู่ในรายการบิลวันนี้): ใส่เลขที่ใบเสร็จ -->
+<dialog class="dlg" id="rff-dlg" aria-labelledby="rff-h">
+  <form method="dialog" id="rff-form">
+    <h3 id="rff-h">คืนเงินบิลวันก่อน</h3>
+    <p class="muted small" style="margin:0 0 12px">คืนเงินในระบบได้เฉพาะบิล 8 วันล่าสุด ดูเลขที่ได้บนใบเสร็จ เช่น R20261015-0004 (พิมพ์แค่ 4 ก็ได้)</p>
+    <label class="f" for="rff-no">เลขที่ใบเสร็จ<input class="in" id="rff-no" inputmode="numeric" autocomplete="off" maxlength="20"></label>
+    <div class="err" id="rff-err" role="alert"></div>
+    <div class="row"><button type="button" class="btn" id="rff-cancel">ปิด</button><button type="submit" class="btn primary" id="rff-ok">เปิดบิล</button></div>
+  </form>
+</dialog>
 <dialog class="dlg" id="void-dlg" aria-labelledby="void-h">
   <form method="dialog" id="void-form">
     <h3 id="void-h">ยกเลิกออเดอร์</h3>
@@ -1175,6 +1221,109 @@ $('#disc-form').addEventListener('submit',function(e){
     if(r.status===409){$('#disc-dlg').close();discT=null;toast(r.j.error);load();}
     if(r.status===401){$('#disc-dlg').close();showLogin();}
   },function(){$('#disc-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+});
+
+/* ---------- คืนเงินบิลที่ปิดแล้ว (เจ้าของ ดู tasks/spec-refund.md) ----------
+   ข้อมูลในหน้าต่างมาจาก GET /api/bill ทุกครั้งที่เปิด (ยอดที่ยังคืนได้ล่าสุด) ยอดที่แสดงเป็นตัวอย่าง เซิร์ฟเวอร์คำนวณเองและตรวจซ้ำ
+   ส่ง expected = ยอดที่ยังคืนได้ตอนเปิด อีกเครื่องคืนไปก่อน = 409 */
+var rf=null;
+function refundOf(no,done){
+  return api('/api/bill?no='+no).then(function(r){
+    if(!r.ok){toast(r.j.error||'เปิดบิลไม่ได้');if(r.status===401)showLogin();return null;}
+    return r.j;
+  },function(){toast('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');return null;});
+}
+function refundFill(){
+  var s=rf.sale;
+  $('#refund-h').textContent='คืนเงิน '+billNo(s.no,s.at);
+  $('#refund-sub').textContent=saleLabel(s)+' · '+fmtDate(s.at)+' · ยอดบิล '+baht(s.total)+(rf.remaining<s.total?' · คืนไปแล้ว '+baht(round2(s.total-rf.remaining)):'')+' · คืนได้อีก '+baht(rf.remaining);
+  var box=$('#refund-lines');box.textContent='';
+  rf.lines.forEach(function(l){
+    if(l.left<=0)return;
+    var row=document.createElement('div');row.className='rf-row';
+    var lb=document.createElement('label');lb.htmlFor='rfq-'+l.i;lb.textContent=l.name;
+    var sm=document.createElement('small');sm.textContent=baht(l.price)+' · สั่ง '+l.qty+' คืนได้อีก '+l.left;lb.appendChild(sm);
+    var q=document.createElement('input');q.className='in';q.id='rfq-'+l.i;q.type='number';q.min=0;q.max=l.left;q.step=1;q.value=0;q.inputMode='numeric';q.dataset.i=l.i;
+    row.appendChild(lb);row.appendChild(q);box.appendChild(row);
+  });
+  refundPreview();
+}
+function openRefund(no){
+  refundOf(no).then(function(j){
+    if(!j)return;
+    if(j.remaining<=0){toast('บิลนี้คืนเงินครบแล้ว');return;}
+    rf=j;$('#refund-form').reset();$('#refund-lines').hidden=true;
+    var p=paysOf(j.sale);   // ค่าเริ่มต้น: ช่องทางเดิมของบิล (แบ่งจ่าย = เงินสด)
+    document.querySelector('#refund-form input[name=rfp][value="'+(p.length>1?'cash':p[0].method)+'"]').checked=true;
+    $('#refund-err').textContent='';$('#refund-ok').disabled=false;
+    refundFill();
+    $('#refund-dlg').showModal();
+  });
+}
+function refundMode(){return document.querySelector('#refund-form input[name=rfm]:checked').value;}
+function refundPicks(){
+  if(!rf)return [];
+  if(refundMode()==='all')return rf.lines.filter(function(l){return l.left>0;}).map(function(l){return {l:l,qty:l.left};});
+  return rf.lines.filter(function(l){return l.left>0;}).map(function(l){var v=+($('#rfq-'+l.i)||{}).value;return {l:l,qty:v};}).filter(function(p){return p.qty>0;});
+}
+// สูตรเดียวกับเซิร์ฟเวอร์ (POST /api/refund): ราคา × จำนวน × ยอดบิล ÷ ค่าอาหาร คืนครบทุกจาน = ยอดที่เหลือพอดี
+function refundAmount(picks){
+  var s=rf.sale,value=picks.reduce(function(a,p){return a+p.l.price*p.qty;},0);
+  var left=rf.lines.filter(function(l){return l.left>0;}).length;
+  var all=picks.length===left&&picks.every(function(p){return p.qty===p.l.left;});
+  return all?rf.remaining:Math.min(round2(value*s.total/s.sub),rf.remaining);
+}
+function refundPreview(){
+  if(!rf)return;
+  var picks=refundPicks(),el=$('#refund-prev');
+  var bad=picks.filter(function(p){return !(p.qty>=1&&p.qty<=p.l.left&&Math.floor(p.qty)===p.qty);})[0];
+  if(bad){el.textContent=bad.l.name+' คืนได้ 1 ถึง '+bad.l.left+' จาน';return;}
+  if(!picks.length){el.textContent='ใส่จำนวนจานที่จะคืน';return;}
+  var m=document.querySelector('#refund-form input[name=rfp]:checked').value;
+  el.textContent='คืนเงิน '+baht(refundAmount(picks))+' ทาง'+PAYN[m];
+}
+function refundReason(){
+  var r=document.querySelector('#refund-form input[name=rfr]:checked'),n=$('#refund-note').value.trim();
+  if(!r)return '';
+  return r.value==='อื่นๆ'?n:(n?r.value+': '+n:r.value);
+}
+document.addEventListener('input',function(e){if(e.target.closest&&e.target.closest('#refund-form'))refundPreview();});
+document.addEventListener('change',function(e){
+  if(!(e.target.closest&&e.target.closest('#refund-form')))return;
+  if(e.target.name==='rfm'){var it=refundMode()==='items';$('#refund-lines').hidden=!it;if(it){var f=document.querySelector('#refund-lines input');if(f)f.focus();}}
+  refundPreview();
+});
+$('#refund-cancel').addEventListener('click',function(){$('#refund-dlg').close();rf=null;});
+$('#refund-form').addEventListener('submit',function(e){
+  e.preventDefault();if(!rf)return;
+  var err=$('#refund-err'),picks=refundPicks(),reason=refundReason(),mode=refundMode();
+  if(!picks.length){err.textContent='เลือกจำนวนจานที่จะคืน';return;}
+  if(picks.some(function(p){return !(p.qty>=1&&p.qty<=p.l.left&&Math.floor(p.qty)===p.qty);})){err.textContent='จำนวนที่คืนไม่ถูกต้อง';return;}
+  if(!document.querySelector('#refund-form input[name=rfr]:checked')){err.textContent='เลือกเหตุผลก่อน';return;}
+  if(reason.length<2){err.textContent='พิมพ์รายละเอียดเหตุผล';$('#refund-note').focus();return;}
+  var body={no:rf.sale.no,mode:mode,method:document.querySelector('#refund-form input[name=rfp]:checked').value,reason:reason,expected:rf.remaining};
+  if(mode==='items')body.lines=picks.map(function(p){return {i:p.l.i,qty:p.qty};});
+  $('#refund-ok').disabled=true;err.textContent='';
+  api('/api/refund',body).then(function(r){
+    $('#refund-ok').disabled=false;
+    if(r.ok){
+      $('#refund-dlg').close();rf=null;
+      toast('คืนเงิน '+baht(-r.j.refund.total)+' แล้ว พิมพ์ใบคืนเงินให้ลูกค้าได้');
+      S.viewSale=r.j.refund;loadReport();if(S.tab!=='report')goTab('report');else renderReport();window.scrollTo(0,0);
+      return;
+    }
+    err.textContent=r.j.error||'คืนเงินไม่สำเร็จ';
+    // อีกเครื่องคืนไปก่อนแล้ว: โหลดยอดที่ยังคืนได้ใหม่ ให้ตรวจแล้วกดอีกครั้ง
+    if(r.status===409)refundOf(rf.sale.no).then(function(j){if(j&&rf){rf=j;refundFill();}});
+    if(r.status===401){$('#refund-dlg').close();showLogin();}
+  },function(){$('#refund-ok').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
+});
+$('#rff-cancel').addEventListener('click',function(){$('#rff-dlg').close();});
+$('#rff-form').addEventListener('submit',function(e){
+  e.preventDefault();
+  var m=/(\d+)\s*$/.exec($('#rff-no').value.trim());
+  if(!m){$('#rff-err').textContent='ใส่เลขที่ใบเสร็จ';return;}
+  $('#rff-dlg').close();openRefund(+m[1]);
 });
 
 /* ---------- สต็อกวัตถุดิบ ----------
@@ -1771,14 +1920,14 @@ function receiptHtml(o){
   if(s.address)h+='<div class="sub">'+esc(s.address)+'</div>';
   if(s.phone)h+='<div class="sub">โทร '+esc(s.phone)+'</div>';
   if(s.taxId)h+='<div class="sub">เลขประจำตัวผู้เสียภาษี '+esc(s.taxId)+'</div>';
-  h+='<div class="doc">'+o.title+'</div><hr>';
-  h+='<div class="meta"><span>'+(o.no?'เลขที่ '+o.no:'ยังไม่ได้ชำระเงิน')+'</span><span>'+esc(o.label||('โต๊ะ '+o.table))+'</span></div><div class="meta"><span>'+fmtDate(o.at)+'</span>'+(o.method?'<span>ชำระโดย '+esc(o.payLabel||(o.method==='transfer'?'โอน/QR':'เงินสด'))+'</span>':'')+'</div><hr>';
+  h+='<div class="doc">'+o.title+'</div>'+(o.refOf?'<div class="sub">อ้างอิงใบเสร็จเลขที่ '+o.refOf+'</div>':'')+'<hr>';
+  h+='<div class="meta"><span>'+(o.no?'เลขที่ '+o.no:'ยังไม่ได้ชำระเงิน')+'</span><span>'+esc(o.label||('โต๊ะ '+o.table))+'</span></div><div class="meta"><span>'+fmtDate(o.at)+'</span>'+(o.method?'<span>'+(o.payPrefix||'ชำระโดย')+' '+esc(o.payLabel||(o.method==='transfer'?'โอน/QR':'เงินสด'))+'</span>':'')+'</div><hr>';
   h+='<table>'+o.lines.map(function(l){return '<tr><td class="q">'+l.qty+'×</td><td>'+esc(l.name)+'</td><td class="a">'+baht(l.price*l.qty)+'</td></tr>';}).join('')+'</table><hr>';
   h+='<table><tr><td>รวมค่าอาหาร</td><td class="a">'+baht(o.sub)+'</td></tr>';
   if(o.disc)h+='<tr class="disc"><td>ส่วนลด'+(o.discount&&o.discount.kind==='pct'?' '+o.discount.value+'%':'')+(o.discount&&o.discount.reason?' ('+esc(o.discount.reason)+')':'')+'</td><td class="a">−'+baht(o.disc)+'</td></tr><tr><td>ค่าอาหารหลังลด</td><td class="a">'+baht(round2(o.sub-o.disc))+'</td></tr>';
   if(o.svc)h+='<tr><td>ค่าบริการ 10%</td><td class="a">'+baht(o.svc)+'</td></tr>';
   if(o.vat)h+='<tr><td>VAT 7%</td><td class="a">'+baht(o.vat)+'</td></tr>';
-  h+='<tr class="grand"><td>รวมสุทธิ</td><td class="a">'+baht(o.total)+'</td></tr>';
+  h+='<tr class="grand"><td>'+(o.totalLabel||'รวมสุทธิ')+'</td><td class="a">'+baht(o.total)+'</td></tr>';
   if(o.pays&&o.pays.length>1)h+=o.pays.map(function(p){return '<tr><td>'+esc(PAYN[p.method]+(p.note?' ('+p.note+')':''))+'</td><td class="a">'+baht(p.amount)+'</td></tr>';}).join('');
   if(o.received!=null)h+='<tr><td>รับเงิน</td><td class="a">'+baht(o.received)+'</td></tr><tr><td>เงินทอน</td><td class="a">'+baht(o.change)+'</td></tr>';
   h+='</table>';
@@ -1792,6 +1941,7 @@ function receiptHtml(o){
     else h+='<small>ตั้งค่าเบอร์ PromptPay ในแท็บ "ตั้งค่า" เพื่อแสดง QR รับเงิน</small>';
     h+='</div>';
   }
+  if(o.reason)h+='<hr><div class="sub">เหตุผล: '+esc(o.reason)+'</div>';
   if(s.footer)h+='<hr><div class="sub">'+esc(s.footer)+'</div>';
   return h;
 }
@@ -1799,7 +1949,14 @@ var PAYN={cash:'เงินสด',transfer:'โอน/QR',card:'บัตร',
 // ช่องทางชำระของบิล (บิลเก่าไม่มี payments = ทั้งยอดด้วย method เดียว เหมือน store.paymentsOf ที่เซิร์ฟเวอร์)
 function paysOf(sale){return sale.payments&&sale.payments.length?sale.payments:[{method:PAYN[sale.method]?sale.method:'cash',amount:sale.total}];}
 function payLabel(sale){var p=paysOf(sale);return p.length>1?'หลายช่องทาง':PAYN[p[0].method]+(p[0].note?' ('+p[0].note+')':'');}
+// ใบคืนเงิน: ตัวเลขในระบบติดลบ บนกระดาษแสดงเป็นยอดคืน (บวก) อ้างอิงใบเสร็จเดิม
+function refundReceipt(f){
+  var neg=function(v){return round2(-(v||0))+0;};
+  return receiptHtml({title:'ใบคืนเงิน',no:billNo(f.no,f.at),refOf:f.refundOfAt?billNo(f.refundOf,f.refundOfAt):'#'+f.refundOf,at:f.at,table:f.table,label:f.queue?['คิว '+f.queue,CHN[f.channel],f.name].filter(Boolean).join(' · '):'',
+    lines:f.items.map(function(i){return {name:i.name,qty:-i.qty,price:i.price};}),sub:neg(f.sub),disc:neg(f.disc),svc:neg(f.svc),vat:neg(f.vat),total:neg(f.total),method:f.method,payPrefix:'คืนเงินทาง',payLabel:payLabel(f),totalLabel:'คืนเงินรวม',reason:f.reason});
+}
 function saleReceipt(sale,cash){
+  if(sale.type==='refund')return refundReceipt(sale);
   return receiptHtml({title:'ใบเสร็จรับเงิน',no:billNo(sale.no,sale.at),at:sale.at,table:sale.table,label:sale.queue?['คิว '+sale.queue,CHN[sale.channel],sale.name].filter(Boolean).join(' · '):'',lines:sale.items,sub:sale.sub,disc:sale.disc||0,discount:sale.discount,svc:sale.svc,vat:sale.vat,total:sale.total,method:sale.method,pays:paysOf(sale),payLabel:payLabel(sale),
     received:cash?cash.received:null,change:cash?cash.change:null});
 }
@@ -1952,14 +2109,14 @@ function scrollCheck(){
 }
 
 /* ประวัติการแก้ไขวันนี้ จาก audit log: เน้นสิ่งที่เกี่ยวกับเงิน (ยกเลิกออเดอร์ แก้ราคา PromptPay กู้คืน ดาวน์โหลดข้อมูล) */
-var ACT={'stock.item.created':'เพิ่มวัตถุดิบ','stock.item.updated':'แก้วัตถุดิบ','stock.item.deleted':'ลบวัตถุดิบ','stock.moved':'สต็อกเคลื่อนไหว','stock.recipe.changed':'แก้สูตร','queue.created':'ขอเลขคิว','queue.cancelled':'ยกเลิกคิว','bill.discounted':'ให้ส่วนลด','bill.discount_removed':'เอาส่วนลดออก','ticket.voided':'ยกเลิกออเดอร์','bill.pay_rejected':'รับเงินไม่สำเร็จ ยอดเปลี่ยน','menu.item.updated':'แก้เมนู','menu.item.created':'เพิ่มเมนู',
+var ACT={'bill.refunded':'คืนเงิน','stock.item.created':'เพิ่มวัตถุดิบ','stock.item.updated':'แก้วัตถุดิบ','stock.item.deleted':'ลบวัตถุดิบ','stock.moved':'สต็อกเคลื่อนไหว','stock.recipe.changed':'แก้สูตร','queue.created':'ขอเลขคิว','queue.cancelled':'ยกเลิกคิว','bill.discounted':'ให้ส่วนลด','bill.discount_removed':'เอาส่วนลดออก','ticket.voided':'ยกเลิกออเดอร์','bill.pay_rejected':'รับเงินไม่สำเร็จ ยอดเปลี่ยน','menu.item.updated':'แก้เมนู','menu.item.created':'เพิ่มเมนู',
   'menu.item.deleted':'ลบเมนู','menu.soldout':'เมนูหมด','settings.changed':'แก้ตั้งค่าร้าน','backup.restored':'กู้คืนข้อมูล','backup.restore_failed':'กู้คืนไม่สำเร็จ',
   'backup.downloaded':'ดาวน์โหลดไฟล์สำรอง','backup.created':'สำรองข้อมูล','report.exported':'ดาวน์โหลด CSV','log.downloaded':'ดาวน์โหลด log',
   'menu.image.updated':'เปลี่ยนรูปเมนู','menu.image.removed':'เอารูปเมนูออก','menu.category.created':'เพิ่มหมวด','menu.category.renamed':'แก้ชื่อหมวด',
   'menu.category.deleted':'ลบหมวด','menu.notes.changed':'แก้ตัวเลือกหมายเหตุ','staff.created':'เพิ่มพนักงาน','staff.updated':'แก้ข้อมูลพนักงาน',
   'staff.sessions_revoked':'สั่งออกจากระบบทุกเครื่อง','settings.payqr.updated':'เปลี่ยนรูป QR รับเงิน','settings.payqr.removed':'เลิกใช้รูป QR รับเงิน',
   'settings.logo.updated':'เปลี่ยนโลโก้','settings.logo.removed':'เอาโลโก้ออก','settings.cover.updated':'เปลี่ยนภาพพื้นหลัง','settings.cover.removed':'เอาภาพพื้นหลังออก'};
-var MONEY={'ticket.voided':1,'bill.pay_rejected':1,'backup.restored':1,'backup.downloaded':1,'settings.payqr.updated':1,'settings.payqr.removed':1};
+var MONEY={'bill.refunded':1,'ticket.voided':1,'bill.pay_rejected':1,'backup.restored':1,'backup.downloaded':1,'settings.payqr.updated':1,'settings.payqr.removed':1};
 var FLD={tagline:'คำโปรย',look:'โทนหน้าลูกค้า',social:'ลิงก์โซเชียลมีเดีย',shareUrl:'ลิงก์แชร์ร้าน',accent:'สีปุ่ม',requireSeat:'ต้องเปิดโต๊ะก่อนสั่ง',hours:'เวลารับออเดอร์',shop:'ชื่อร้าน',promptpay:'PromptPay',tables:'จำนวนโต๊ะ',svc:'ค่าบริการ',vat:'VAT',acceptOrders:'รับออเดอร์ QR',address:'ที่อยู่',phone:'โทร',
   taxId:'เลขผู้เสียภาษี',footer:'ท้ายใบเสร็จ',baseUrl:'ที่อยู่ใน QR',name:'ชื่อ',price:'ราคา',cat:'หมวด',station:'จุดทำ',desc:'คำอธิบาย',hidden:'ซ่อน',
   role:'บทบาท',active:'ใช้งาน'};
@@ -1970,6 +2127,7 @@ function fv(v){
 function changes(e){return Object.keys(e.after||{}).map(function(k){return (FLD[k]||k)+' '+fv(e.before&&e.before[k])+' → '+fv(e.after[k]);}).join(', ');}
 function auditDetail(e){
   if(e.action==='ticket.voided')return 'โต๊ะ '+e.table+' · '+(e.items||[]).map(function(i){return i.name+' ×'+i.qty;}).join(', ')+' · มูลค่า '+baht(e.value)+(e.reason?' · เหตุผล: '+e.reason:'')+(e.approvedBy?' · อนุมัติโดย '+e.approvedBy.name:'');
+  if(e.action==='bill.refunded')return 'บิล '+e.refundOf+' คืน '+baht(-e.total)+' ทาง'+(PAYN[e.method]||'')+' · '+(e.items||[]).map(function(i){return i.name+' ×'+i.qty;}).join(', ')+' · เหตุผล: '+(e.reason||'');
   if(e.action==='bill.discounted')return 'โต๊ะ '+e.table+' ลด '+(e.kind==='pct'?e.value+'% ':'')+baht(e.amount)+' จากค่าอาหาร '+baht(e.sub)+' เหตุผล: '+(e.reason||'')+(e.approvedBy?' อนุมัติโดย '+e.approvedBy.name:'');
   if(e.action==='bill.discount_removed')return 'โต๊ะ '+e.table+' เอาส่วนลด '+(e.kind==='pct'?e.value+'%':baht(e.value))+' ออก';
   if(e.action==='bill.pay_rejected')return 'โต๊ะ '+e.table+' ยอดตอนกด '+baht(e.expectedSub)+' ยอดจริง '+baht(e.actualSub);
@@ -2048,7 +2206,8 @@ function rangeHtml(){
     (g.costed?kpi('box','ต้นทุนวัตถุดิบ',baht(g.cogs),g.costed+' บิลที่มีสูตร')+
       kpi('star','กำไรขั้นต้น',baht(g.gross),'เฉพาะเมนูที่มีสูตร (ขาย '+baht(g.costedRevenue)+')'+(g.costedRevenue>0?' · '+Math.round(g.gross/g.costedRevenue*100)+'%':'')):'')+
     kpi('tag','ส่วนลด',baht(g.discounts.value),g.discounts.count+' บิล')+
-    kpi('x','ยกเลิก',g.voids.count+' รายการ','มูลค่า '+baht(g.voids.value))+'</div>';
+    kpi('x','ยกเลิก',g.voids.count+' รายการ','มูลค่า '+baht(g.voids.value))+
+    (g.refunds&&g.refunds.count?kpi('history','คืนเงิน','−'+baht(g.refunds.value),g.refunds.count+' ครั้ง หักจากยอดขายแล้ว'):'')+'</div>';
   var ser=g.series.filter(function(x){return x.count||p==='year';}).map(function(x){
     var lb=p==='today'?pad(x.key,2)+':00 น.':p==='month'?x.key+' '+new Date(g.from).toLocaleDateString('th-TH',{month:'short'}):new Date(+x.key.slice(0,4),+x.key.slice(5)-1,1).toLocaleDateString('th-TH',{month:'long'});
     return {label:lb,total:x.total,count:x.count};
@@ -2060,6 +2219,7 @@ function rangeHtml(){
   h+='<div class="two"><div><h4 class="sub">ขายดี (จำนวนจาน)</h4>'+(g.best.length?'<ol class="rank">'+g.best.map(function(x,i){return '<li><span class="rk">'+(i+1)+'</span><span class="nm">'+esc(x.name)+'</span><span class="n">'+x.qty+'</span><span class="tr" aria-hidden="true"><i style="width:'+Math.round(x.qty/bmx*100)+'%"></i></span></li>';}).join('')+'</ol>':none)+'</div>';
   h+='<div><h4 class="sub">ขายไม่ดี (น้อยไปมาก)</h4>'+(g.worst.length?'<div class="tbl-wrap"><table class="list"><tbody>'+g.worst.map(function(x){return '<tr><td>'+esc(x.name)+'</td><td class="r">'+x.qty+' จาน</td><td class="r">'+baht(x.amount)+'</td></tr>';}).join('')+'</tbody></table></div>':none)+
     (g.notSold.length?'<p class="small" style="margin:12px 0 0"><b>ไม่มีใครสั่ง'+RP[p]+' ('+g.notSold.length+')</b><br><span class="muted">'+g.notSold.map(esc).join(' · ')+'</span></p>':'')+'</div></div>';
+  if(g.refunds&&g.refunds.count)h+='<h4 class="sub">คืนเงิน</h4><div class="tbl-wrap" style="margin-bottom:16px"><table class="list"><thead><tr><th>เหตุผล</th><th class="r">ครั้ง</th><th class="r">มูลค่า</th></tr></thead><tbody>'+g.refunds.reasons.map(function(x){return '<tr><td>'+esc(x.reason)+'</td><td class="r">'+x.count+'</td><td class="r">'+baht(x.value)+'</td></tr>';}).join('')+'</tbody></table></div>';
   h+='<h4 class="sub">รายการยกเลิก</h4>';
   if(!g.voids.count)h+='<div class="muted small">ไม่มีการยกเลิก'+RP[p]+'</div>';
   else h+='<div class="two" style="margin-bottom:0"><div class="tbl-wrap"><table class="list"><thead><tr><th>เหตุผล</th><th class="r">ครั้ง</th><th class="r">มูลค่า</th></tr></thead><tbody>'+g.voids.reasons.map(function(x){return '<tr><td>'+esc(x.reason)+'</td><td class="r">'+x.count+'</td><td class="r">'+baht(x.value)+'</td></tr>';}).join('')+'</tbody></table></div>'+
@@ -2068,6 +2228,9 @@ function rangeHtml(){
 }
 function shortBaht(n){return n>=10000?'฿'+(Math.round(n/100)/10).toLocaleString('th-TH')+'k':baht(Math.round(n));}
 function saleLabel(s){return s.queue?'คิว '+s.queue:'โต๊ะ '+s.table;}
+// ยอดที่คืนไปแล้วของบิล (จากบิลวันนี้ในสรุปยอด ใช้แค่ซ่อน/แสดงปุ่ม เซิร์ฟเวอร์ตรวจจริงตอนคืน)
+function refundedToday(no){return round2(-((S.report&&S.report.bills)||[]).filter(function(b){return b.type==='refund'&&b.refundOf===no;}).reduce(function(a,b){return a+b.total;},0));}
+function refundBtn(s){return isOwner()&&s.type!=='refund'&&refundedToday(s.no)<s.total?'<button class="btn sm" data-a="refund" data-no="'+s.no+'">'+ic('history')+'คืนเงิน</button>':'';}
 function renderReport(){
   var r=S.report;
   // ช่องนับเงินในกะ / ปุ่มเลือกช่วงที่โฟกัสอยู่: วาดใหม่แล้วคืนโฟกัส (และเคอร์เซอร์) ที่เดิม
@@ -2075,8 +2238,9 @@ function renderReport(){
   var ae=document.activeElement,fr=ae&&ae.dataset&&(ae.dataset.a==='rperiod'||ae.dataset.a==='rreload')?'[data-a="'+ae.dataset.a+'"]'+(ae.dataset.p?'[data-p="'+ae.dataset.p+'"]':''):null;
   if(!r){$('#v-report').innerHTML='<div class="panel empty"><div class="art">'+ic('report')+'</div><p>กำลังโหลด…</p></div>';return;}
   if(S.viewSale){
-    $('#v-report').innerHTML='<div class="pos"><div class="panel np stack"><div class="sec-title" style="margin:0"><h3>'+ic('receipt')+'ใบเสร็จย้อนหลัง</h3></div><p class="muted small">เลขที่ '+billNo(S.viewSale.no,S.viewSale.at)+' · '+esc(saleLabel(S.viewSale))+' · '+fmtDate(S.viewSale.at)+'</p>'+
-      '<button class="btn primary block" data-a="printr">'+ic('printer')+'พิมพ์ซ้ำ</button><button class="btn block" data-a="closesale">กลับไปหน้าสรุปยอด</button></div><div class="receipt-box"><div class="receipt">'+saleReceipt(S.viewSale)+'</div></div></div>';
+    var vs=S.viewSale,isRf=vs.type==='refund',done=isRf?0:refundedToday(vs.no);
+    $('#v-report').innerHTML='<div class="pos"><div class="panel np stack"><div class="sec-title" style="margin:0"><h3>'+ic(isRf?'history':'receipt')+(isRf?'ใบคืนเงิน':'ใบเสร็จย้อนหลัง')+'</h3></div><p class="muted small">เลขที่ '+billNo(vs.no,vs.at)+' · '+esc(saleLabel(vs))+' · '+fmtDate(vs.at)+(isRf?' · คืนเงิน '+baht(-vs.total)+' เหตุผล: '+esc(vs.reason||''):'')+(done?' · คืนเงินไปแล้ว '+baht(done):'')+'</p>'+
+      '<button class="btn primary block" data-a="printr">'+ic('printer')+(isRf?'พิมพ์ใบคืนเงิน':'พิมพ์ซ้ำ')+'</button>'+(refundBtn(vs)?refundBtn(vs).replace('btn sm','btn block'):'')+'<button class="btn block" data-a="closesale">กลับไปหน้าสรุปยอด</button></div><div class="receipt-box"><div class="receipt">'+saleReceipt(S.viewSale)+'</div></div></div>';
     return;
   }
   var mx=r.top.length?r.top[0].qty:1,dmx=Math.max.apply(null,r.days.map(function(x){return x.total;}).concat([1]));
@@ -2087,6 +2251,7 @@ function renderReport(){
     kpi('qr','โอน / QR',baht(r.transfer),pct(r.transfer)+'ตรวจกับยอดเข้าบัญชี')+
     (r.card?kpi('card','บัตร',baht(r.card),pct(r.card)+'ตรวจกับสลิปเครื่องรูดบัตร'):'')+
     (r.other?kpi('split','ช่องทางอื่น',baht(r.other),pct(r.other)+'เช่น แอปเดลิเวอรี คูปอง'):'')+
+    (r.refunds&&r.refunds.count?kpi('history','คืนเงิน','−'+baht(r.refunds.value),r.refunds.count+' ครั้ง หักจากยอดขายแล้ว'):'')+
     kpi('clock','รอชำระ ('+r.openTables+' โต๊ะ)',baht(r.pending),'ยังไม่รวมค่าบริการ/VAT')+'</div>';
   h+=shiftHtml();
   // กราฟแท่งชุดเดียว: วันนี้สีเต็ม วันอื่นจาง มีตัวเลขทุกแท่ง (7 แท่ง) และคำอธิบายทั้งชุดสำหรับโปรแกรมอ่านหน้าจอ
@@ -2102,10 +2267,12 @@ function renderReport(){
   h+='</div></div>';
   h+=rangeHtml();
   if(isOwner())h+=auditHtml(month);
-  h+='<div class="panel"><div class="sec-title"><h3>'+ic('receipt')+'บิลวันนี้</h3>'+(isOwner()?'<a class="btn sm" href="/api/export.csv?month='+month+'">'+ic('download')+'ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a>':'')+'</div>';
+  h+='<div class="panel"><div class="sec-title"><h3>'+ic('receipt')+'บิลวันนี้</h3>'+(isOwner()?'<span class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="refundfind">'+ic('history')+'คืนเงินบิลวันก่อน</button><a class="btn sm" href="/api/export.csv?month='+month+'">'+ic('download')+'ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a></span>':'')+'</div>';
   if(!r.bills.length)h+='<div class="muted small">ยังไม่มีบิล</div>';
   else h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>เลขที่</th><th>เวลา</th><th>โต๊ะ</th><th>ชำระโดย</th><th class="r">ยอด</th><th></th></tr></thead><tbody>'+r.bills.map(function(b){
-    return '<tr><td>'+billNo(b.no,b.at)+'</td><td>'+hhmm(b.at)+'</td><td>'+(b.queue?'คิว '+b.queue:b.table)+'</td><td><span class="pill">'+esc(payLabel(b))+'</span></td><td class="r"><b>'+baht(b.total)+'</b></td><td class="r"><button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบเสร็จ</button></td></tr>';
+    if(b.type==='refund')return '<tr class="refund"><td>'+billNo(b.no,b.at)+'</td><td>'+hhmm(b.at)+'</td><td>'+(b.queue?'คิว '+b.queue:b.table)+'</td><td><span class="pill crit">คืนเงิน · '+esc(payLabel(b))+'</span> <span class="small">ของบิล '+(b.refundOfAt?billNo(b.refundOf,b.refundOfAt):'#'+b.refundOf)+'</span></td><td class="r"><b>−'+baht(-b.total)+'</b></td><td class="r"><button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบคืนเงิน</button></td></tr>';
+    var rd=refundedToday(b.no);
+    return '<tr><td>'+billNo(b.no,b.at)+'</td><td>'+hhmm(b.at)+'</td><td>'+(b.queue?'คิว '+b.queue:b.table)+'</td><td><span class="pill">'+esc(payLabel(b))+'</span>'+(rd?' <span class="pill crit">คืนแล้ว '+baht(rd)+'</span>':'')+'</td><td class="r"><b>'+baht(b.total)+'</b></td><td class="r"><span class="row" style="gap:6px;justify-content:flex-end">'+refundBtn(b)+'<button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบเสร็จ</button></span></td></tr>';
   }).join('')+'</tbody></table></div>';
   h+='</div>';
   $('#v-report').innerHTML=h;
@@ -2847,6 +3014,8 @@ document.addEventListener('click',function(e){
   else if(a==='donesale'){S.lastSale=null;S.lastCash=null;render();}
   else if(a==='viewsale'){var no=+b.dataset.no;S.viewSale=(S.report.bills||[]).filter(function(x){return x.no===no;})[0]||null;renderReport();window.scrollTo(0,0);}
   else if(a==='closesale'){S.viewSale=null;renderReport();}
+  else if(a==='refund'){openRefund(+b.dataset.no);}
+  else if(a==='refundfind'){$('#rff-form').reset();$('#rff-err').textContent='';$('#rff-dlg').showModal();$('#rff-no').focus();}
   else if(a==='tog'){var on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);b.textContent=on?'เปิด':'ปิด';markDirty();}
   else if(a==='savesettings'){
     act('/api/settings',{shop:$('#s-shop').value,promptpay:$('#s-pp').value,tables:+$('#s-tables').value,baseUrl:$('#s-base').value,

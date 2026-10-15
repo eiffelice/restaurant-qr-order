@@ -2618,3 +2618,127 @@ describe('แก้ตามรีวิว POS ระยะ 2', () => {
     await s.stop();
   });
 });
+
+describe('คืนเงินบิลที่ปิดแล้ว (ใบคืนเงิน)', () => {
+  // ขายหนึ่งบิลแล้วคืนค่า sale ที่เซิร์ฟเวอร์บันทึก
+  const sell = async (s, t, items, pay) => {
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: t, key: keys[t], items });
+    const sub = (await s.call('GET', '/api/state')).json.bills[t].sub;
+    const r = await s.call('POST', '/api/pay', Object.assign({ table: t, expectedSub: sub }, pay));
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return r.json.sale;
+  };
+  const salesLines = s => fs.readFileSync(path.join(s.dir, 'sales', fs.readdirSync(path.join(s.dir, 'sales'))[0]), 'utf8').split('\n').filter(Boolean);
+
+  test('เจ้าของคืนทั้งบิล: ใบคืนเงินเลขใหม่ ยอดติดลบ บิลเดิมใน sales/ ไม่เปลี่ยน ยอดวันนี้/กะเป็นยอดสุทธิ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.equal((await s.call('POST', '/api/shift/open', { float: 500 })).status, 200);
+    const sale = await sell(s, 1, [{ id: 1, qty: 2 }], { method: 'cash', svc: true });     // 120 + ค่าบริการ 12 = 132
+    assert.equal(sale.total, 132);
+    const before = salesLines(s)[0];
+    const info = (await s.call('GET', '/api/bill?no=' + sale.no)).json;
+    assert.equal(info.remaining, 132);
+    assert.deepEqual(info.lines.map(l => [l.i, l.qty, l.left]), [[0, 2, 2]]);
+    const r = await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'cash', reason: 'กดรับเงินผิดโต๊ะ', expected: 132 });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const f = r.json.refund;
+    assert.equal(f.type, 'refund'); assert.equal(f.refundOf, sale.no);
+    assert.ok(f.no > sale.no, 'เลขที่ใบคืนเงินใหม่ ไม่ใช้เลขบิลเดิม');
+    assert.deepEqual([f.total, f.sub, f.svc], [-132, -120, -12]);
+    assert.deepEqual(f.payments, [{ method: 'cash', amount: -132 }]);
+    assert.deepEqual(f.items.map(i => [i.name, i.qty]), [[sale.items[0].name, -2]]);
+    assert.equal(f.cashier.id, 'owner');
+    const lines = salesLines(s);
+    assert.equal(lines[0], before, 'บิลเดิมใน sales/ ไม่เปลี่ยนแม้แต่ไบต์เดียว');
+    assert.equal(JSON.parse(lines[1]).type, 'refund', 'ใบคืนเงินต่อท้ายใน sales/');
+    const rep = (await s.call('GET', '/api/report')).json;
+    assert.deepEqual([rep.total, rep.count, rep.cash], [0, 1, 0], 'ยอดสุทธิ 0 จำนวนบิลไม่นับใบคืนเงิน');
+    assert.deepEqual(rep.refunds, { count: 1, value: 132 });
+    const sh = (await s.call('GET', '/api/shift')).json.open;
+    assert.equal(sh.expectedCash, 500, 'คืนเงินสด 132: เงินที่ควรมีในลิ้นชักกลับเป็น 500');
+    assert.equal(sh.bills, 1);
+    const again = await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'cash', reason: 'ซ้ำ', expected: 0 });
+    assert.equal(again.status, 400, 'คืนครบแล้วคืนซ้ำไม่ได้');
+    const ev = readLog(s.dir, 'audit').find(e => e.action === 'bill.refunded');
+    assert.ok(ev && ev.refundOf === sale.no && ev.total === -132 && ev.reason === 'กดรับเงินผิดโต๊ะ', JSON.stringify(ev));
+    await s.stop();
+  });
+
+  test('คืนบางรายการ: ยอดตามสัดส่วนรวมส่วนลดและค่าบริการ · เกินจำนวนที่เหลือ = 400 · ยอดที่เห็นไม่ตรง = 409 · คืนส่วนที่เหลือได้พอดี', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] });   // 120 + 80 = 200
+    assert.equal((await s.call('POST', '/api/table/discount', { table: 2, kind: 'pct', value: 10, reason: 'ลูกค้าประจำ' })).status, 200);
+    const r0 = await s.call('POST', '/api/pay', { table: 2, expectedSub: 200, expectedDisc: 20, svc: true, method: 'transfer' });
+    const sale = r0.json.sale;
+    assert.equal(sale.total, 198, 'ลด 20 เหลือ 180 + ค่าบริการ 18');
+    const i2 = sale.items.findIndex(i => i.price === 80);
+    const part = await s.call('POST', '/api/refund', { no: sale.no, mode: 'items', lines: [{ i: i2, qty: 1 }], method: 'transfer', reason: 'อาหารไม่สด', expected: 198 });
+    assert.equal(part.status, 200, JSON.stringify(part.json));
+    assert.equal(part.json.refund.total, -79.2, '80 × 198/200');
+    assert.equal(part.json.remaining, 118.8);
+    assert.equal((await s.call('POST', '/api/refund', { no: sale.no, mode: 'items', lines: [{ i: i2, qty: 1 }], method: 'transfer', reason: 'ซ้ำ', expected: 118.8 })).status, 400, 'รายการนี้คืนครบแล้ว');
+    assert.equal((await s.call('POST', '/api/refund', { no: sale.no, mode: 'items', lines: [{ i: 1 - i2, qty: 3 }], method: 'transfer', reason: 'เกิน', expected: 118.8 })).status, 400, 'คืนเกินจำนวนที่สั่ง');
+    assert.equal((await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'transfer', reason: 'เครื่องเก่า', expected: 198 })).status, 409, 'อีกเครื่องคืนไปก่อนแล้ว');
+    const rest = await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'cash', reason: 'ลูกค้ายกเลิกทั้งหมด', expected: 118.8 });
+    assert.equal(rest.status, 200, JSON.stringify(rest.json));
+    assert.equal(rest.json.refund.total, -118.8);
+    assert.equal(rest.json.remaining, 0);
+    const g = (await s.call('GET', '/api/report/range?period=today')).json;
+    assert.deepEqual([g.total, g.count], [0, 1]);
+    assert.deepEqual([g.refunds.count, g.refunds.value], [2, 198]);
+    assert.ok(g.refunds.reasons.some(x => x.reason === 'อาหารไม่สด'));
+    assert.ok(!g.best.some(x => x.qty > 0), 'คืนครบทุกจาน: ไม่เหลือจานที่ขายได้');
+    await s.stop();
+  });
+
+  test('สิทธิ์และข้อมูลผิด: บทบาทอื่น 403 · ต้องใส่ PIN ซ้ำ · ไม่มีเหตุผล/ช่องทางผิด/จำนวนผิด 400 · ไม่มีบิล 404', async () => {
+    const s = start(makeApp(), { REAUTH_SEC: '1.5' }); await s.ready; await s.login();
+    await withStaff(s);
+    const sale = await sell(s, 3, [{ id: 1, qty: 1 }], { method: 'cash' });
+    const c = await device(s, '520011'), k = await device(s, '520022');
+    const body = { no: sale.no, mode: 'all', method: 'cash', reason: 'ทดสอบ', expected: sale.total };
+    assert.equal((await c.call('POST', '/api/refund', body)).status, 403, 'แคชเชียร์คืนเงินไม่ได้');
+    assert.equal((await c.call('GET', '/api/bill?no=' + sale.no)).status, 403);
+    assert.equal((await k.call('POST', '/api/refund', body)).status, 403, 'ครัวคืนเงินไม่ได้');
+    assert.equal((await s.call('POST', '/api/refund', Object.assign({}, body, { reason: '' }))).status, 400, 'ไม่มีเหตุผล');
+    assert.equal((await s.call('POST', '/api/refund', Object.assign({}, body, { method: 'bitcoin' }))).status, 400);
+    assert.equal((await s.call('POST', '/api/refund', Object.assign({}, body, { mode: 'items', lines: [{ i: 0, qty: 0 }] }))).status, 400);
+    assert.equal((await s.call('POST', '/api/refund', Object.assign({}, body, { mode: 'items', lines: [] }))).status, 400);
+    assert.equal((await s.call('POST', '/api/refund', Object.assign({}, body, { no: 99999 }))).status, 404);
+    await new Promise(r => setTimeout(r, 1700));
+    const stale = await s.call('POST', '/api/refund', body);
+    assert.equal(stale.status, 403); assert.equal(stale.json.code, 'reauth', 'เงินออกจากร้าน: ต้องใส่ PIN ซ้ำ');
+    assert.equal((await s.call('POST', '/api/reauth', { pin: PIN })).status, 200);
+    assert.equal((await s.call('POST', '/api/refund', body)).status, 200);
+    const ref = (await s.call('GET', '/api/report')).json.bills.find(b => b.type === 'refund');
+    assert.equal((await s.call('POST', '/api/refund', { no: ref.no, mode: 'all', method: 'cash', reason: 'คืนใบคืนเงิน', expected: 0 })).status, 404, 'คืนใบคืนเงินซ้ำไม่ได้');
+    assert.ok(!readLog(s.dir, 'audit').some(e => JSON.stringify(e).includes(PIN)), 'ไม่มี PIN ใน log');
+    await s.stop();
+  });
+
+  test('CSV: ใบคืนเงินเป็นแถวยอดติดลบ คอลัมน์ "คืนเงินของบิล" "เหตุผลคืนเงิน" อยู่หลังต้นทุน ก่อนชำระโดย · kill -9 หลังตอบ 200 ใบคืนเงินไม่หาย', async () => {
+    const app = makeApp(); let s = start(app); await s.ready; await s.login();
+    const sale = await sell(s, 4, [{ id: 1, qty: 1 }], { method: 'card' });
+    const r = await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'card', reason: 'รูดบัตรซ้ำ', expected: sale.total });
+    assert.equal(r.status, 200);
+    const csv = (await s.call('GET', '/api/export.csv')).text.replace(/^﻿/, '').split('\r\n');
+    const head = csv[0].split(',');
+    const at = n => head.indexOf('"' + n + '"');
+    assert.ok(at('คืนเงินของบิล') === at('ต้นทุนวัตถุดิบ') + 1 && at('เหตุผลคืนเงิน') === at('คืนเงินของบิล') + 1 && at('ชำระโดย') === at('เหตุผลคืนเงิน') + 1, head.join(','));
+    assert.equal(head.slice(0, 8).join(','), '"เลขที่","วันที่","เวลา","โต๊ะ","ค่าอาหาร","ค่าบริการ","VAT","รวม"');
+    const row = csv[2].split(',');
+    assert.equal(row[0], '"' + r.json.refund.no + '"');
+    assert.equal(row[at('รวม')], '"' + (-sale.total) + '"');
+    assert.equal(row[at('คืนเงินของบิล')], '"' + sale.no + '"');
+    assert.equal(row[at('เหตุผลคืนเงิน')], '"รูดบัตรซ้ำ"');
+    assert.equal(csv[1].split(',')[at('คืนเงินของบิล')], '""', 'บิลขายปกติช่องนี้ว่าง');
+    await kill9(s);
+    s = start(app); await s.ready; await s.login();
+    const bills = (await s.call('GET', '/api/report')).json.bills;
+    assert.ok(bills.some(b => b.type === 'refund' && b.refundOf === sale.no), 'เปิดใหม่แล้วใบคืนเงินยังอยู่');
+    assert.equal((await s.call('GET', '/api/bill?no=' + sale.no)).json.remaining, 0);
+    await s.stop();
+  });
+});
