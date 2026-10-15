@@ -8,12 +8,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto, fakeCover } = require('./lib');
+const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto, fakeCover, browserOpts } = require('./lib');
 
-const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const MOBILE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 
-async function launch() { return chromium.launch({ channel: CHANNEL, headless: process.env.QA_HEADED ? false : true }); }
+async function launch() { return chromium.launch(browserOpts({ headless: process.env.QA_HEADED ? false : true })); }
 // เก็บ error จาก console และ JS ทุกหน้า เพื่อสรุปท้ายเคส
 // ไม่นับ 4xx ที่เบราว์เซอร์ log เองแต่หน้าเว็บจัดการแล้ว (401 ก่อนกรอก PIN, 409 ยอดเปลี่ยน) นับ 5xx และ JS error ทุกตัว
 function watch(page, errors, label) {
@@ -182,7 +181,7 @@ const cases = {
     };
     const kitchen = await login('520022');
     const kt = (await kitchen.$$eval('#tabs .tab', b => b.map(x => x.dataset.v))).join(',');
-    ok(kt === 'kitchen,menu' && /ช่างต้ม \(ครัว\)/.test(await kitchen.textContent('#brand')), 'ครัวเห็นแค่แท็บครัวกับเมนูหมด และหัวจอบอกชื่อ', kt);
+    ok(kt === 'kitchen,menu' && /ช่างต้ม · ครัว/.test(await kitchen.textContent('#brand')), 'ครัวเห็นแค่แท็บครัวกับเมนูหมด และหัวจอบอกชื่อ', kt);
     await s.call('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] }, { staff: false });
     await kitchen.waitForSelector('#v-kitchen .card');
     ok(!(await kitchen.$('#v-kitchen [data-a="void"]')), 'ครัวไม่มีปุ่มยกเลิกออเดอร์');
@@ -1207,8 +1206,8 @@ const cases = {
     await until(async () => !!(await s.call('GET', '/api/state')).json.bills[5], 6000).catch(() => {});
     const st = (await s.call('GET', '/api/state')).json;
     ok(st.bills[5] && !st.bills[1], 'ย้ายโต๊ะ 1 ไปโต๊ะ 5 แล้ว');
-    await p.waitForFunction(() => /โต๊ะ 5/.test((document.querySelector('#v-tables .detail h3') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
-    ok(/โต๊ะ 5/.test(await p.textContent('#v-tables .detail h3')), 'หน้าจอไปที่โต๊ะใหม่ให้เลย');
+    await p.waitForFunction(() => /โต๊ะ 5/.test((document.querySelector('#v-tables #check .ck-t') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+    ok(/โต๊ะ 5/.test(await p.textContent('#v-tables #check .ck-t')), 'หน้าจอไปที่โต๊ะใหม่ให้เลย');
     // รวมเข้ากับโต๊ะ 3 ที่มีออเดอร์: ถามยืนยันก่อน กด "ไม่รวม" แล้วไม่มีอะไรเปลี่ยน
     await p.click('[data-a="movetable"]'); await p.waitForSelector('#move-dlg[open]');
     await p.selectOption('#move-to', '3'); await p.click('#move-ok');
