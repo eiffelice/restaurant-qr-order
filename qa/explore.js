@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, rmrf, checker, PIN } = require('./lib');
+const { makeApp, start, sleep, rmrf, checker, PIN, browserOpts } = require('./lib');
 const OUT = path.join(__dirname, 'out', 'explore');
 const MOBILE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 
@@ -21,7 +21,7 @@ async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const ok = checker('explore');
   const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
-  const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge' });
+  const browser = await chromium.launch(browserOpts());
   const keys0 = (await s.call('GET', '/api/state')).json.keys;
 
   // 1) ชื่อเมนูยาวสุด (60 ตัวอักษร ไม่มีเว้นวรรค) ทุกหน้าจอที่แสดงชื่อ ที่ 390 px
@@ -44,14 +44,15 @@ async function main() {
   // 2) พิมพ์ใบเสร็จ: มีแค่ใบเสร็จ ไม่มีปุ่ม/แท็บ ขนาดกระดาษ 80 mm
   const desk = await staff(browser, s);
   await desk.click('#tabs [data-v="tables"]'); await desk.click('[data-a="sel"][data-id="1"]');
-  await desk.evaluate(() => document.body.classList.add('pm-receipt'));
+  // กดพิมพ์จริง (ปิด window.print) ใบเสร็จถูกคัดลอกไป #print-area ส่วนอื่นของหน้า display:none ทั้งหมด (ไม่กินกระดาษ)
+  await desk.evaluate(() => { window.print = () => {}; });
+  await desk.click('[data-a="printr"]'); await sleep(300);
   await desk.emulateMedia({ media: 'print' });
   await desk.screenshot({ path: path.join(OUT, 'print-receipt.png'), fullPage: true });
-  // หน้าพิมพ์ใช้ visibility:hidden ซ่อนทุกอย่างยกเว้นใบเสร็จ
-  const printVis = await desk.evaluate(() => ['#tabs .tab', '.pay-wrap button', '.tables .tbl', '.receipt .grand'].map(sel => sel + ':' + getComputedStyle(document.querySelector(sel)).visibility));
+  const printVis = await desk.evaluate(() => ['#tabs .tab', '.pay-wrap button', '.tables .tbl', '#print-area .receipt .grand'].map(sel => { const e = document.querySelector(sel); return sel + ':' + (e && e.checkVisibility() ? 'visible' : 'hidden'); }));
   ok(printVis.slice(0, 3).every(v => /hidden$/.test(v)) && /visible$/.test(printVis[3]), 'พิมพ์ใบแจ้งยอด: เห็นแค่ใบเสร็จ ไม่มีแท็บ ปุ่ม และผังโต๊ะ', printVis);
   await desk.emulateMedia({ media: 'screen' });
-  await desk.evaluate(() => document.body.classList.remove('pm-receipt'));
+  await desk.evaluate(() => window.dispatchEvent(new Event('afterprint')));
 
   // 3) ไม่มี PromptPay: ข้อความบอกทางไปตั้งค่าต้องตรงกับชื่อแท็บจริง
   const hint = await desk.textContent('.receipt .qr small');

@@ -55,6 +55,12 @@ function start(code, env, nodeArgs) {
   return s;
 }
 
+// เบราว์เซอร์ที่ใช้ทดสอบ: Edge (ค่าเริ่มต้น) / QA_BROWSER=chrome / QA_CHROMIUM=<ไฟล์ chrome> สำหรับเครื่อง Linux ที่ไม่มี Edge
+function browserOpts(extra) {
+  const o = process.env.QA_CHROMIUM ? { executablePath: process.env.QA_CHROMIUM } : { channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge' };
+  return Object.assign(o, extra || {});
+}
+
 // เรียก API ด้วย http ตรงๆ (กำหนด IP ต้นทางได้ด้วย localAddress เช่น 127.0.0.7)
 function call(s, method, p, body, o) {
   o = o || {};
@@ -149,4 +155,4 @@ async function fakeCover(browser, hue) {
   await p.context().close();
   return Buffer.from(b64, 'base64');
 }
-module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker, fakePhoto, fakeCover };
+module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker, fakePhoto, fakeCover, browserOpts };

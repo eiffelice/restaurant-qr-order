@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
-const { makeApp, start, sleep, PIN, checker } = require('./lib');
+const { makeApp, start, sleep, PIN, checker, browserOpts } = require('./lib');
 const AXE = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 
 async function scan(page, label) {
@@ -31,7 +31,7 @@ async function main() {
   const egg = (await s.call('POST', '/api/stock/item', { name: 'ไข่ไก่', unit: 'ฟอง', min: 10, cost: 4 })).json.item;
   await s.call('POST', '/api/stock/move', { id: egg.id, type: 'receive', qty: 5 });
   await s.call('POST', '/api/stock/recipe', { menu: 1, lines: [{ s: egg.id, q: 1 }] });
-  const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge', headless: true });
+  const browser = await chromium.launch(browserOpts({ headless: true }));
   const all = [];
   for (const scheme of ['light', 'dark']) {
     const ctx = await browser.newContext({ baseURL: s.B, colorScheme: scheme, viewport: { width: 1280, height: 900 } });
