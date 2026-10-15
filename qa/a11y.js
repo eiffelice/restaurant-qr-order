@@ -7,6 +7,7 @@ const { chromium } = require('playwright-core');
 const { makeApp, start, sleep, PIN, checker } = require('./lib');
 const AXE = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 
+// axe ฉีดเข้าหน้าเป็น inline script ซึ่ง CSP ของหน้าเว็บบล็อก ทุก context ในไฟล์นี้จึงตั้ง bypassCSP (ตรวจ CSP อยู่ที่ browser.js)
 async function scan(page, label) {
   await page.addScriptTag({ content: AXE });
   const r = await page.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] } })).violations
@@ -34,7 +35,7 @@ async function main() {
   const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge', headless: true });
   const all = [];
   for (const scheme of ['light', 'dark']) {
-    const ctx = await browser.newContext({ baseURL: s.B, colorScheme: scheme, viewport: { width: 1280, height: 900 } });
+    const ctx = await browser.newContext({ bypassCSP: true, baseURL: s.B, colorScheme: scheme, viewport: { width: 1280, height: 900 } });
     const p = await ctx.newPage();
     await p.goto('/staff'); await p.waitForSelector('#pin');
     all.push(...await scan(p, 'staff login ' + scheme));
@@ -46,7 +47,7 @@ async function main() {
       all.push(...await scan(p, 'staff ' + v + ' ' + scheme));
     }
     await s.call('POST', '/api/settings', { look: scheme });      // หน้าลูกค้าตั้งโทนเองได้: สแกนทั้งโทนสว่างและมืด
-    const m = await browser.newContext({ baseURL: s.B, colorScheme: scheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const m = await browser.newContext({ bypassCSP: true, baseURL: s.B, colorScheme: scheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const c = await m.newPage();
     await c.goto('/order?t=1&k=' + keys[1]); await c.waitForSelector('.item');
     all.push(...await scan(c, 'customer menu ' + scheme));
@@ -64,7 +65,7 @@ async function main() {
     await ctx.close(); await m.close();
   }
   // คีย์บอร์ด: เข้าสู่ระบบ สลับแท็บ และสั่งอาหารได้โดยไม่ใช้เมาส์ และเห็นกรอบโฟกัส
-  const kctx = await browser.newContext({ baseURL: s.B }); const k = await kctx.newPage();
+  const kctx = await browser.newContext({ bypassCSP: true, baseURL: s.B }); const k = await kctx.newPage();
   await k.goto('/staff'); await k.waitForSelector('#pin'); await k.focus('#pin');
   await k.keyboard.type(PIN); await k.keyboard.press('Enter'); await k.waitForSelector('#tabs .tab');
   let reached = false, outline = '';
@@ -77,7 +78,7 @@ async function main() {
   const onMenu = reached && await k.evaluate(() => !document.querySelector('#v-menu').hidden);
   ok(onMenu, 'หน้าพนักงาน: Tab ไปที่แท็บเมนูแล้วกด Enter เปลี่ยนแท็บได้');
   ok(/solid|auto/.test(outline) && !/ 0px/.test(outline), 'หน้าพนักงาน: ปุ่มที่โฟกัสด้วยคีย์บอร์ดมีกรอบให้เห็น', outline);
-  const cctx = await browser.newContext({ baseURL: s.B }); const c2 = await cctx.newPage();
+  const cctx = await browser.newContext({ bypassCSP: true, baseURL: s.B }); const c2 = await cctx.newPage();
   await c2.goto('/order?t=3&k=' + keys[3]); await c2.waitForSelector('.item');
   let added = false;
   let pressed = null;
