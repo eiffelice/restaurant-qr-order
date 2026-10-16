@@ -273,7 +273,8 @@ const cases = {
     ok(rr.status === 200, 'กู้คืนไฟล์ที่มี payload ได้', rr.json);
     ok(r[0].status === 400, 'baseUrl แบบ javascript: ถูกปฏิเสธ', r[0].json);
 
-    const page = await staffPage(browser, s, null, errors);
+    // ปิด CSP ในเคสนี้ เพื่อตรวจว่า esc() ยังกันได้เอง (กฎข้อ 9) ไม่ใช่ผ่านเพราะ CSP บล็อกไว้ให้ CSP ตรวจแยกท้ายเคส
+    const page = await staffPage(browser, s, { bypassCSP: true }, errors);
     for (const v of ['kitchen', 'tables', 'menu', 'report', 'settings']) {
       await tab(page, v); await sleep(300);
       if (v === 'tables') { await page.click('[data-a="sel"][data-id="1"]'); await sleep(200); }
@@ -282,7 +283,7 @@ const cases = {
     }
     const staffX = await page.evaluate(() => window.__xss || 0);
     const shopShown = await page.evaluate(() => document.body.innerText.includes('<img src=x onerror='));
-    const cust = await customerPage(browser, s, 1, keys[1], errors);
+    const cust = await customerPage(browser, s, 1, keys[1], errors, { bypassCSP: true });
     await cust.click('[data-a="cat"][data-id="' + cat.id + '"]');
     await cust.click('[data-a="inc"][data-id="' + it.id + '"]');
     await cust.click('[data-a="open"]'); await cust.click('[data-a="notes"]'); await sleep(300);
@@ -297,6 +298,14 @@ const cases = {
     await page.evaluate(h => document.body.insertAdjacentHTML('beforeend', h), P[0]);
     await sleep(300);
     ok(await page.evaluate(() => window.__xss || 0) > 0, 'ตัวควบคุม: payload ที่ไม่ escape ถูกตรวจจับได้');
+    // ชั้นที่สอง: เปิด CSP ตามจริง payload ตัวเดียวกันแบบไม่ escape ต้องไม่ทำงาน (หน้าเว็บยังใช้ได้ปกติ)
+    for (const [label, open] of [['พนักงาน', () => staffPage(browser, s, null, [])], ['ลูกค้า', () => customerPage(browser, s, 1, keys[1], [])]]) {
+      const strict = await open();
+      await strict.evaluate(h => { window.__xss = 0; document.body.insertAdjacentHTML('beforeend', h); }, P[0]);
+      await sleep(300);
+      ok(await strict.evaluate(() => window.__xss || 0) === 0, 'CSP หน้า' + label + ': payload ที่ไม่ escape ไม่ทำงาน');
+      await strict.context().close();
+    }
     await page.context().close(); await cust.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },

@@ -10,6 +10,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const PIN = '246810';
+const PIN8 = '24681357';          // เปิดผ่าน TRUST_PROXY ต้องใช้ PIN เจ้าของ ≥ 8 หลัก
 let portSeq = 4100 + Math.floor(Math.random() * 500);
 
 const tempDirs = [];
@@ -280,8 +281,8 @@ describe('ความทนทานของข้อมูล', () => {
 
 describe('กันสแปม', () => {
   test('ลูกค้าสั่งถี่เกินถูกจำกัด และนับแยกตาม IP จริงเมื่อใช้ TRUST_PROXY', async () => {
-    const s = start(makeApp(), { ORDER_LIMIT: '2', TRUST_PROXY: '1' });
-    await s.ready; await s.login();
+    const s = start(makeApp(), { ORDER_LIMIT: '2', TRUST_PROXY: '1', STAFF_PIN: PIN8 });
+    await s.ready; await s.call('POST', '/api/login', { pin: PIN8 });
     const k = (await s.call('GET', '/api/state')).json.keys[1];
     const o = ip => s.guest('POST', '/api/order', { table: 1, key: k, items: [{ id: 18, qty: 1 }] }, { 'cf-connecting-ip': ip });
     assert.equal((await o('1.1.1.1')).status, 200);
@@ -509,7 +510,7 @@ describe('จาก code review', () => {
   test('TRUST_PROXY: คนใน WiFi ปลอม header เพื่อหลบลิมิตเดารหัสไม่ได้', async (t) => {
     const lan = Object.values(os.networkInterfaces()).flat().find(n => n && (n.family === 'IPv4' || n.family === 4) && !n.internal);
     if (!lan) return t.skip('เครื่องนี้ไม่มี IP วง LAN ให้ทดสอบ');
-    const s = start(makeApp(), { TRUST_PROXY: '1' });
+    const s = start(makeApp(), { TRUST_PROXY: '1', STAFF_PIN: PIN8 });
     await s.ready;
     const port = new URL(s.B).port, codes = [];
     for (let i = 0; i < 9; i++) {
@@ -522,9 +523,41 @@ describe('จาก code review', () => {
     await s.stop();
   });
 
-  test('TRUST_PROXY ไม่ยอมเปิดถ้ารหัสพนักงานสั้น', async () => {
-    const s = start(makeApp(), { TRUST_PROXY: '1', STAFF_PIN: '1234' });
-    await assert.rejects(s.ready, e => e.code === 1 && /อย่างน้อย 6 หลัก/.test(e.out));
+  test('TRUST_PROXY ไม่ยอมเปิดถ้ารหัสเจ้าของร้านสั้นกว่า 8 หลัก', async () => {
+    // เปิดออกเน็ต: เพดานเดารวม ~43,000 ครั้ง/วัน PIN 6 หลักเดาถูกได้ในไม่กี่สัปดาห์
+    for (const pin of ['1234', PIN, '1234567']) {
+      const s = start(makeApp(), { TRUST_PROXY: '1', STAFF_PIN: pin });
+      await assert.rejects(s.ready, e => e.code === 1 && /อย่างน้อย 8 หลัก/.test(e.out), 'PIN ' + pin.length + ' หลักต้องเปิดไม่ได้');
+    }
+    const ok = start(makeApp(), { TRUST_PROXY: '1', STAFF_PIN: PIN8 });
+    await ok.ready;
+    assert.equal((await ok.call('POST', '/api/login', { pin: PIN8 })).status, 200, 'PIN 8 หลักเปิดได้และเข้าสู่ระบบได้');
+    await ok.stop();
+    const lan = start(makeApp(), { STAFF_PIN: PIN });
+    await lan.ready;                                         // ใช้ในร้านอย่างเดียว (ไม่ตั้ง TRUST_PROXY) 6 หลักยังเปิดได้เหมือนเดิม
+    await lan.stop();
+  });
+
+  test('หน้าเว็บมี CSP แบบ nonce: รันได้เฉพาะ script ของเราเอง nonce ใหม่ทุกครั้ง', async () => {
+    const s = start(makeApp()); await s.ready;
+    const seen = new Set();
+    for (const p of ['/staff', '/order', '/staff']) {
+      const r = await s.guest('GET', p);
+      const c = r.headers.get('content-security-policy') || '';
+      const m = c.match(/script-src 'self' 'nonce-([A-Za-z0-9+/=]+)'/);
+      assert.ok(m, p + ' ต้องมี script-src แบบ nonce: ' + c);
+      assert.ok(!/script-src[^;]*'unsafe-inline'/.test(c), p + ' script-src ห้ามมี unsafe-inline');
+      for (const d of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "default-src 'self'"]) assert.ok(c.includes(d), p + ' ต้องมี ' + d);
+      const tags = r.text.match(/<script\b[^>]*>/g) || [];
+      assert.ok(tags.length >= 2, p + ' มี script');
+      tags.forEach(tg => assert.ok(tg.includes('nonce="' + m[1] + '"'), p + ' ทุก <script> ต้องมี nonce ของคำขอนี้: ' + tg));
+      seen.add(m[1]);
+    }
+    assert.equal(seen.size, 3, 'nonce ไม่ซ้ำกันทุกครั้งที่โหลดหน้า');
+    const js = await s.guest('GET', '/qrcode.js');
+    assert.equal(js.headers.get('content-security-policy'), null, 'ไฟล์ .js ไม่ถูกแก้เนื้อหา');
+    assert.ok(!js.text.includes('nonce='), 'ไม่ใส่ nonce ลงในไลบรารี');
+    await s.stop();
   });
 
   test('กู้คืนไฟล์ที่มีข้อมูลเสียบางส่วน: หน้าพนักงานยังใช้ได้ และข้ามเฉพาะส่วนที่เสีย', async () => {
