@@ -363,7 +363,13 @@ function closedShort(){var r=STAT&&STAT.closedReason;return r==='seat'?'รอ�
 
 function $(s){return document.querySelector(s);}
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function baht(n){return '฿'+Number(n).toLocaleString('th-TH',{maximumFractionDigits:2});}
+function baht(n){var v=Number(n);return '฿'+v.toLocaleString('th-TH',{minimumFractionDigits:v%1?2:0,maximumFractionDigits:2});}
+/* ยอดประมาณการ: สูตรเดียวกับ store.totals() และ calc() ใน staff.html (tasks/spec-vat.md) ยอดจริงคิดที่เซิร์ฟเวอร์ตอนชำระเงิน */
+function estimate(sub){
+  var svc=M.svc?Math.round(sub*.1):0,base=Math.round((sub+svc)*100),bp=M.vatRegistered?Math.round(M.vatRate*100):0;
+  var vat=!bp?0:M.vatInclusive?Math.round(base*bp/(10000+bp)):Math.round(base*bp/10000);
+  return {svc:svc,vat:vat/100,total:(M.vatInclusive?base:base+vat)/100};
+}
 var tt;
 function toast(m){var e=$('#toast');e.textContent=m;e.classList.add('on');clearTimeout(tt);tt=setTimeout(function(){e.classList.remove('on');},2600);}
 function ln(d,w){return '<svg width="'+(w||22)+'" height="'+(w||22)+'" viewBox="0 0 24 24" aria-hidden="true"><path class="ln" d="'+d+'"/></svg>';}
@@ -639,9 +645,10 @@ function renderStatus(){
     h+='<div class="srow"><div class="t">'+k.items.map(function(i){return esc(i.name)+' ×'+i.qty+(i.note&&i.note.length?' <span class="muted small">('+esc(i.note.join(' · '))+')</span>':'');}).join(', ')+'</div><span class="pill '+SL[k.status][1]+'" style="align-self:flex-start">'+SL[k.status][0]+'</span></div>';
   });
   if(STAT.tickets.length){
-    var sub=STAT.sub,svc=M.svc?Math.round(sub*.1):0,vat=M.vat?Math.round((sub+svc)*.07):0;
+    var sub=STAT.sub,e=estimate(sub),addVat=e.vat&&!M.vatInclusive;
     h+='<div class="srow"><b>ยอดอาหารรวม</b><b>'+baht(sub)+'</b></div>';
-    if(svc||vat) h+='<div class="small muted">ประมาณการรวม'+(svc?' ค่าบริการ 10%':'')+(vat?' VAT 7%':'')+' = '+baht(sub+svc+vat)+' (ยอดจริงตอนชำระเงิน)</div>';
+    if(e.svc||addVat) h+='<div class="small muted">ประมาณการรวม'+(e.svc?' ค่าบริการ 10%':'')+(addVat?' VAT '+M.vatRate+'%':'')+' = '+baht(e.total)+' (ยอดจริงตอนชำระเงิน)</div>';
+    if(M.vatRegistered) h+='<div class="small muted">'+(M.vatInclusive?'ราคาในเมนูรวม VAT '+M.vatRate+'% แล้ว':'ราคาในเมนูยังไม่รวม VAT '+M.vatRate+'%')+'</div>';
   }
   h+='</div><div class="help">';
   var c=STAT.call;
@@ -826,7 +833,7 @@ function applyStat(s){
   STAT=s;
   var out=s.soldOut||[],removed=[],gone=0;
   M.items.forEach(function(m){m.soldOut=out.indexOf(m.id)>=0;});
-  M.svc=s.svc;M.vat=s.vat;
+  M.svc=s.svc;M.vatRegistered=!!s.vatRegistered;M.vatInclusive=!!s.vatInclusive;M.vatRate=s.vatRate||7;
   lines=lines.filter(function(l){var m=item(l.id);if(!m||m.soldOut){if(m){if(removed.indexOf(m.name)<0)removed.push(m.name);}else gone++;return false;}return true;});
   if(removed.length||gone){
     openNotes={};cartChanged();

@@ -328,6 +328,7 @@ label.f .hint{font-weight:400;color:var(--muted);font-size:.8rem}
 .receipt td{padding:2px 0;vertical-align:top;overflow-wrap:anywhere}
 .receipt td.q{width:2.4em;color:var(--paper-muted)} .receipt td.a{text-align:right;white-space:nowrap}
 .receipt .grand td{font-size:1.3rem;font-weight:700;padding-top:6px}
+.receipt td.vi{font-size:.8rem;color:var(--paper-muted);padding-top:4px}
 .sent-row .vi{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:var(--ctl)}
 .btn.xs{min-height:36px;padding:2px 12px;font-size:.82rem}
 .qr{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:6px;text-align:center}
@@ -490,6 +491,24 @@ h4.sub{font-size:.9rem;font-weight:700;margin:2px 0 12px;color:var(--ink2)}
 .refund-sum{margin-top:14px;padding:10px 12px;border-radius:var(--r);background:var(--crit-bg);color:var(--crit);font-weight:700;min-height:1.5em}
 .refund-sum:empty{display:none}
 tr.refund td{color:var(--crit)}
+dialog.dlg.wide{width:min(62rem,calc(100% - 24px))}
+.tx-pick{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:10px 0 14px}
+.tx-pick label.f{flex:0 1 11rem}
+.tx-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.tx-acts .sp{flex:1}
+.taxdoc{font-size:.88rem}
+.taxdoc .td-h{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.taxdoc .td-h b{font-size:1.05rem}
+.taxdoc h4{font-size:.92rem;margin:14px 0 6px}
+.taxdoc table{width:100%;border-collapse:collapse}
+.taxdoc th,.taxdoc td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.taxdoc th:first-child,.taxdoc td:first-child{text-align:left}
+.taxdoc th{font-size:.76rem;color:var(--muted)}
+.taxdoc tr.sum td{font-weight:800;border-top:2px solid var(--line-strong)}
+.taxdoc .warn{background:var(--warn-bg);color:var(--warn);border-radius:var(--r-sm);padding:8px 10px;margin:4px 0;font-weight:600}
+.taxdoc .disc{margin-top:14px;font-size:.78rem;color:var(--muted)}
+.taxdoc .disc.top{margin:0 0 8px}
+@page doc{size:A4;margin:12mm}
 .card-act .xbtn.pr:hover{background:var(--surface2);color:var(--ink);border-color:var(--line-strong)}
 .qrsheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:12px}
 .qcard{background:#fff;color:#111;border:1px solid var(--line);border-radius:14px;padding:14px 12px;text-align:center;break-inside:avoid;display:flex;flex-direction:column;align-items:center;gap:2px;box-shadow:var(--sh-sm)}
@@ -641,6 +660,16 @@ dialog.cmdk{padding:0;border:1px solid var(--line);border-radius:20px;background
   body.pm-qr .side,body.pm-qr .top,body.pm-qr #health,body.pm-qr .np,body.pm-qr .snav,body.pm-qr #toast{display:none!important}
   body.pm-qr{background:#fff;padding:0}
   body.pm-receipt{padding:0}
+  /* สรุปยอดขายและภาษี: A4 ตัวหนังสือดำบนขาว หัวตารางซ้ำทุกหน้า */
+  body.pm-doc>*:not(#print-area){display:none!important}
+  body.pm-doc{background:#fff;padding:0}
+  body.pm-doc #print-area{display:block;page:doc;color:#000}
+  body.pm-doc .taxdoc{font-size:9.5pt;--line:#bbb;--line-strong:#555;--muted:#333;--warn-bg:#fff;--warn:#000}
+  body.pm-doc .taxdoc .warn{border:1px solid #000}
+  body.pm-doc .taxdoc tr{break-inside:avoid}
+  body.pm-doc .taxdoc th,body.pm-doc .taxdoc td{padding:2.5px 6px}
+  body.pm-doc .taxdoc h4{margin:10px 0 4px}
+  body.pm-doc .taxdoc thead{display:table-header-group}
   body.pm-qr .app,body.pm-qr .set{display:block}
   body.pm-qr .app{background:none}
   body.pm-qr .main{padding:0}
@@ -878,6 +907,30 @@ dialog.cmdk{padding:0;border:1px solid var(--line);border-radius:20px;background
     <div class="row"><button type="button" class="btn" id="rff-cancel">ปิด</button><button type="submit" class="btn primary" id="rff-ok">เปิดบิล</button></div>
   </form>
 </dialog>
+<!-- สรุปยอดขายและภาษี (เจ้าของ): นอกส่วนที่วาดใหม่ วันที่ที่เลือกไม่หายเมื่อมีออเดอร์เข้า -->
+<dialog class="dlg wide" id="tax-dlg" aria-labelledby="tax-h">
+  <form method="dialog" id="tax-form">
+    <h3 id="tax-h">สรุปยอดขายและภาษี</h3>
+    <p class="muted small" style="margin:0">เลือกช่วงเวลา แล้วดาวน์โหลด CSV ให้นักบัญชี หรือพิมพ์ / บันทึกเป็น PDF (A4) ได้ไม่เกิน 366 วัน</p>
+    <div class="seg" role="group" aria-label="ช่วงเวลาสำเร็จรูป" id="tx-pre" style="margin-top:12px">
+      <button type="button" data-tp="week">สัปดาห์นี้</button><button type="button" data-tp="lastweek">สัปดาห์ก่อน</button><button type="button" data-tp="month">เดือนนี้</button><button type="button" data-tp="lastmonth">เดือนก่อน</button>
+    </div>
+    <div class="tx-pick">
+      <label class="f" for="tx-from">ตั้งแต่วันที่<input class="in" id="tx-from" type="date"></label>
+      <label class="f" for="tx-to">ถึงวันที่<input class="in" id="tx-to" type="date"></label>
+      <button type="submit" class="btn primary" id="tx-go">ดูสรุป</button>
+    </div>
+    <div class="err" id="tx-err" role="alert"></div>
+    <div id="tx-body" aria-live="polite"></div>
+    <div class="tx-acts">
+      <a class="btn" id="tx-csv-b" href="#" download>CSV รายบิล</a>
+      <a class="btn" id="tx-csv-d" href="#" download>CSV สรุปรายวัน</a>
+      <button type="button" class="btn" id="tx-print">พิมพ์ / บันทึก PDF</button>
+      <span class="sp"></span>
+      <button type="button" class="btn" id="tx-close">ปิด</button>
+    </div>
+  </form>
+</dialog>
 <dialog class="dlg" id="void-dlg" aria-labelledby="void-h">
   <form method="dialog" id="void-form">
     <h3 id="void-h">ยกเลิกออเดอร์</h3>
@@ -911,7 +964,7 @@ dialog.cmdk{padding:0;border:1px solid var(--line);border-radius:20px;background
 (function(){
 'use strict';
 var WARN=10, CRIT=15;
-var S={tab:'kitchen',kStation:'all',sel:null,bSvc:true,bVat:false,d:null,report:null,seen:null,seenCalls:null,cash:'',lastCash:null,audit:null,staff:null,stEdit:null,stErr:'',sf:null,
+var S={tab:'kitchen',kStation:'all',sel:null,bSvc:true,d:null,report:null,seen:null,seenCalls:null,cash:'',lastCash:null,audit:null,staff:null,stEdit:null,stErr:'',sf:null,
        skew:0,dirty:false,confirm:null,lastSale:null,viewSale:null,busy:false,
        mCat:null,q:'',edit:null,saving:false,catEdit:null,bk:null,rs:null,restoring:false,setAt:'set-shop'};
 
@@ -994,7 +1047,8 @@ function front(){return role()!=='kitchen';}
 // แตะเงินได้ (รับเงิน ยกเลิกออเดอร์ ค่าบริการ/VAT ของบิล) = เจ้าของและแคชเชียร์ พนักงานเสิร์ฟดูแลโต๊ะได้แต่ไม่แตะเงิน (เซิร์ฟเวอร์ตรวจซ้ำใน PERM)
 function canMoney(){var r=role();return r==='owner'||r==='cashier';}
 function tabName(v){return {kitchen:'ครัว',tables:'โต๊ะ & บิล',menu:isOwner()?'เมนู':'เมนูหมด',stock:'สต็อก',report:'สรุปยอด',settings:'ตั้งค่า'}[v];}
-function baht(n){return '฿'+Number(n).toLocaleString('th-TH',{maximumFractionDigits:2});}
+// มีสตางค์ = แสดง 2 ตำแหน่งเสมอ (฿13.20 ไม่ใช่ ฿13.2) บาทเต็มไม่มีทศนิยม
+function baht(n){var v=Number(n);return '฿'+v.toLocaleString('th-TH',{minimumFractionDigits:v%1?2:0,maximumFractionDigits:2});}
 function now(){return Date.now()+S.skew;}
 function mins(t){return Math.max(0,Math.floor((now()-t)/60000));}
 var tt;
@@ -1190,7 +1244,7 @@ function discPreview(){
   if(!(d.value>0)){el.textContent='';return;}
   if(d.kind==='pct'&&d.value>100){el.textContent='เปอร์เซ็นต์ต้องไม่เกิน 100';return;}
   if(d.kind==='amt'&&d.value>bl.sub){el.textContent='ส่วนลดเกินค่าอาหาร';return;}
-  var c=calc(bl.sub,S.bSvc,S.bVat,discAmount(bl.sub,d));
+  var c=calc(bl.sub,S.bSvc,discAmount(bl.sub,d));
   el.textContent='ลด '+baht(c.disc)+' · ยอดสุทธิ '+baht(c.total);
 }
 function discReason(){
@@ -1324,6 +1378,71 @@ $('#rff-form').addEventListener('submit',function(e){
   var m=/(\d+)\s*$/.exec($('#rff-no').value.trim());
   if(!m){$('#rff-err').textContent='ใส่เลขที่ใบเสร็จ';return;}
   $('#rff-dlg').close();openRefund(+m[1]);
+});
+
+/* ---------- สรุปยอดขายและภาษี (เจ้าของ ดู tasks/spec-tax-report.md) ----------
+   ตัวเลขทั้งหมดมาจาก GET /api/report/tax (เซิร์ฟเวอร์คำนวณ) หน้านี้แค่จัดหน้า · CSV ดาวน์โหลดจากเซิร์ฟเวอร์ด้วยช่วงเดียวกัน
+   เอกสารไม่ใช่รายงานภาษีขาย/ใบกำกับภาษี (บอกท้ายเอกสารเสมอ) */
+var TAX_NOTE='เอกสารสรุปเพื่อประกอบการทำบัญชี ไม่ใช่รายงานภาษีขายหรือใบกำกับภาษีตามประมวลรัษฎากร';
+var tx=null;
+function ymdOf(t){var d=new Date(t);return d.getFullYear()+'-'+pad(d.getMonth()+1,2)+'-'+pad(d.getDate(),2);}
+function txPreset(k){
+  var d=new Date(now());d.setHours(12,0,0,0);
+  var a,b;
+  if(k==='week'||k==='lastweek'){var mon=new Date(d);mon.setDate(d.getDate()-(d.getDay()+6)%7-(k==='lastweek'?7:0));a=mon;b=new Date(mon);b.setDate(mon.getDate()+6);}
+  else{var m=d.getMonth()-(k==='lastmonth'?1:0);a=new Date(d.getFullYear(),m,1,12);b=new Date(d.getFullYear(),m+1,0,12);}
+  $('#tx-from').value=ymdOf(a);$('#tx-to').value=ymdOf(b);
+  document.querySelectorAll('#tx-pre [data-tp]').forEach(function(x){x.setAttribute('aria-pressed',String(x.dataset.tp===k));});
+  txLoad();
+}
+function txLinks(){
+  var q='from='+encodeURIComponent($('#tx-from').value)+'&to='+encodeURIComponent($('#tx-to').value);
+  $('#tx-csv-b').href='/api/export.csv?'+q+'&kind=bills';$('#tx-csv-d').href='/api/export.csv?'+q+'&kind=daily';
+}
+function openTax(){
+  $('#tx-err').textContent='';$('#tax-dlg').showModal();
+  if(!$('#tx-from').value)txPreset('week');else txLoad();
+}
+function txLoad(){
+  var a=$('#tx-from').value,b=$('#tx-to').value,err=$('#tx-err');
+  if(!a||!b){err.textContent='เลือกวันเริ่มต้นและวันสิ้นสุด';return;}
+  txLinks();err.textContent='';$('#tx-go').disabled=true;tx=null;
+  $('#tx-body').innerHTML='<p class="muted">กำลังโหลดสรุป '+esc(a)+' ถึง '+esc(b)+'…</p>';   // ไม่แสดงตัวเลขช่วงเดิมใต้วันที่ใหม่
+  return api('/api/report/tax?from='+encodeURIComponent(a)+'&to='+encodeURIComponent(b)).then(function(r){
+    // เลือกช่วงอื่นไปแล้วระหว่างรอ: ทิ้งผลเก่า ไม่ให้ตัวเลขช่วงเก่าทับช่วงที่เลือกอยู่ (เคยเกิด: เปิดหน้าต่างแล้วกดสัปดาห์ก่อนทันที)
+    if($('#tx-from').value!==a||$('#tx-to').value!==b)return;
+    $('#tx-go').disabled=false;
+    if(!r.ok){err.textContent=r.j.error||'โหลดสรุปไม่สำเร็จ';if(r.status===401){$('#tax-dlg').close();showLogin();}return;}
+    tx=r.j;$('#tx-body').innerHTML=taxDocHtml(tx);
+  },function(){$('#tx-go').disabled=false;err.textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';});
+}
+function thDay(k){var p=k.split('-');return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString('th-TH',{weekday:'short',day:'numeric',month:'short',year:'numeric'});}
+function taxDocHtml(t){
+  var T=t.totals,sh=t.shop,V=t.vat;
+  var rowCells=function(x){return [x.bills,x.refunds,baht(x.sub),baht(x.disc),baht(x.svc),baht(x.beforeVat),baht(x.vat),baht(x.total),baht(x.refundValue)].map(function(v){return '<td>'+v+'</td>';}).join('');};
+  var h='<div class="taxdoc"><div class="td-h"><div><b>'+esc(sh.shop)+'</b>'+(sh.address?'<div class="small">'+esc(sh.address)+'</div>':'')+
+    '<div class="small">'+(sh.taxId?'เลขประจำตัวผู้เสียภาษี '+esc(sh.taxId):'ไม่ได้ระบุเลขประจำตัวผู้เสียภาษี')+'</div></div>'+
+    '<div class="small" style="text-align:right"><b>สรุปยอดขายและภาษี</b><br>'+thDay(t.from)+' – '+thDay(t.to)+'<br>ออกเมื่อ '+fmtDate(t.generatedAt)+' โดย '+esc(t.by)+
+    (t.firstNo!=null?'<br>เลขที่ '+t.firstNo+' – '+t.lastNo:'')+'</div></div><p class="disc top">'+TAX_NOTE+'</p>';   // ใต้หัวเอกสารด้วย: หน้าแรกที่พิมพ์ออกมามีข้อความนี้เสมอ
+  h+=t.warnings.map(function(w){return '<div class="warn">'+esc(w)+'</div>';}).join('');
+  h+='<h4>ยอดรวมทั้งช่วง</h4><div class="tbl-wrap"><table><tbody>'+
+    [['จำนวนบิล',T.bills+' บิล'+(T.refunds?' · ใบคืนเงิน '+T.refunds+' ใบ':'')],['ค่าอาหาร (ก่อนส่วนลด)',baht(T.sub)],['ส่วนลด',baht(T.disc)],['ค่าบริการ',baht(T.svc)],
+     ['มูลค่าก่อน VAT',baht(T.beforeVat)],['VAT',baht(T.vat)],['ยอดรวมสุทธิ (หักคืนเงินแล้ว)',baht(T.total)],['คืนเงิน',baht(T.refundValue)]]
+    .map(function(r,i){return '<tr'+(i===6?' class="sum"':'')+'><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>';}).join('')+'</tbody></table></div>';
+  h+='<div class="two" style="margin:0"><div><h4>แยกตามช่องทาง</h4><table><tbody>'+['cash','transfer','card','other'].map(function(m){return '<tr><td>'+PAYN[m]+'</td><td>'+baht(t.byMethod[m])+'</td></tr>';}).join('')+'</tbody></table></div>'+
+    '<div><h4>บิลที่คิด / ไม่คิด VAT</h4><table><tbody><tr><td>คิด VAT</td><td>'+V.withVat.bills+' บิล · VAT '+baht(V.withVat.vat)+' · ยอด '+baht(V.withVat.total)+'</td></tr><tr><td>ไม่คิด VAT</td><td>'+V.withoutVat.bills+' บิล · ยอด '+baht(V.withoutVat.total)+'</td></tr></tbody></table></div></div>';
+  h+='<h4>รายวัน</h4><div class="tbl-wrap"><table><thead><tr><th>วันที่</th><th>บิล</th><th>คืนเงิน (ใบ)</th><th>ค่าอาหาร</th><th>ส่วนลด</th><th>ค่าบริการ</th><th>ก่อน VAT</th><th>VAT</th><th>สุทธิ</th><th>คืนเงิน</th></tr></thead><tbody>'+
+    t.days.map(function(d){return '<tr><td>'+thDay(d.date)+'</td>'+rowCells(d)+'</tr>';}).join('')+
+    '<tr class="sum"><td>รวม</td>'+rowCells(T)+'</tr></tbody></table></div>';
+  return h+'<p class="disc">'+TAX_NOTE+'</p></div>';
+}
+$('#tx-pre').addEventListener('click',function(e){var b=e.target.closest('[data-tp]');if(b)txPreset(b.dataset.tp);});
+document.addEventListener('change',function(e){if(e.target.id==='tx-from'||e.target.id==='tx-to'){document.querySelectorAll('#tx-pre [data-tp]').forEach(function(x){x.setAttribute('aria-pressed','false');});txLinks();}});
+$('#tax-form').addEventListener('submit',function(e){e.preventDefault();txLoad();});
+$('#tx-close').addEventListener('click',function(){$('#tax-dlg').close();});
+$('#tx-print').addEventListener('click',function(){
+  if(!tx||tx.from!==$('#tx-from').value||tx.to!==$('#tx-to').value){toast('กด "ดูสรุป" ก่อนพิมพ์');return;}
+  var d=document.createElement('div');d.innerHTML=taxDocHtml(tx);printMode('doc',null,d.firstChild);
 });
 
 /* ---------- สต็อกวัตถุดิบ ----------
@@ -1482,7 +1601,7 @@ $('#queue-form').addEventListener('submit',function(e){
   $('#queue-ok').disabled=true;
   api('/api/queue',{channel:ch,name:$('#q-name').value.trim()}).then(function(r){
     $('#queue-ok').disabled=false;
-    if(r.ok){$('#queue-dlg').close();S.sel=r.j.table;S.lastSale=null;S.bSvc=false;S.bVat=S.d.settings.vat;toast('ได้คิว '+r.j.queue+' แล้ว กด "สั่งแทนลูกค้า" เพื่อเลือกเมนู');load();return;}
+    if(r.ok){$('#queue-dlg').close();S.sel=r.j.table;S.lastSale=null;S.bSvc=false;toast('ได้คิว '+r.j.queue+' แล้ว กด "สั่งแทนลูกค้า" เพื่อเลือกเมนู');load();return;}
     $('#queue-err').textContent=r.j.error||'ขอเลขคิวไม่สำเร็จ';
     if(r.status===401){$('#queue-dlg').close();showLogin();}
   },function(){$('#queue-ok').disabled=false;$('#queue-err').textContent='เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองอีกครั้ง';});
@@ -1537,7 +1656,7 @@ $('#split-form').addEventListener('submit',function(e){
   if(!pays.length){err.textContent='ใส่ยอดอย่างน้อยหนึ่งช่องทาง';return;}
   var sum=round2(pays.reduce(function(a,x){return a+x.amount;},0));
   if(sum!==split.due){err.textContent='รวม '+baht(sum)+' ไม่เท่ากับยอด '+baht(split.due);return;}
-  var body={table:split.t,svc:S.bSvc,vat:S.bVat,payments:pays,expectedSub:split.sub,expectedDisc:split.disc},recv=$('#sp-recv').value.trim();
+  var body={table:split.t,svc:S.bSvc,payments:pays,expectedSub:split.sub,expectedDisc:split.disc},recv=$('#sp-recv').value.trim();
   if(pays[0].method==='cash'&&recv!==''){if(!(+recv>=pays[0].amount)){err.textContent='เงินสดที่รับมาน้อยกว่าส่วนที่จ่ายเงินสด';return;}body.received=+recv;}
   $('#split-ok').disabled=true;err.textContent='';
   api('/api/pay',body).then(function(r){
@@ -1675,12 +1794,17 @@ function tLabel(t){var q=S.d&&S.d.queue&&S.d.queue[t];return isQ(t)?'คิว '
 var CHN={takeaway:'กลับบ้าน',delivery:'เดลิเวอรี'};
 function tLong(t){var q=S.d&&S.d.queue&&S.d.queue[t];return q?['คิว '+q.q,CHN[q.channel],q.name].filter(Boolean).join(' · '):tLabel(t);}
 function tableTickets(t){return S.d.tickets.filter(function(k){return k.table===t;});}
-/* สูตรเงิน คู่กับ store.totals() ในเซิร์ฟเวอร์ ต้องแก้พร้อมกัน: ส่วนลดหักจากค่าอาหารก่อน ค่าบริการและ VAT คิดจากยอดหลังลด */
-function calc(sub,svcOn,vatOn,disc){
-  disc=Math.min(Math.max(+disc||0,0),sub);
-  var net=Math.round((sub-disc)*100)/100,svc=svcOn?Math.round(net*.1):0,vat=vatOn?Math.round((net+svc)*.07):0,total=Math.round((net+svc+vat)*100)/100;
-  return {sub:sub,disc:disc,net:net,svc:svc,vat:vat,total:total};
+/* สูตรเงิน คู่กับ store.totals() ในเซิร์ฟเวอร์และยอดประมาณการใน customer.html ต้องแก้พร้อมกัน (tasks/spec-vat.md)
+   ส่วนลดหักจากค่าอาหารก่อน ค่าบริการปัดเป็นบาท VAT คิดเป็นจำนวนเต็มสตางค์ · vc = vatOf() ตั้งค่าร้าน (เซิร์ฟเวอร์ตัดสิน หน้านี้แค่แสดง) */
+function vatOf(){var s=S.d.settings;return {on:!!s.vatRegistered,incl:!!s.vatInclusive,rate:s.vatRate};}
+function calc(sub,svcOn,disc,vc){
+  vc=vc||vatOf();disc=Math.min(Math.max(+disc||0,0),sub);
+  var net=Math.round((sub-disc)*100)/100,svc=svcOn?Math.round(net*.1):0,base=Math.round((net+svc)*100),bp=vc.on?Math.round(vc.rate*100):0;
+  var vat=!bp?0:vc.incl?Math.round(base*bp/(10000+bp)):Math.round(base*bp/10000);
+  return {sub:sub,disc:disc,net:net,svc:svc,vat:vat/100,total:(vc.incl?base:base+vat)/100};
 }
+// ข้อความบอกโหมด VAT ของร้าน (บิลที่ยังไม่ปิด)
+function vatNote(vc){vc=vc||vatOf();return !vc.on?'':vc.incl?'ราคารวม VAT '+vc.rate+'% แล้ว':'บวก VAT '+vc.rate+'%';}
 function pad(n,w){return String(n).padStart(w,'0');}
 function billNo(no,at){var d=new Date(at);return 'R'+d.getFullYear()+pad(d.getMonth()+1,2)+pad(d.getDate(),2)+'-'+pad(no,4);}
 function fmtDate(at){var d=new Date(at);return d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'numeric'})+' '+d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});}
@@ -1926,8 +2050,11 @@ function receiptHtml(o){
   h+='<table><tr><td>รวมค่าอาหาร</td><td class="a">'+baht(o.sub)+'</td></tr>';
   if(o.disc)h+='<tr class="disc"><td>ส่วนลด'+(o.discount&&o.discount.kind==='pct'?' '+o.discount.value+'%':'')+(o.discount&&o.discount.reason?' ('+esc(o.discount.reason)+')':'')+'</td><td class="a">−'+baht(o.disc)+'</td></tr><tr><td>ค่าอาหารหลังลด</td><td class="a">'+baht(round2(o.sub-o.disc))+'</td></tr>';
   if(o.svc)h+='<tr><td>ค่าบริการ 10%</td><td class="a">'+baht(o.svc)+'</td></tr>';
-  if(o.vat)h+='<tr><td>VAT 7%</td><td class="a">'+baht(o.vat)+'</td></tr>';
+  // VAT: แยก = บรรทัด VAT ก่อนยอดรวม · ราคารวม VAT = ใต้ยอดรวมบอกมูลค่าก่อน VAT และ VAT ที่อยู่ในยอด (อัตราของบิล บิลเก่าไม่มี = 7%)
+  var vr=o.vatRate||7;
+  if(o.vat&&!o.vatIncl)h+='<tr><td>VAT '+vr+'%</td><td class="a">'+baht(o.vat)+'</td></tr>';
   h+='<tr class="grand"><td>'+(o.totalLabel||'รวมสุทธิ')+'</td><td class="a">'+baht(o.total)+'</td></tr>';
+  if(o.vat&&o.vatIncl)h+='<tr><td colspan="2" class="vi">ราคารวม VAT '+vr+'% แล้ว</td></tr><tr><td>มูลค่าก่อน VAT</td><td class="a">'+baht(round2(o.total-o.vat))+'</td></tr><tr><td>VAT '+vr+'%</td><td class="a">'+baht(o.vat)+'</td></tr>';
   if(o.pays&&o.pays.length>1)h+=o.pays.map(function(p){return '<tr><td>'+esc(PAYN[p.method]+(p.note?' ('+p.note+')':''))+'</td><td class="a">'+baht(p.amount)+'</td></tr>';}).join('');
   if(o.received!=null)h+='<tr><td>รับเงิน</td><td class="a">'+baht(o.received)+'</td></tr><tr><td>เงินทอน</td><td class="a">'+baht(o.change)+'</td></tr>';
   h+='</table>';
@@ -1953,11 +2080,11 @@ function payLabel(sale){var p=paysOf(sale);return p.length>1?'หลายช่
 function refundReceipt(f){
   var neg=function(v){return round2(-(v||0))+0;};
   return receiptHtml({title:'ใบคืนเงิน',no:billNo(f.no,f.at),refOf:f.refundOfAt?billNo(f.refundOf,f.refundOfAt):'#'+f.refundOf,at:f.at,table:f.table,label:f.queue?['คิว '+f.queue,CHN[f.channel],f.name].filter(Boolean).join(' · '):'',
-    lines:f.items.map(function(i){return {name:i.name,qty:-i.qty,price:i.price};}),sub:neg(f.sub),disc:neg(f.disc),svc:neg(f.svc),vat:neg(f.vat),total:neg(f.total),method:f.method,payPrefix:'คืนเงินทาง',payLabel:payLabel(f),totalLabel:'คืนเงินรวม',reason:f.reason});
+    lines:f.items.map(function(i){return {name:i.name,qty:-i.qty,price:i.price};}),sub:neg(f.sub),disc:neg(f.disc),svc:neg(f.svc),vat:neg(f.vat),vatRate:f.vatRate,vatIncl:f.vatIncl,total:neg(f.total),method:f.method,payPrefix:'คืนเงินทาง',payLabel:payLabel(f),totalLabel:'คืนเงินรวม',reason:f.reason});
 }
 function saleReceipt(sale,cash){
   if(sale.type==='refund')return refundReceipt(sale);
-  return receiptHtml({title:'ใบเสร็จรับเงิน',no:billNo(sale.no,sale.at),at:sale.at,table:sale.table,label:sale.queue?['คิว '+sale.queue,CHN[sale.channel],sale.name].filter(Boolean).join(' · '):'',lines:sale.items,sub:sale.sub,disc:sale.disc||0,discount:sale.discount,svc:sale.svc,vat:sale.vat,total:sale.total,method:sale.method,pays:paysOf(sale),payLabel:payLabel(sale),
+  return receiptHtml({title:'ใบเสร็จรับเงิน',no:billNo(sale.no,sale.at),at:sale.at,table:sale.table,label:sale.queue?['คิว '+sale.queue,CHN[sale.channel],sale.name].filter(Boolean).join(' · '):'',lines:sale.items,sub:sale.sub,disc:sale.disc||0,discount:sale.discount,svc:sale.svc,vat:sale.vat,vatRate:sale.vatRate,vatIncl:sale.vatIncl,total:sale.total,method:sale.method,pays:paysOf(sale),payLabel:payLabel(sale),
     received:cash?cash.received:null,change:cash?cash.change:null});
 }
 /* เงินทอน: คิดในหน้าจอ เซิร์ฟเวอร์ตรวจซ้ำและบันทึกลง audit log */
@@ -2066,15 +2193,15 @@ function checkHtml(){
   h+='</div>';
   if(bill&&canMoney()){
     h+='<div class="ck-sw np"><span class="row" style="gap:10px">ค่าบริการ 10% <button class="sw" data-a="bsvc" aria-pressed="'+S.bSvc+'">'+(S.bSvc?'เปิด':'ปิด')+'</button></span>'+
-      '<span class="row" style="gap:10px">VAT 7% <button class="sw" data-a="bvat" aria-pressed="'+S.bVat+'">'+(S.bVat?'เปิด':'ปิด')+'</button></span></div>';
+      (vatNote()?'<span class="muted small">'+vatNote()+' (ตั้งในหน้าตั้งค่า)</span>':'')+'</div>';
     var ds=bill.discount;
     h+='<div class="discbox np"><span>'+ic('tag','sm')+' ส่วนลด'+(bill.disc?' <b>−'+baht(bill.disc)+'</b>'+(ds.kind==='pct'&&ds.base!=null&&ds.base<bill.sub?' <span class="muted small">('+ds.value+'% ของยอดตอนให้ส่วนลด '+baht(ds.base)+' สั่งเพิ่มไม่ได้ส่วนลด)</span>':'')+(ds.approvedBy?' <span class="muted small">อนุมัติโดย '+esc(ds.approvedBy.name)+'</span>':''):' <span class="muted">ไม่มี</span>')+'</span>'+
       '<span class="acts">'+(bill.disc?'<button class="btn sm" data-a="discdel" data-id="'+t2+'">เอาส่วนลดออก</button>':'')+'<button class="btn sm" data-a="disc" data-id="'+t2+'">'+(bill.disc?'แก้ส่วนลด':'ให้ส่วนลด')+'</button></span></div>';
   }
   if(!bill){h+='</div></div>';return h;}
-  var c=calc(bill.sub,S.bSvc,S.bVat,bill.disc||0);
+  var c=calc(bill.sub,S.bSvc,bill.disc||0);
   var pending=tk2.filter(function(k){return k.status!=='served';}).reduce(function(n,k){return n+k.items.reduce(function(a,i){return a+i.qty;},0);},0);
-  h+='<div class="receipt-box"><div class="receipt">'+receiptHtml({title:'ใบแจ้งยอด',at:now(),table:t2,label:tLong(t2),lines:bill.lines,sub:c.sub,disc:c.disc,discount:bill.discount,svc:c.svc,vat:c.vat,total:c.total,qr:true})+'</div></div></div>';
+  h+='<div class="receipt-box"><div class="receipt">'+receiptHtml({title:'ใบแจ้งยอด',at:now(),table:t2,label:tLong(t2),lines:bill.lines,sub:c.sub,disc:c.disc,discount:bill.discount,svc:c.svc,vat:c.vat,vatRate:vatOf().rate,vatIncl:vatOf().incl,total:c.total,qr:true})+'</div></div></div>';
   h+='<div class="pay-wrap np"><div class="pay-sum"><span>ยอดชำระ'+(c.disc?' (ลด '+baht(c.disc)+')':'')+'</span><b>'+baht(c.total)+'</b></div>';
   if(pending)h+='<div class="banner warn"><span>'+ic('alert','sm')+'ยังมี '+pending+' รายการที่ยังไม่ได้เสิร์ฟ ถ้าปิดบิลตอนนี้ รายการเหล่านี้จะหายจากจอครัว</span></div>';
   if(!canMoney()){
@@ -2267,7 +2394,7 @@ function renderReport(){
   h+='</div></div>';
   h+=rangeHtml();
   if(isOwner())h+=auditHtml(month);
-  h+='<div class="panel"><div class="sec-title"><h3>'+ic('receipt')+'บิลวันนี้</h3>'+(isOwner()?'<span class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="refundfind">'+ic('history')+'คืนเงินบิลวันก่อน</button><a class="btn sm" href="/api/export.csv?month='+month+'">'+ic('download')+'ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a></span>':'')+'</div>';
+  h+='<div class="panel"><div class="sec-title"><h3>'+ic('receipt')+'บิลวันนี้</h3>'+(isOwner()?'<span class="row" style="gap:6px;flex-wrap:wrap"><button class="btn sm" data-a="taxsum">'+ic('calendar')+'สรุปยอดขายและภาษี</button><button class="btn sm" data-a="refundfind">'+ic('history')+'คืนเงินบิลวันก่อน</button><a class="btn sm" href="/api/export.csv?month='+month+'">'+ic('download')+'ดาวน์โหลดยอดขายเดือนนี้ (CSV)</a></span>':'')+'</div>';
   if(!r.bills.length)h+='<div class="muted small">ยังไม่มีบิล</div>';
   else h+='<div class="tbl-wrap"><table class="list"><thead><tr><th>เลขที่</th><th>เวลา</th><th>โต๊ะ</th><th>ชำระโดย</th><th class="r">ยอด</th><th></th></tr></thead><tbody>'+r.bills.map(function(b){
     if(b.type==='refund')return '<tr class="refund"><td>'+billNo(b.no,b.at)+'</td><td>'+hhmm(b.at)+'</td><td>'+(b.queue?'คิว '+b.queue:b.table)+'</td><td><span class="pill crit">คืนเงิน · '+esc(payLabel(b))+'</span> <span class="small">ของบิล '+(b.refundOfAt?billNo(b.refundOf,b.refundOfAt):'#'+b.refundOf)+'</span></td><td class="r"><b>−'+baht(-b.total)+'</b></td><td class="r"><button class="btn sm" data-a="viewsale" data-no="'+b.no+'">ดูใบคืนเงิน</button></td></tr>';
@@ -2302,7 +2429,9 @@ function renderSettings(){
     '<div class="stack"><b>รูป QR รับเงินของร้าน (ไม่บังคับ)</b><span class="muted small">มี QR จากแอปธนาคาร หรือ QR ร้านค้า (แม่มณี, K SHOP, ถุงเงิน ฯลฯ) อยู่แล้ว อัปโหลดรูปนั้นได้ ใบแจ้งยอดจะใช้รูปนี้แทน QR จากเบอร์ ลูกค้าต้องพิมพ์ยอดเอง (ใบแจ้งยอดบอกยอดตัวใหญ่) · ครอปให้เห็นแค่ QR จะสแกนง่ายขึ้น · อัปโหลดแล้วลองสแกนจ่าย 1 บาทก่อนใช้จริง</span>'+
     '<span class="row" style="gap:8px;flex-wrap:wrap;justify-content:flex-start"><label class="btn sm" for="payqr-file">'+ic('upload')+(s.payQr?'เปลี่ยนรูป QR':'อัปโหลดรูป QR')+'</label>'+(s.payQr?'<button class="btn sm" data-a="payqrdel">'+ic('trash')+'เลิกใช้รูปนี้</button>':'')+'</span></div></div>'+
     swRow('s-svc','ค่าบริการ 10% เป็นค่าเริ่มต้น','ใบแจ้งยอดทุกโต๊ะเริ่มแบบนี้ แคชเชียร์เปิด/ปิดรายโต๊ะได้',s.svc)+
-    swRow('s-vat','VAT 7% เป็นค่าเริ่มต้น','คิดเพิ่มจากราคาอาหาร (ไม่ได้รวมในราคา)',s.vat)+'</div>';
+    swRow('s-vreg','ร้านจด VAT','เปิด = คิด VAT ทุกบิล (แคชเชียร์ปิดเองไม่ได้) · ปิด = ไม่มี VAT เลย ร้านที่ไม่ได้จด VAT ไม่ควรเก็บ VAT จากลูกค้า',s.vatRegistered)+
+    swRow('s-vincl','ราคาเมนูรวม VAT แล้ว','เปิด = ลูกค้าจ่ายเท่าราคาเมนู VAT อยู่ในราคา (เช่น 60 บาท มี VAT 3.93) · ปิด = บวก VAT เพิ่มจากราคา (60 บาท จ่าย 64.20)',s.vatInclusive)+
+    '<div class="form" style="padding-top:14px;border-top:1px solid var(--line)"><label class="f" for="s-vrate">อัตรา VAT (%)<span class="hint">ปกติ 7 เปลี่ยนเมื่อรัฐประกาศอัตราใหม่ · เปลี่ยนการตั้ง VAT ต้องใส่ PIN ยืนยัน</span><input class="in" id="s-vrate" type="number" min="0.01" max="30" step="0.01" inputmode="decimal" value="'+esc(s.vatRate)+'"></label></div></div>';
   h+='<div class="panel" id="set-order">'+secHead('inbox','การรับออเดอร์','กันออเดอร์ปลอม: พนักงานสั่งแทนลูกค้าได้เสมอ ไม่ว่าตั้งแบบไหน')+
     swRow('s-open','รับออเดอร์ผ่าน QR','ปิดไว้ = ลูกค้าสแกนแล้วดูเมนูได้ แต่สั่งเองไม่ได้',s.acceptOrders)+
     swRow('s-seat','ต้องเปิดโต๊ะก่อนลูกค้าสั่ง','QR ของโต๊ะว่างสั่งไม่ได้จนกว่าพนักงานกด "เปิดโต๊ะ" ในแท็บโต๊ะ & บิล ปิดบิลแล้วโต๊ะปิดเอง',s.requireSeat)+
@@ -2782,12 +2911,12 @@ function cmdItems(){
   if(allow.indexOf('tables')>=0)for(var t=1;t<=d.settings.tables;t++)(function(t){
     var I=tableInfo(t);
     out.push({g:'โต๊ะ',t:'โต๊ะ '+t,s:I.st+(I.bill?' · '+baht(I.bill.sub):''),i:'tables',k:'โต๊ะ table',num:t,hot:!!I.cls,
-      run:function(){S.lastSale=null;S.sel=t;S.bSvc=d.settings.svc;S.bVat=d.settings.vat;goTab('tables');scrollCheck();}});
+      run:function(){S.lastSale=null;S.sel=t;S.bSvc=d.settings.svc;goTab('tables');scrollCheck();}});
   })(t);
   if(allow.indexOf('tables')>=0)queueIds().forEach(function(t){
     var q=d.queue[t],b=d.bills[t];
     out.push({g:'โต๊ะ',t:tLong(t),s:b?baht(b.sub):'ยังไม่สั่ง',i:'bag',k:'คิว queue กลับบ้าน เดลิเวอรี q'+q.q,hot:true,
-      run:function(){S.lastSale=null;S.sel=t;S.bSvc=false;S.bVat=d.settings.vat;goTab('tables');scrollCheck();}});
+      run:function(){S.lastSale=null;S.sel=t;S.bSvc=false;goTab('tables');scrollCheck();}});
   });
   if(allow.indexOf('tables')>=0&&front()){
     out.push({g:'คำสั่ง',t:'สั่งกลับบ้าน (ขอเลขคิว)',i:'bag',k:'takeaway queue คิว',run:function(){goTab('tables');openQueue('takeaway');}});
@@ -2806,6 +2935,7 @@ function cmdItems(){
     out.push({g:'คำสั่ง',t:'เพิ่มเมนูใหม่',i:'plus',k:'menu new',run:function(){goTab('menu');openEditor(null);}});
     out.push({g:'คำสั่ง',t:'สำรองข้อมูลตอนนี้',i:'db',k:'backup',run:function(){act('/api/backup',{},'สำรองข้อมูลแล้ว').then(function(){loadBackups();});}});
     out.push({g:'คำสั่ง',t:'พิมพ์ QR ทุกโต๊ะ',i:'printer',k:'qr print',run:function(){goTab('settings');qrLocalWarn();printMode('qr');}});
+    out.push({g:'คำสั่ง',t:'สรุปยอดขายและภาษี (สัปดาห์/เดือน, CSV, PDF)',i:'calendar',k:'tax vat ภาษี สรุป report pdf csv week month',run:function(){goTab('report');openTax();}});
     out.push({g:'คำสั่ง',t:'ดาวน์โหลดยอดขายเดือนนี้ (CSV)',i:'download',k:'csv excel export',run:function(){location.href='/api/export.csv?month='+month;}});
     out.push({g:'คำสั่ง',t:'เพิ่มพนักงาน',i:'users',k:'staff',run:function(){goTab('settings');S.stEdit='new';S.stErr='';S.sf=null;renderStaff();jump('stf');}});
   }
@@ -2880,7 +3010,7 @@ function logout(){api('/api/logout',{}).then(function(){S.d=null;kSeen=null;show
 /* ---------- events ---------- */
 function printMode(mode,extra,node){
   var pa=$('#print-area');
-  if(mode==='receipt'){
+  if(mode==='receipt'||mode==='doc'){
     var src=node||document.querySelector('.view:not([hidden]) .receipt');
     if(!src){toast('ไม่พบใบเสร็จที่จะพิมพ์');return;}
     pa.innerHTML='';pa.appendChild(node?src:src.cloneNode(true));
@@ -2971,7 +3101,7 @@ document.addEventListener('click',function(e){
   else if(a==='split'){disarm();openSplit(id,+b.dataset.sub,+b.dataset.due,+b.dataset.disc||0);}
   else if(a==='kprint'){printKitchen(id);}
   // คิวกลับบ้าน/เดลิเวอรี: ค่าบริการปิดเป็นค่าเริ่มต้น
-  else if(a==='sel'||a==='pick'){S.lastSale=null;S.sel=a==='sel'&&S.sel===id?null:id;S.bSvc=isQ(id)?false:S.d.settings.svc;S.bVat=S.d.settings.vat;render();if(S.sel)scrollCheck();}
+  else if(a==='sel'||a==='pick'){S.lastSale=null;S.sel=a==='sel'&&S.sel===id?null:id;S.bSvc=isQ(id)?false:S.d.settings.svc;render();if(S.sel)scrollCheck();}
   else if(a==='qnew'){openQueue(b.dataset.ch);}
   else if(a==='qcancel'){
     confirmBox({title:'ยกเลิก'+tLabel(id)+'?',lines:['คิวนี้ยังไม่มีออเดอร์ ยกเลิกแล้วเลขคิวนี้จะไม่ถูกใช้ซ้ำวันนี้'],ok:'ยกเลิกคิว',no:'ไม่ยกเลิก'})
@@ -2979,7 +3109,6 @@ document.addEventListener('click',function(e){
   }
   else if(a==='clearcall'){act('/api/call/clear',{table:id});}
   else if(a==='bsvc'){S.bSvc=!S.bSvc;render();}
-  else if(a==='bvat'){S.bVat=!S.bVat;render();}
   else if(a==='printr'){printMode('receipt');}
   else if(a==='pay'){
     var key='pay:'+id+':'+b.dataset.m;
@@ -2997,7 +3126,7 @@ document.addEventListener('click',function(e){
     disarm();
     if(S.busy)return;
     S.busy=true;
-    act('/api/pay',{table:id,svc:S.bSvc,vat:S.bVat,method:b.dataset.m,expectedSub:S.paySub,expectedDisc:S.payDisc,received:isCash&&S.cash!==''?+S.cash:undefined}).then(function(r){
+    act('/api/pay',{table:id,svc:S.bSvc,method:b.dataset.m,expectedSub:S.paySub,expectedDisc:S.payDisc,received:isCash&&S.cash!==''?+S.cash:undefined}).then(function(r){
       S.busy=false;S.cash='';
       if(document.activeElement&&document.activeElement.id==='cash-in')document.activeElement.blur();
       if(r&&r.ok){
@@ -3015,13 +3144,14 @@ document.addEventListener('click',function(e){
   else if(a==='viewsale'){var no=+b.dataset.no;S.viewSale=(S.report.bills||[]).filter(function(x){return x.no===no;})[0]||null;renderReport();window.scrollTo(0,0);}
   else if(a==='closesale'){S.viewSale=null;renderReport();}
   else if(a==='refund'){openRefund(+b.dataset.no);}
+  else if(a==='taxsum'){openTax();}
   else if(a==='refundfind'){$('#rff-form').reset();$('#rff-err').textContent='';$('#rff-dlg').showModal();$('#rff-no').focus();}
   else if(a==='tog'){var on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);b.textContent=on?'เปิด':'ปิด';markDirty();}
   else if(a==='savesettings'){
     act('/api/settings',{shop:$('#s-shop').value,promptpay:$('#s-pp').value,tables:+$('#s-tables').value,baseUrl:$('#s-base').value,
       address:$('#s-addr').value,phone:$('#s-phone').value,taxId:$('#s-tax').value,footer:$('#s-foot').value,tagline:$('#s-tag').value,
       social:{facebook:$('#s-facebook').value,instagram:$('#s-instagram').value,line:$('#s-line').value,tiktok:$('#s-tiktok').value},shareUrl:$('#s-share').value,
-      acceptOrders:$('#s-open').getAttribute('aria-pressed')==='true',svc:$('#s-svc').getAttribute('aria-pressed')==='true',vat:$('#s-vat').getAttribute('aria-pressed')==='true',
+      acceptOrders:$('#s-open').getAttribute('aria-pressed')==='true',svc:$('#s-svc').getAttribute('aria-pressed')==='true',vatRegistered:$('#s-vreg').getAttribute('aria-pressed')==='true',vatInclusive:$('#s-vincl').getAttribute('aria-pressed')==='true',vatRate:+$('#s-vrate').value,
       requireSeat:$('#s-seat').getAttribute('aria-pressed')==='true',hours:{on:$('#s-hon').getAttribute('aria-pressed')==='true',open:$('#s-hopen').value,close:$('#s-hclose').value}},'บันทึกแล้ว')
       .then(function(r){if(r&&r.ok){S.dirty=false;if(document.activeElement)document.activeElement.blur();load();}});
   }

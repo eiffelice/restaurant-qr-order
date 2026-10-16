@@ -1488,6 +1488,55 @@ const cases = {
     return ok.done();
   },
 
+  /* คิด VAT (tasks/spec-vat.md): เจ้าของเปิด "ร้านจด VAT" ในตั้งค่า → บิลบวก VAT ถึงสตางค์ (120 + 12 = 132 → 141.24)
+     รับเงินสดยอดมีสตางค์ ทอนถูก · เปลี่ยนเป็น "ราคารวม VAT แล้ว" → ยอดเท่าราคา ใบแจ้งยอดบอกมูลค่าก่อน VAT · หน้าลูกค้าบอกโหมด
+     · ไม่มีสวิตช์ VAT ทีละบิลแล้ว */
+  async vat(browser) {
+    const ok = checker('vat'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    ok((await s.call('GET', '/api/state')).json.settings.vatRegistered === false, 'ร้านใหม่: ค่าเริ่มต้นไม่จด VAT');
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] }, { staff: false });   // 120 + ค่าบริการ 12
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="1"]'); await p.waitForSelector('.receipt .grand .a');
+    ok((await p.textContent('.receipt .grand .a')).trim() === '฿132' && !/VAT/.test(await p.textContent('.receipt')) && !(await p.$('[data-a="bvat"]')), 'ไม่จด VAT: ยอด 132 ไม่มีบรรทัด VAT ไม่มีสวิตช์ VAT ในบิล');
+    await tab(p, 'settings'); await p.waitForSelector('#s-vreg');
+    await p.click('#s-vreg'); await p.click('[data-a="savesettings"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.vatRegistered, 8000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.settings.vatRegistered === true, 'เปิด "ร้านจด VAT" จากหน้าตั้งค่า');
+    await tab(p, 'tables'); await sleep(300);
+    if (!(await p.$('.receipt .grand .a'))) await p.click('[data-a="sel"][data-id="1"]');
+    await p.waitForFunction(() => /141.24/.test((document.querySelector('.receipt .grand .a') || {}).textContent || ''), null, { timeout: 6000 }).catch(() => {});
+    const rc = await p.textContent('.receipt');
+    ok(/VAT 7%฿9.24/.test(rc) && (await p.textContent('.receipt .grand .a')).trim() === '฿141.24' && /บวก VAT 7%/.test(await p.textContent('#v-tables')), 'จด VAT แบบแยก: บรรทัด VAT 7% ฿9.24 ยอด ฿141.24 และบอกโหมดในบิล', rc.slice(0, 200));
+    const pay = p.locator('[data-a="pay"][data-m="cash"]');
+    await pay.click(); await p.waitForSelector('#cash-in');
+    await p.keyboard.type('150');
+    ok(/ทอน ฿8.76/.test(await p.textContent('#cash-change')), 'รับเงินสด 150 จากยอด 141.24: ทอน ฿8.76', await p.textContent('#cash-change'));
+    await pay.click(); await p.waitForSelector('[data-a="donesale"]');
+    const sale = (await s.call('GET', '/api/report')).json.bills[0] || {};   // ใหม่สุดก่อน
+    ok(sale.total === 141.24 && sale.vat === 9.24 && sale.vatRate === 7, 'บิลที่บันทึก: ยอด 141.24 VAT 9.24 อัตรา 7%', [sale.total, sale.vat, sale.vatRate]);
+    await p.click('[data-a="donesale"]');
+    // ราคารวม VAT แล้ว
+    await tab(p, 'settings'); await p.waitForSelector('#s-vincl');
+    await p.click('#s-vincl'); await p.click('[data-a="savesettings"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.vatInclusive, 8000).catch(() => {});
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 1 }] }, { staff: false });   // 60 + ค่าบริการ 6 = 66 รวม VAT แล้ว
+    await tab(p, 'tables'); await p.click('[data-a="sel"][data-id="2"]');
+    await p.waitForFunction(() => /มูลค่าก่อน VAT/.test((document.querySelector('.receipt') || {}).textContent || ''), null, { timeout: 6000 }).catch(() => {});
+    const ri = await p.textContent('.receipt');
+    ok((await p.textContent('.receipt .grand .a')).trim() === '฿66' && /ราคารวม VAT 7% แล้ว/.test(ri) && /มูลค่าก่อน VAT฿61.68/.test(ri) && /VAT 7%฿4.32/.test(ri), 'ราคารวม VAT: ยอด ฿66 ใต้ยอดบอกมูลค่าก่อน VAT ฿61.68 และ VAT ฿4.32', ri.slice(0, 260));
+    const c = await customerPage(browser, s, 2, keys[2], errors);
+    await c.waitForFunction(() => /รวม VAT 7% แล้ว/.test(document.body.textContent), null, { timeout: 8000 }).catch(() => {});
+    ok(/ราคาในเมนูรวม VAT 7% แล้ว/.test(await c.textContent('body')), 'หน้าลูกค้า: บอกว่าราคาในเมนูรวม VAT แล้ว');
+    const of = await overflow(c);
+    ok(!of, 'มือถือ: หน้าลูกค้าไม่ล้นจอ', of);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
   /* เกณฑ์ตรวจรับ: มือถือจอแคบไม่เลื่อนแนวนอน, ราคาเปลี่ยนระหว่างสั่ง, เน็ตหลุด, ยกเลิกออเดอร์ต้องมีเหตุผลและ PIN เจ้าของ */
   /* คืนเงินบิลที่ปิดแล้ว (เจ้าของ): คืนบางรายการจากบิลวันนี้ → ใบคืนเงิน ยอดสรุปเป็นยอดสุทธิ · อีกเครื่องคืนไปก่อน = แจ้งและโหลดยอดใหม่
      · คืนบิลวันก่อนด้วยเลขที่ใบเสร็จ · แคชเชียร์ไม่เห็นปุ่มคืนเงิน */
@@ -1526,8 +1575,8 @@ const cases = {
     await p.check('#refund-form input[name=rfr][value="ลูกค้ายกเลิก"]');
     await s.call('POST', '/api/refund', { no: sale.no, mode: 'all', method: 'cash', reason: 'อีกเครื่อง', expected: 140 });
     await p.click('#refund-ok');
-    await p.waitForFunction(() => /ระหว่างนั้น/.test(document.querySelector('#refund-err').textContent), null, { timeout: 6000 }).catch(() => {});
-    ok(/ระหว่างนั้น/.test(await p.textContent('#refund-err')) && /คืนได้อีก ฿0/.test(await p.textContent('#refund-sub')), 'อีกเครื่องคืนไปก่อน: แจ้งในหน้าต่าง และโหลดยอดที่ยังคืนได้ใหม่', await p.textContent('#refund-sub'));
+    await p.waitForFunction(() => /ระหว่างนั้น/.test(document.querySelector('#refund-err').textContent) && /คืนได้อีก ฿0/.test(document.querySelector('#refund-sub').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/ระหว่างนั้น/.test(await p.textContent('#refund-err')) && /คืนได้อีก ฿0/.test(await p.textContent('#refund-sub')), 'อีกเครื่องคืนไปก่อน: แจ้งในหน้าต่าง และโหลดยอดที่ยังคืนได้ใหม่', [await p.textContent('#refund-err'), await p.textContent('#refund-sub')]);
     await p.click('#refund-cancel');
     ok((await s.call('GET', '/api/report')).json.total === 0, 'ไม่คืนซ้ำ: ยอดสุทธิ 0');
     // คืนบิลวันก่อน: ใส่เลขที่ใบเสร็จเต็ม
@@ -1549,6 +1598,75 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* สรุปยอดขายและภาษี (เจ้าของ): สัปดาห์ก่อน (บิลเก่าในไฟล์ sales/) → ตัวเลขตรงกับ API → CSV สองแบบดาวน์โหลดได้ → พิมพ์ A4
+     มีหัวเอกสาร ยอดรวม ข้อความ "ไม่ใช่รายงานภาษีขาย" ไม่มีส่วนอื่นของหน้า · ออเดอร์เข้าระหว่างเปิด วันที่ไม่หาย · แคชเชียร์ไม่เห็นปุ่ม */
+  async taxreport(browser) {
+    const ok = checker('taxreport'); const errors = [];
+    const app = makeApp();
+    // บิลเก่า 2 ใบในสัปดาห์ก่อน (จันทร์–อาทิตย์ ตามเวลาเครื่อง) ใบหนึ่งคิด VAT
+    const now = new Date(), mon = new Date(now); mon.setHours(12, 0, 0, 0); mon.setDate(now.getDate() - (now.getDay() + 6) % 7 - 7);
+    const at = n => { const d = new Date(mon); d.setDate(mon.getDate() + n); return d; };
+    const key = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    fs.mkdirSync(path.join(app.code, 'sales'), { recursive: true });
+    const put = o => fs.appendFileSync(path.join(app.code, 'sales', key(new Date(o.at)).slice(0, 7) + '.jsonl'), JSON.stringify(Object.assign({ table: 2, svc: 0, items: [{ name: 'ข้าวผัด', qty: 1, price: o.sub }] }, o)) + '\n');
+    put({ no: 9001, at: at(1).getTime(), sub: 100, vat: 0, total: 100, method: 'cash' });
+    put({ no: 9002, at: at(4).getTime(), sub: 200, vat: 14, total: 214, method: 'transfer' });
+    const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const p = await staffPage(browser, s, null, errors);
+    await p.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+    await tab(p, 'report'); await p.waitForSelector('[data-a="taxsum"]', { timeout: 6000 });
+    await p.click('[data-a="taxsum"]'); await p.waitForSelector('#tax-dlg[open]');
+    await p.click('#tx-pre [data-tp="lastweek"]');
+    await p.waitForFunction(() => /สรุปยอดขายและภาษี/.test(document.querySelector('#tx-body').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(await p.inputValue('#tx-from') === key(at(0)) && await p.inputValue('#tx-to') === key(at(6)), 'สัปดาห์ก่อน = จันทร์–อาทิตย์', [await p.inputValue('#tx-from'), await p.inputValue('#tx-to')]);
+    const body = await p.textContent('#tx-body');
+    ok(/฿314/.test(body) && /฿14/.test(body) && /฿300/.test(body), 'ยอดสุทธิ 314 · VAT 14 · ก่อน VAT 300', body.slice(0, 200));
+    ok(/ไม่ควรเก็บ VAT/.test(body), 'ร้านไม่มีเลขผู้เสียภาษีแต่มีบิลคิด VAT: มีคำเตือน');
+    ok((await p.$$('#tx-body .taxdoc tbody tr')).length >= 7 + 1, 'ตารางรายวัน 7 วัน + แถวรวม');
+    // ดาวน์โหลด CSV ทั้งสองแบบ
+    const dl = async sel => { const [d] = await Promise.all([p.waitForEvent('download'), p.click(sel)]); const f = await d.path(); return { name: d.suggestedFilename(), text: fs.readFileSync(f, 'utf8') }; };
+    const daily = await dl('#tx-csv-d'), bills = await dl('#tx-csv-b');
+    ok(daily.name === 'summary-' + key(at(0)) + '_' + key(at(6)) + '.csv' && /"รวม"/.test(daily.text) && /"314"/.test(daily.text), 'CSV สรุปรายวัน: ชื่อไฟล์ตามช่วง มีแถวรวม', daily.name);
+    ok(/"9001"/.test(bills.text) && /"9002"/.test(bills.text) && /มูลค่าก่อน VAT/.test(bills.text), 'CSV รายบิล: บิลทั้งสองใบและคอลัมน์มูลค่าก่อน VAT');
+    // ออเดอร์เข้าระหว่างเปิดหน้าต่าง: วันที่ที่เลือกไม่หาย
+    await p.fill('#tx-from', key(at(1)));
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await sleep(900);
+    ok(await p.inputValue('#tx-from') === key(at(1)) && await p.isVisible('#tax-dlg'), 'ออเดอร์เข้าระหว่างเลือกวัน: วันที่ไม่หาย หน้าต่างยังเปิด');
+    await p.click('#tx-go'); await sleep(500);
+    // พิมพ์ A4: มีแต่เอกสาร
+    await p.click('#tx-print');
+    await p.waitForFunction(() => window.__printed > 0, null, { timeout: 5000 }).catch(() => {});
+    await p.emulateMedia({ media: 'print' });
+    const info = await p.evaluate(() => {
+      const pa = document.querySelector('#print-area');
+      return { shown: [...document.body.children].filter(e => e !== pa && getComputedStyle(e).display !== 'none').map(e => e.id || e.className), text: pa.textContent };
+    });
+    const pdf = await p.pdf({ format: 'A4' });
+    await p.emulateMedia({ media: 'screen' });
+    ok(info.shown.length === 0, 'พิมพ์: ส่วนอื่นของหน้าซ่อนหมด', info.shown);
+    ok(/สรุปยอดขายและภาษี/.test(info.text) && /ร้านของฉัน/.test(info.text) && /ไม่ใช่รายงานภาษีขาย/.test(info.text) && /฿214/.test(info.text), 'เอกสารพิมพ์มีหัวเอกสาร ยอด และข้อความว่าไม่ใช่รายงานภาษีขาย');
+    ok(pdf.length > 5000, 'สร้าง PDF A4 ได้', pdf.length);
+    await p.click('#tx-close');
+    // แคชเชียร์: ไม่มีปุ่ม · มือถือไม่ล้นจอ
+    const ctx = await browser.newContext({ baseURL: s.B, viewport: { width: 390, height: 844 } });
+    const c = await ctx.newPage(); watch(c, errors, 'cashier');
+    await c.goto('/staff'); await c.fill('#pin', '520011'); await c.press('#pin', 'Enter'); await c.waitForSelector('#tabs .tab');
+    await tab(c, 'report'); await c.waitForSelector('.kpis');
+    ok(!(await c.$('[data-a="taxsum"]')), 'แคชเชียร์ไม่เห็นปุ่มสรุปยอดขายและภาษี');
+    const mp = await staffPage(browser, s, { viewport: { width: 390, height: 844 } }, errors);
+    await tab(mp, 'report'); await mp.waitForSelector('[data-a="taxsum"]'); await mp.click('[data-a="taxsum"]'); await mp.waitForSelector('#tax-dlg[open]');
+    await mp.waitForFunction(() => /สรุปยอดขายและภาษี/.test(document.querySelector('#tx-body').textContent), null, { timeout: 6000 }).catch(() => {});
+    const of = await overflow(mp);
+    ok(!of, 'มือถือ: หน้าต่างสรุปไม่ทำให้หน้าเลื่อนแนวนอน', of);
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await ctx.close(); await mp.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 

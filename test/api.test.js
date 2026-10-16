@@ -184,8 +184,8 @@ describe('ระบบหลัก', () => {
     const ok = await s.call('POST', '/api/pay', { table: 5, svc: true, vat: true, method: 'transfer', expectedSub: fresh.sub });
     assert.equal(ok.status, 200);
     assert.equal(ok.json.sale.svc, 18);                       // 10% ของ 175 = 17.5 ปัดเป็น 18
-    assert.equal(ok.json.sale.vat, 14);                       // 7% ของ 193 = 13.51 ปัดเป็น 14
-    assert.equal(ok.json.sale.total, 207);
+    assert.equal(ok.json.sale.vat, 0);                        // ร้านไม่จด VAT (ค่าเริ่มต้นร้านใหม่): หน้าเว็บส่ง vat:true มาก็ไม่คิด (tasks/spec-vat.md)
+    assert.equal(ok.json.sale.total, 193);                    // ไม่มี VAT (ร้านไม่จด)
     assert.equal(ok.json.sale.method, 'transfer');
     const after = (await s.call('GET', '/api/state')).json;
     assert.equal(after.tickets.filter(k => k.table === 5).length, 0);
@@ -2225,7 +2225,7 @@ describe('POS: ส่วนลดท้ายบิล', () => {
     return (await s.call('GET', '/api/state')).json.bills[t];
   };
 
-  test('ลด 10% จากค่าอาหารก่อนคิดค่าบริการและ VAT: 200 → ลด 20 → ค่าบริการ 18 → VAT 14 → 212 บิลเก็บส่วนลด เหตุผล คนให้ + audit', async () => {
+  test('ลด 10% จากค่าอาหารก่อนคิดค่าบริการและ VAT: 200 → ลด 20 → ค่าบริการ 18 → VAT 13.86 → 211.86 บิลเก็บส่วนลด เหตุผล คนให้ + audit', async () => {
     const s = start(makeApp()); await s.ready; await s.login();
     const b0 = await order(s, 1, [{ id: 1, qty: 2 }, { id: 2, qty: 1 }]);
     assert.equal(b0.sub, 200);
@@ -2233,12 +2233,13 @@ describe('POS: ส่วนลดท้ายบิล', () => {
     assert.equal(r.status, 200, JSON.stringify(r.json));
     const b1 = (await s.call('GET', '/api/state')).json.bills[1];
     assert.deepEqual([b1.sub, b1.disc, b1.discount.kind, b1.discount.value, b1.discount.reason], [200, 20, 'pct', 10, 'ลูกค้าประจำ']);
-    r = await s.call('POST', '/api/pay', { table: 1, expectedSub: 200, expectedDisc: 20, svc: true, vat: true, method: 'cash' });
+    assert.equal((await s.call('POST', '/api/settings', { vatRegistered: true })).status, 200);
+    r = await s.call('POST', '/api/pay', { table: 1, expectedSub: 200, expectedDisc: 20, svc: true, method: 'cash' });
     assert.equal(r.status, 200, JSON.stringify(r.json));
     const sale = r.json.sale;
-    assert.deepEqual([sale.sub, sale.disc, sale.svc, sale.vat, sale.total], [200, 20, 18, 14, 212]);
+    assert.deepEqual([sale.sub, sale.disc, sale.svc, sale.vat, sale.total], [200, 20, 18, 13.86, 211.86]);   // VAT ถึงสตางค์ (tasks/spec-vat.md)
     assert.deepEqual([sale.discount.kind, sale.discount.value, sale.discount.reason, sale.discount.by.name], ['pct', 10, 'ลูกค้าประจำ', 'เจ้าของร้าน']);
-    assert.equal(sale.payments[0].amount, 212, 'เงินที่รับ = ยอดหลังลด');
+    assert.equal(sale.payments[0].amount, 211.86, 'เงินที่รับ = ยอดหลังลด');
     assert.equal((await s.call('GET', '/api/state')).json.bills[1], undefined);
     const ev = readLog(s.dir, 'audit');
     const d = ev.find(e => e.action === 'bill.discounted');
@@ -2247,6 +2248,7 @@ describe('POS: ส่วนลดท้ายบิล', () => {
     // ลดเป็นบาท + ไม่มีค่าบริการ/VAT
     await order(s, 2, [{ id: 2, qty: 1 }]);
     await s.call('POST', '/api/table/discount', { table: 2, kind: 'amt', value: 30, reason: 'โปรโมชัน' });
+    assert.equal((await s.call('POST', '/api/settings', { vatRegistered: false })).status, 200);   // VAT มาจากตั้งค่าร้าน ไม่ใช่ต่อบิล
     r = await s.call('POST', '/api/pay', { table: 2, expectedSub: 80, expectedDisc: 30, method: 'transfer' });
     assert.deepEqual([r.json.sale.disc, r.json.sale.total], [30, 50]);
     await s.stop();
@@ -2726,7 +2728,7 @@ describe('คืนเงินบิลที่ปิดแล้ว (ใบ�
     const csv = (await s.call('GET', '/api/export.csv')).text.replace(/^﻿/, '').split('\r\n');
     const head = csv[0].split(',');
     const at = n => head.indexOf('"' + n + '"');
-    assert.ok(at('คืนเงินของบิล') === at('ต้นทุนวัตถุดิบ') + 1 && at('เหตุผลคืนเงิน') === at('คืนเงินของบิล') + 1 && at('ชำระโดย') === at('เหตุผลคืนเงิน') + 1, head.join(','));
+    assert.ok(at('คืนเงินของบิล') === at('ต้นทุนวัตถุดิบ') + 1 && at('เหตุผลคืนเงิน') === at('คืนเงินของบิล') + 1 && at('ชำระโดย') === at('เหตุผลคืนเงิน') + 2 /* + มูลค่าก่อน VAT */, head.join(','));
     assert.equal(head.slice(0, 8).join(','), '"เลขที่","วันที่","เวลา","โต๊ะ","ค่าอาหาร","ค่าบริการ","VAT","รวม"');
     const row = csv[2].split(',');
     assert.equal(row[0], '"' + r.json.refund.no + '"');
@@ -2739,6 +2741,196 @@ describe('คืนเงินบิลที่ปิดแล้ว (ใบ�
     const bills = (await s.call('GET', '/api/report')).json.bills;
     assert.ok(bills.some(b => b.type === 'refund' && b.refundOf === sale.no), 'เปิดใหม่แล้วใบคืนเงินยังอยู่');
     assert.equal((await s.call('GET', '/api/bill?no=' + sale.no)).json.remaining, 0);
+    await s.stop();
+  });
+});
+
+describe('สรุปยอดขายและภาษี (สัปดาห์/เดือน/ช่วงวันเอง)', () => {
+  const ymd = t => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  // บิลเก่าในไฟล์ยอดขายถาวร (สัปดาห์ จ. 28 ก.ย. – อา. 4 ต.ค. 2026 คาบสองเดือน) + บิลนอกช่วง
+  const fixture = dir => {
+    fs.mkdirSync(path.join(dir, 'sales'), { recursive: true });
+    const line = o => JSON.stringify(Object.assign({ table: 3, svc: 0, disc: undefined, items: [{ name: 'เมนูเก่า', qty: 1, price: o.sub }] }, o)) + '\n';
+    fs.appendFileSync(path.join(dir, 'sales', '2026-09.jsonl'), line({ no: 9001, at: new Date(2026, 8, 29, 12).getTime(), sub: 100, vat: 0, total: 100, method: 'cash' }));
+    fs.appendFileSync(path.join(dir, 'sales', '2026-10.jsonl'), line({ no: 9002, at: new Date(2026, 9, 2, 19).getTime(), sub: 200, vat: 14, total: 214, method: 'card' }));
+    fs.appendFileSync(path.join(dir, 'sales', '2026-10.jsonl'), line({ no: 9003, at: new Date(2026, 9, 5, 10).getTime(), sub: 50, vat: 0, total: 50, method: 'cash' }));
+  };
+
+  test('ยอดทั้งช่วง: VAT ค่าบริการ ส่วนลด ใบคืนเงิน แยกช่องทาง บิลมี/ไม่มี VAT และคำเตือนตามเลขผู้เสียภาษี', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }] });            // 120
+    assert.equal((await s.call('POST', '/api/settings', { vatRegistered: true })).status, 200);
+    assert.equal((await s.call('POST', '/api/pay', { table: 1, expectedSub: 120, svc: true, method: 'cash' })).json.sale.total, 141.24, '120 + 12 + VAT 9.24');
+    assert.equal((await s.call('POST', '/api/settings', { vatRegistered: false })).status, 200);   // บิลถัดไปไม่คิด VAT (ร้านเปลี่ยนสถานะ)
+    await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 2, qty: 1 }] });            // 80
+    await s.call('POST', '/api/table/discount', { table: 2, kind: 'amt', value: 10, reason: 'ลูกค้าประจำ' });
+    const b = (await s.call('POST', '/api/pay', { table: 2, expectedSub: 80, expectedDisc: 10, method: 'transfer' })).json.sale;
+    assert.equal(b.total, 70);
+    assert.equal((await s.call('POST', '/api/refund', { no: b.no, mode: 'all', method: 'transfer', reason: 'ลูกค้ายกเลิก', expected: 70 })).status, 200);
+    const day = ymd(Date.now());
+    const r = await s.call('GET', '/api/report/tax?from=' + day + '&to=' + day);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const j = r.json;
+    assert.deepEqual(j.totals, { bills: 2, refunds: 1, sub: 120, disc: 0, svc: 12, beforeVat: 132, vat: 9.24, total: 141.24, refundValue: 70 }, 'บิลที่อยู่ทั้ง sales/ และ data.json นับครั้งเดียว');
+    assert.deepEqual(j.byMethod, { cash: 141.24, transfer: 0, card: 0, other: 0 });
+    assert.deepEqual(j.vat, { withVat: { bills: 1, vat: 9.24, total: 141.24 }, withoutVat: { bills: 1, total: 70 } });
+    assert.equal(j.days.length, 1); assert.equal(j.days[0].date, day); assert.equal(j.days[0].total, 141.24);
+    assert.ok(j.firstNo < j.lastNo);
+    assert.ok(j.warnings.some(w => /ไม่ควรเก็บ VAT/.test(w)), 'ร้านไม่จด VAT แต่มีบิลคิด VAT: ' + JSON.stringify(j.warnings));
+    assert.equal((await s.call('POST', '/api/settings', { taxId: '1234567890123', vatRegistered: true })).status, 200);
+    const w2 = (await s.call('GET', '/api/report/tax?from=' + day + '&to=' + day)).json.warnings;
+    assert.ok(w2.some(w => /1 บิลไม่ได้คิด VAT/.test(w)) && !w2.some(w => /ไม่ควรเก็บ VAT/.test(w)) && !w2.some(w => /ยังไม่ได้ใส่เลข/.test(w)), 'จด VAT มีเลขผู้เสียภาษี แต่มีบิลไม่คิด VAT: ' + JSON.stringify(w2));
+    assert.equal((await s.call('GET', '/api/report/tax?from=' + day + '&to=' + day)).json.shop.taxId, '1234567890123');
+    await s.stop();
+  });
+
+  test('สัปดาห์ จันทร์–อาทิตย์ข้ามเดือน: อ่านไฟล์สองเดือน วันไม่มีบิลเป็น 0 · ช่วงผิด/เกิน 366 วัน = 400 · แคชเชียร์ = 403', async () => {
+    const app = makeApp(); fixture(app);
+    const s = start(app); await s.ready; await s.login();
+    await withStaff(s);
+    const r = await s.call('GET', '/api/report/tax?from=2026-09-28&to=2026-10-04');
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const j = r.json;
+    assert.deepEqual(j.days.map(d => d.date), ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04']);
+    assert.deepEqual(j.days.map(d => d.total), [0, 100, 0, 0, 214, 0, 0]);
+    assert.deepEqual([j.totals.total, j.totals.vat, j.totals.beforeVat, j.totals.bills], [314, 14, 300, 2], 'บิล 9003 (5 ต.ค.) อยู่นอกช่วง');
+    assert.deepEqual([j.firstNo, j.lastNo], [9001, 9002]);
+    assert.deepEqual(j.byMethod, { cash: 100, transfer: 0, card: 214, other: 0 });
+    const bad = async q => (await s.call('GET', '/api/report/tax?' + q)).status;
+    assert.equal(await bad('from=2026-10-04&to=2026-09-28'), 400, 'to ก่อน from');
+    assert.equal(await bad('from=2026-02-30&to=2026-03-01'), 400, 'วันที่ไม่มีจริง');
+    assert.equal(await bad('from=2025-01-01&to=2026-01-02'), 400, 'เกิน 366 วัน');
+    assert.equal(await bad('from=2026-09-28'), 400, 'ไม่มีวันสิ้นสุด');
+    assert.equal(await bad('from=2025-10-01&to=2026-09-30'), 200, '365 วันได้');
+    const c = await device(s, '520011');
+    assert.equal((await c.call('GET', '/api/report/tax?from=2026-09-28&to=2026-10-04')).status, 403, 'แคชเชียร์ดูไม่ได้');
+    assert.equal((await c.call('GET', '/api/export.csv?from=2026-09-28&to=2026-10-04&kind=daily')).status, 403);
+    await s.stop();
+  });
+
+  test('CSV ช่วงวันที่: สรุปรายวันมีแถวรวมท้ายสุดตรงกับ API · รายบิลมี "มูลค่าก่อน VAT" ก่อน "ชำระโดย" · month= แบบเดิมยังใช้ได้', async () => {
+    const app = makeApp(); fixture(app);
+    const s = start(app); await s.ready; await s.login();
+    const get = async q => { const r = await fetch(s.B + '/api/export.csv?' + q, { headers: { cookie: s.cookie } }); return { status: r.status, cd: r.headers.get('content-disposition'), rows: (await r.text()).replace(/^﻿/, '').split('\r\n').map(l => l.split(',')) }; };
+    const d = await get('from=2026-09-28&to=2026-10-04&kind=daily');
+    assert.equal(d.status, 200);
+    assert.match(d.cd, /summary-2026-09-28_2026-10-04\.csv/);
+    const h = d.rows[0], col = n => h.indexOf('"' + n + '"');
+    assert.ok(['วันที่', 'จำนวนบิล', 'ใบคืนเงิน', 'มูลค่าก่อน VAT', 'VAT', 'ยอดรวมสุทธิ', 'คืนเงิน', 'เงินสด', 'บัตร'].every(n => col(n) >= 0), h.join(','));
+    assert.equal(d.rows.length, 1 + 7 + 1, 'หัว + 7 วัน + แถวรวม');
+    const last = d.rows[d.rows.length - 1];
+    assert.equal(last[0], '"รวม"');
+    assert.deepEqual([last[col('ยอดรวมสุทธิ')], last[col('VAT')], last[col('มูลค่าก่อน VAT')], last[col('จำนวนบิล')]], ['"314"', '"14"', '"300"', '"2"']);
+    assert.equal(d.rows[2][col('ยอดรวมสุทธิ')], '"100"', '29 ก.ย.');
+    const b = await get('from=2026-09-28&to=2026-10-04&kind=bills');
+    const bh = b.rows[0], bc = n => bh.indexOf('"' + n + '"');
+    assert.ok(bc('มูลค่าก่อน VAT') === bc('เหตุผลคืนเงิน') + 1 && bc('ชำระโดย') === bc('มูลค่าก่อน VAT') + 1, bh.join(','));
+    assert.equal(bh.slice(0, 8).join(','), '"เลขที่","วันที่","เวลา","โต๊ะ","ค่าอาหาร","ค่าบริการ","VAT","รวม"', 'คอลัมน์เดิมไม่เลื่อน');
+    assert.deepEqual(b.rows.slice(1).map(r => r[0]), ['"9001"', '"9002"']);
+    assert.equal(b.rows[2][bc('มูลค่าก่อน VAT')], '"200"');
+    const m = await get('month=2026-10');
+    assert.equal(m.status, 200);
+    assert.deepEqual(m.rows.slice(1).map(r => r[0]), ['"9002"', '"9003"'], 'month= แบบเดิม: ทั้งเดือนตุลาคม');
+    assert.equal((await get('from=2026-10-04&to=2026-09-28&kind=daily')).status, 400);
+    const ev = readLog(s.dir, 'audit').filter(e => e.action === 'report.exported');
+    assert.ok(ev.some(e => e.kind === 'daily' && e.from === '2026-09-28' && e.to === '2026-10-04'), JSON.stringify(ev));
+    await s.stop();
+  });
+});
+
+describe('VAT: ร้านจด/ไม่จด · ราคารวม/แยก VAT · คิดถึงสตางค์ · อัตราตั้งได้ (tasks/spec-vat.md)', () => {
+  // ปิดบิลหนึ่งโต๊ะ คืน sale ที่เซิร์ฟเวอร์บันทึก (extra = ช่องที่หน้าเว็บส่ง เช่น vat ที่ต้องไม่มีผล)
+  const pay = async (s, t, items, extra) => {
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: t, key: keys[t], items });
+    const st = (await s.call('GET', '/api/state')).json, sub = st.bills[t].sub, disc = st.bills[t].disc || 0;
+    const r = await s.call('POST', '/api/pay', Object.assign({ table: t, expectedSub: sub, expectedDisc: disc, method: 'cash' }, extra));
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return r.json.sale;
+  };
+  const set = async (s, b) => { const r = await s.call('POST', '/api/settings', b); assert.equal(r.status, 200, JSON.stringify(r.json)); };
+  const pick = x => [x.total, x.vat, x.svc];
+
+  test('ตาราง A–F: ไม่จด / แยก VAT ถึงสตางค์ / ส่วนลด / ราคารวม VAT / อัตรา 10% · หน้าเว็บส่ง vat มาก็ไม่มีผล', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const st0 = (await s.call('GET', '/api/state')).json.settings;
+    assert.deepEqual([st0.vatRegistered, st0.vatInclusive, st0.vatRate], [false, false, 7], 'ร้านใหม่: ไม่จด VAT');
+    const e = await pay(s, 1, [{ id: 1, qty: 2 }], { svc: true, vat: true });
+    assert.deepEqual(pick(e), [132, 0, 12], 'E ไม่จด VAT: ส่ง vat:true มาก็ไม่คิด');
+    await set(s, { vatRegistered: true });
+    const a = await pay(s, 2, [{ id: 1, qty: 2 }], { svc: true, vat: false });
+    assert.deepEqual(pick(a), [141.24, 9.24, 12], 'A แยก VAT: 132 × 7% = 9.24 ถึงสตางค์ · ส่ง vat:false มาก็ยังคิด');
+    assert.deepEqual([a.vatRate, a.vatIncl], [7, false], 'บิลเก็บอัตราและโหมด');
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] });
+    await s.call('POST', '/api/table/discount', { table: 3, kind: 'pct', value: 10, reason: 'ลูกค้าประจำ' });
+    const b = (await s.call('POST', '/api/pay', { table: 3, expectedSub: 200, expectedDisc: 20, svc: true, method: 'cash' })).json.sale;
+    assert.deepEqual(pick(b), [211.86, 13.86, 18], 'B: (200 − 20 + 18) × 7%');
+    await set(s, { vatInclusive: true });
+    const c = await pay(s, 4, [{ id: 1, qty: 2 }], { svc: true });
+    assert.deepEqual(pick(c), [132, 8.64, 12], 'C ราคารวม VAT: 132 × 7/107 = 8.64 ลูกค้าจ่าย 132');
+    assert.equal(c.vatIncl, true);
+    const d = await pay(s, 5, [{ id: 1, qty: 1 }], { svc: false });
+    assert.deepEqual(pick(d), [60, 3.93, 0], 'D: 60 × 7/107 = 3.925 ปัดขึ้น 3.93');
+    await set(s, { vatInclusive: false, vatRate: 10 });
+    const f = await pay(s, 6, [{ id: 1, qty: 2 }], { svc: true });
+    assert.deepEqual(pick(f), [145.2, 13.2, 12], 'F อัตรา 10%');
+    assert.equal(f.vatRate, 10);
+    const line = fs.readFileSync(path.join(s.dir, 'sales', fs.readdirSync(path.join(s.dir, 'sales'))[0]), 'utf8').trim().split('\n').map(l => JSON.parse(l)).find(x => x.no === a.no);
+    assert.deepEqual([line.total, line.vat, line.vatRate, line.vatIncl], [141.24, 9.24, 7, false], 'ยอดขายถาวรเก็บสตางค์ อัตรา และโหมด');
+    await s.stop();
+  });
+
+  test('ตั้งค่า VAT: ต้องใส่ PIN ซ้ำ · อัตรานอกช่วง = 400 · หน้าลูกค้าโหลดเมนูใหม่ · /api/menu บอกโหมดและอัตรา · audit มีก่อน/หลัง', async () => {
+    const s = start(makeApp(), { REAUTH_SEC: '1.5' }); await s.ready; await s.login();
+    const v0 = (await s.guest('GET', '/api/menu')).json.version;
+    await set(s, { vatRegistered: true, vatInclusive: true, vatRate: 7 });
+    const m = (await s.guest('GET', '/api/menu')).json;
+    assert.deepEqual([m.vatRegistered, m.vatInclusive, m.vatRate], [true, true, 7]);
+    assert.ok(m.version > v0, 'เปลี่ยน VAT แล้วหน้าลูกค้าโหลดเมนูใหม่ (ยอดประมาณการตรง)');
+    for (const bad of [0, 30.5, -7, 'abc', 7.123]) assert.equal((await s.call('POST', '/api/settings', { vatRate: bad })).status, 400, 'อัตรา ' + bad);
+    assert.equal((await s.call('POST', '/api/settings', { vatRegistered: 'yes' })).status, 400);
+    await new Promise(r => setTimeout(r, 1700));
+    const stale = await s.call('POST', '/api/settings', { vatRegistered: false });
+    assert.equal(stale.status, 403); assert.equal(stale.json.code, 'reauth', 'เปลี่ยน VAT = เปลี่ยนเงินที่เก็บจากลูกค้า ต้องใส่ PIN ซ้ำ');
+    assert.equal((await s.call('POST', '/api/settings', { shop: 'ร้านใหม่' })).status, 200, 'แก้ชื่อร้านไม่ต้องใส่ PIN ซ้ำ');
+    const ev = readLog(s.dir, 'audit').filter(e => e.action === 'settings.changed').find(e => e.after && e.after.vatRegistered === true);
+    assert.ok(ev && ev.before.vatRegistered === false, JSON.stringify(ev));
+    await s.stop();
+  });
+
+  test('ร้านเดิม (data.json แบบเก่ามี settings.vat): VAT เปิดอยู่ = จด VAT แบบแยก 7% · ปิดอยู่ = ไม่จด · บิลเก่าไม่เปลี่ยน', async () => {
+    for (const old of [true, false]) {
+      const app = makeApp(); let s = start(app); await s.ready; await s.login();
+      await pay(s, 1, [{ id: 1, qty: 1 }], { svc: false });
+      await s.stop();
+      const D = JSON.parse(fs.readFileSync(path.join(app, 'data.json'), 'utf8'));
+      delete D.settings.vatRegistered; delete D.settings.vatInclusive; delete D.settings.vatRate; D.settings.vat = old;
+      D.sales[0].vat = 4; D.sales[0].total = 64; delete D.sales[0].vatRate;       // บิลเก่าแบบปัดเป็นบาท
+      fs.writeFileSync(path.join(app, 'data.json'), JSON.stringify(D));
+      s = start(app); await s.ready; await s.login();
+      const st = (await s.call('GET', '/api/state')).json;
+      assert.deepEqual([st.settings.vatRegistered, st.settings.vatInclusive, st.settings.vatRate], [old, false, 7], 'settings.vat=' + old);
+      const r = (await s.call('GET', '/api/report')).json.bills[0];
+      assert.deepEqual([r.total, r.vat], [64, 4], 'บิลเก่าไม่ถูกคำนวณใหม่');
+      await s.stop();
+    }
+  });
+
+  test('คืนเงินบิลราคารวม VAT: VAT คืนตามสัดส่วนยอด คืนครบ VAT รวมเป็น 0 พอดี · สรุปภาษีเตือนร้านจด VAT ที่ยังไม่มีเลขผู้เสียภาษี', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await set(s, { vatRegistered: true, vatInclusive: true });
+    const c = await pay(s, 1, [{ id: 1, qty: 2 }], { svc: true });                 // 132 VAT 8.64
+    const i = c.items.findIndex(x => x.qty === 2);
+    const r1 = (await s.call('POST', '/api/refund', { no: c.no, mode: 'items', lines: [{ i, qty: 1 }], method: 'cash', reason: 'อาหารมีปัญหา', expected: 132 })).json;
+    assert.deepEqual([r1.refund.total, r1.refund.vat], [-66, -4.32], '60 × 132/120 = 66 · VAT 8.64 × 66/132');
+    const r2 = (await s.call('POST', '/api/refund', { no: c.no, mode: 'all', method: 'cash', reason: 'ลูกค้ายกเลิก', expected: 66 })).json;
+    assert.deepEqual([r2.refund.total, r2.refund.vat], [-66, -4.32]);
+    const d = new Date(), day = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const t = (await s.call('GET', '/api/report/tax?from=' + day + '&to=' + day)).json;
+    assert.deepEqual([t.totals.total, t.totals.vat, t.totals.beforeVat], [0, 0, 0], 'คืนครบ: ยอดและ VAT สุทธิเป็น 0');
+    assert.ok(t.warnings.some(w => /จด VAT แต่ยังไม่ได้ใส่เลขประจำตัวผู้เสียภาษี/.test(w)), JSON.stringify(t.warnings));
     await s.stop();
   });
 });
