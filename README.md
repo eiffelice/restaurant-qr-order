@@ -451,3 +451,12 @@ node qa/docs-shots.js       # สร้างภาพหน้าจอใน�
 - **[QA-LOG.md](QA-LOG.md):** สิ่งที่ทดสอบแล้ว บั๊กที่แก้ และงานที่ต้องทำต่อ
 - **[docs/GUIDE.md](docs/GUIDE.md):** คู่มือการใช้งานทีละขั้น แยกตามหน้าที่
 - **[docs/REVIEW.md](docs/REVIEW.md):** รีวิวระบบฉบับเต็ม
+
+### แผนภาพสถาปัตยกรรมขณะทำงาน
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/runtime-dark.png" />
+  <img src="docs/architecture/runtime-light.png" alt="แผนภาพสถาปัตยกรรมของออเดอร์ไว: ลูกค้าและพนักงานเรียก HTTP Server, API Routes ตรวจสิทธิ์แล้วแก้ข้อมูลใน Store ซึ่งบันทึก data.json และ sales/ ใน DATA_DIR" width="960" />
+</picture>
+
+สร้างด้วย [Archify](https://github.com/tt-a1i/archify) จากโค้ดที่ commit `f16142b` · แบบคลิกได้ (ทุกกล่องลิงก์ไปบรรทัดโค้ดจริง) อยู่ที่ [docs/architecture/runtime.html](docs/architecture/runtime.html) ดาวน์โหลดแล้วเปิดในเบราว์เซอร์ · ไฟล์ต้นฉบับของแผนภาพ [runtime.architecture.json](docs/architecture/runtime.architecture.json)
