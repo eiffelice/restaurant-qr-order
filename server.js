@@ -8,7 +8,7 @@
     PORT          พอร์ต (ค่าเริ่มต้น 3000)
     DATA_DIR      โฟลเดอร์เก็บข้อมูล (ค่าเริ่มต้น โฟลเดอร์นี้)
     BACKUP_DIR    โฟลเดอร์ที่จะคัดลอกไฟล์สำรองไปเก็บอีกที่ เช่น โฟลเดอร์ Google Drive หรือแฟลชไดรฟ์
-    TRUST_PROXY=1 ใช้เมื่อเปิดผ่าน Cloudflare Tunnel ที่รันบนเครื่องเดียวกัน (ต้องตั้ง STAFF_PIN อย่างน้อย 6 หลัก)
+    TRUST_PROXY=1 ใช้เมื่อเปิดผ่าน Cloudflare Tunnel ที่รันบนเครื่องเดียวกัน (ต้องตั้ง STAFF_PIN อย่างน้อย 8 หลัก)
     ORDER_LIMIT   จำนวนครั้งที่ลูกค้าสั่งได้ต่อนาทีต่อเครื่อง (ค่าเริ่มต้น 8)
     BACKUP_EVERY_MIN, REAUTH_SEC, OWNER_SESSION_MIN  ดูตารางใน AGENTS.md (อ่านค่าทั้งหมดที่ lib/config.js)
 
@@ -29,8 +29,10 @@ const C = require('./lib/config');
 const U = require('./lib/util');
 const log = require('./lib/log');
 
-if (C.TRUST_PROXY && (C.PIN === '1234' || C.PIN.length < 6)) {
-  U.die('เปิดระบบออกอินเทอร์เน็ต (TRUST_PROXY=1) ต้องตั้งรหัสพนักงานอย่างน้อย 6 หลัก เช่น STAFF_PIN=839274 node server.js');
+// เปิดออกอินเทอร์เน็ต ใครก็ลองเดา PIN เจ้าของได้ เพดานรวม 30 ครั้ง/นาที = ราว 43,000 ครั้ง/วัน
+// PIN 6 หลัก (10^6) เดาถูกได้ในไม่กี่สัปดาห์ แล้วเปลี่ยนเบอร์ PromptPay ให้เงินเข้าบัญชีอื่นได้ 8 หลัก (10^8) ต้องใช้หลายปี
+if (C.TRUST_PROXY && C.PIN.length < 8) {
+  U.die('เปิดระบบออกอินเทอร์เน็ต (TRUST_PROXY=1) ต้องตั้งรหัสเจ้าของร้านอย่างน้อย 8 หลัก เช่น STAFF_PIN=83927461 node server.js');
 }
 
 const store = require('./lib/store');
@@ -66,6 +68,12 @@ function lockDataDir(done) {
 const FILES = { '/staff': 'staff.html', '/order': 'customer.html', '/qrcode.js': 'qrcode.js' };
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
 const SEC = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' };
+/* CSP ของหน้าเว็บ ได้ nonce ใหม่ทุกครั้งที่โหลดหน้า: รันได้เฉพาะ <script> ที่อยู่ในไฟล์ของเราเอง
+   ถ้าวันหนึ่งลืม esc() (กฎข้อ 9) payload อย่าง <img onerror> หรือ <script> ในชื่อเมนู/memo จะไม่ทำงาน
+   style ต้องมี 'unsafe-inline' เพราะหน้าสร้าง style="" ในสตริง HTML (style รันโค้ดไม่ได้)
+   img: data: จาก qrcode.js, blob: รูปตัวอย่างก่อนอัปโหลดและไฟล์ที่หน้าเว็บสร้างเอง */
+const csp = nonce => "default-src 'self'; script-src 'self' 'nonce-" + nonce + "'; style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 // ระหว่างกู้คืนข้อมูล ยังอ่านได้ แต่ห้ามเขียน เพื่อไม่ให้ออเดอร์ที่เข้ามาช่วงนั้นหายไปเงียบๆ
 const ALWAYS_ALLOWED = new Set(['/api/login', '/api/logout', '/api/backup/restore']);
 
@@ -109,8 +117,14 @@ const server = http.createServer(async (req, res) => {
       }
       const f = FILES[url.pathname];
       if (f) {
-        const body = fs.readFileSync(path.join(C.PUB, f));
-        res.writeHead(200, Object.assign({ 'Content-Type': MIME[path.extname(f)], 'Cache-Control': 'no-cache' }, SEC));
+        let body = fs.readFileSync(path.join(C.PUB, f));
+        const head = Object.assign({ 'Content-Type': MIME[path.extname(f)], 'Cache-Control': 'no-cache' }, SEC);
+        if (f.endsWith('.html')) {
+          const nonce = crypto.randomBytes(16).toString('base64');
+          body = body.toString('utf8').replace(/<script(?=[\s>])/g, '<script nonce="' + nonce + '"');
+          head['Content-Security-Policy'] = csp(nonce);
+        }
+        res.writeHead(200, head);
         return res.end(body);
       }
     }

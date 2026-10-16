@@ -310,6 +310,7 @@ nav.cats .in::-webkit-scrollbar{display:none}
 'use strict';
 var P = new URLSearchParams(location.search);
 var T = Math.floor(+P.get('t')), K = P.get('k') || '';
+var PLACE = 'โต๊ะ ' + T;      // ชื่อที่แสดง: โต๊ะ n หรือ "คิว n · กลับบ้าน" (พนักงานสั่งแทนลูกค้ากลับบ้าน) จาก /api/table
 var M = null, STAT = null, cat = null, memo = '', sheetOpen = false, shopOpen = false, sendErr = '', sending = false, menuLoading = false;
 var Q = '';            // คำค้นหาเมนู
 var navOn = 'menu';    // แถบล่างที่ไฮไลต์ ตามตำแหน่งที่เลื่อน (เมนู / ออเดอร์)
@@ -518,7 +519,7 @@ function renderAll(){
   hd.innerHTML='<div class="wrap"><div class="hcard"><div class="cov" aria-hidden="true"></div><div class="hc-in">'+
     (M.logo?'<img class="'+logoCls()+'" src="/img/'+esc(M.logo)+'" alt="">':'')+
     '<h1>'+esc(M.shop)+'</h1>'+(M.tagline?'<p class="tagline">'+esc(M.tagline)+'</p>':'')+
-    '<div class="meta"><span class="tchip">โต๊ะ '+T+'</span>'+
+    '<div class="meta"><span class="tchip">'+esc(PLACE)+'</span>'+
     (STAT&&STAT.staff?'<span class="pill acc">โหมดพนักงาน</span>':'<span class="state'+(cl?' off':'')+'">'+(cl?esc(closedShort()):'เปิดรับออเดอร์')+'</span>')+'</div></div></div>'+
     (cl?'<div class="err">'+esc(closedText())+' (ดูเมนูได้)</div>':'')+'</div>';
   ensureCat();
@@ -679,7 +680,7 @@ function renderDetail(){
   if(!m){closeDetail();toast('เมนูนี้ไม่มีขายแล้ว');return;}
   var out=m.soldOut,closed=closedForGuests(),cant=out||closed,cn=catName(m.cat);
   var h='<div class="d-in"><div class="hero'+(m.image?'':' noimg '+tone(m.cat))+(out?' out':'')+'">'+(m.image?'<img src="/img/'+esc(m.image)+'" alt="">':'<span class="big">'+IC.dish+'</span>')+
-    '<div class="top"><button class="circle" data-a="dback" aria-label="กลับไปหน้าเมนู">'+IC.back+'</button><span class="tag">โต๊ะ '+T+'</span><span class="sp"></span></div>'+
+    '<div class="top"><button class="circle" data-a="dback" aria-label="กลับไปหน้าเมนู">'+IC.back+'</button><span class="tag">'+esc(PLACE)+'</span><span class="sp"></span></div>'+
     '<div class="cap-name">'+(cn?'<span class="tag">'+esc(cn)+'</span>':'')+'<h2 id="d-name">'+esc(m.name)+'</h2></div></div>';
   h+='<div class="buy"><div class="notch"><div class="price"><b>'+baht(m.price)+'</b><span>/ จาน</span></div>'+
     '<span class="step"><button data-a="ddec" aria-label="ลดจำนวน"'+(D.qty<=1||cant?' disabled':'')+'>'+IC.minus+'</button><b aria-live="polite">'+D.qty+'</b><button data-a="dinc" aria-label="เพิ่มจำนวน"'+(D.qty>=20||cant?' disabled':'')+'>'+IC.plus+'</button></span></div>'+
@@ -722,7 +723,7 @@ var openNotes={};       // แถวที่เปิดตัวเลือ�
 function renderSheet(){
   var bg=$('#sheetbg');bg.hidden=!sheetOpen;
   if(!sheetOpen)return;
-  var h='<h2><span>รายการสั่ง · โต๊ะ '+T+'</span><button class="circle" data-a="close" aria-label="ปิดรายการสั่ง">'+IC.x+'</button></h2>';
+  var h='<h2><span>รายการสั่ง · '+esc(PLACE)+'</span><button class="circle" data-a="close" aria-label="ปิดรายการสั่ง">'+IC.x+'</button></h2>';
   if(sendErr)h+='<div class="err" role="alert">'+esc(sendErr)+'</div>';
   if(!lines.length)h+='<div class="center muted">ยังไม่ได้เลือกอาหาร</div>';
   lines.forEach(function(l,i){
@@ -809,6 +810,7 @@ function shareShop(){
 
 /* keep sold-out flags and the open/closed state live, and drop sold-out dishes from the cart */
 function applyStat(s){
+  if(s.label)PLACE=s.label;
   // the back office changed the menu (price, photo, new dish, logo, colour): fetch it again, then re-apply
   if(s.menuVersion!==undefined&&s.menuVersion!==M.version){
     if(!menuLoading){

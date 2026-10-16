@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ออเดอร์ไว · สถาปัตยกรรมขณะทำงาน",
+    "output": ".archify/architecture-restaurant-runtime-20261016-143912/restaurant-runtime.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/eiffelice/restaurant-qr-order.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "f16142b304a05f3da2f3d299c082e252ff0b06ca"
+    }
+  },
+  "components": [
+    {
+      "id": "customer", "type": "external", "label": "ลูกค้า", "sublabel": "มือถือ · WiFi ร้าน",
+      "pos": [40, 80], "size": [130, 64],
+      "sources": [{ "path": "public/customer.html", "line": 950, "end_line": 960, "label": "เปิดหน้าด้วยเลขโต๊ะจาก QR" }]
+    },
+    {
+      "id": "customer_page", "type": "frontend", "label": "หน้าสั่งอาหาร", "sublabel": "customer.html · /order",
+      "pos": [290, 80], "size": [170, 64], "tag": "poll ทุก 5 วิ",
+      "sources": [
+        { "path": "public/customer.html", "line": 845, "end_line": 848, "label": "GET /api/table" },
+        { "path": "public/customer.html", "line": 937, "label": "POST /api/order" },
+        { "path": "public/customer.html", "line": 953, "end_line": 958, "label": "โหลดเมนู + poll" }
+      ]
+    },
+    {
+      "id": "staff", "type": "external", "label": "พนักงาน", "sublabel": "เจ้าของ แคชเชียร์ เสิร์ฟ ครัว",
+      "pos": [40, 290], "size": [150, 70],
+      "sources": [{ "path": "lib/routes.js", "line": 36, "end_line": 38, "label": "4 บทบาท" }]
+    },
+    {
+      "id": "staff_page", "type": "frontend", "label": "หน้าพนักงาน/ครัว", "sublabel": "staff.html · /staff",
+      "pos": [290, 290], "size": [170, 70], "tag": "QR บิล PromptPay",
+      "sources": [
+        { "path": "public/staff.html", "line": 1154, "end_line": 1161, "label": "EventSource + fallback" },
+        { "path": "public/staff.html", "line": 1108, "end_line": 1112, "label": "GET /api/state" },
+        { "path": "public/staff.html", "line": 1238, "end_line": 1246, "label": "QR PromptPay ในบิล" }
+      ]
+    },
+    {
+      "id": "server", "type": "backend", "label": "HTTP Server", "sublabel": "server.js · :3000",
+      "pos": [640, 60], "size": [150, 290], "tag": "Node 18 · ไม่มี dependency",
+      "sources": [
+        { "path": "server.js", "line": 80, "end_line": 101, "label": "dispatch + กันเขียนตอนกู้คืน" },
+        { "path": "server.js", "line": 87, "end_line": 94, "label": "SSE /api/events" },
+        { "path": "server.js", "line": 149, "end_line": 166, "label": "ล็อกโฟลเดอร์ข้อมูล แล้ว listen" }
+      ]
+    },
+    {
+      "id": "auth", "type": "security", "label": "PIN + สิทธิ์", "sublabel": "cookie HMAC · PERM",
+      "pos": [880, 40], "size": [170, 64], "tag": "รหัส QR ต่อโต๊ะ",
+      "sources": [
+        { "path": "lib/routes.js", "line": 40, "end_line": 44, "label": "ตารางสิทธิ์ตามบทบาท" },
+        { "path": "lib/routes.js", "line": 65, "end_line": 89, "label": "ตรวจ cookie + requireStaff" },
+        { "path": "lib/routes.js", "line": 148, "end_line": 158, "label": "checkAccess รหัส QR" }
+      ]
+    },
+    {
+      "id": "api", "type": "backend", "label": "API Routes", "sublabel": "lib/routes.js",
+      "pos": [880, 170], "size": [170, 70],
+      "sources": [
+        { "path": "lib/routes.js", "line": 484, "end_line": 527, "label": "POST /api/order" },
+        { "path": "lib/routes.js", "line": 834, "end_line": 887, "label": "POST /api/pay" },
+        { "path": "lib/routes.js", "line": 160, "end_line": 166, "label": "broadcast SSE" }
+      ]
+    },
+    {
+      "id": "store", "type": "backend", "label": "Store", "sublabel": "lib/store.js · state ในหน่วยความจำ",
+      "pos": [880, 330], "size": [180, 70],
+      "sources": [
+        { "path": "lib/store.js", "line": 263, "end_line": 269, "label": "save → writeNow" },
+        { "path": "lib/store.js", "line": 271, "end_line": 285, "label": "เก็บบิลลง sales/" },
+        { "path": "lib/store.js", "line": 341, "end_line": 346, "label": "load ตอนเปิดระบบ" }
+      ]
+    },
+    {
+      "id": "logger", "type": "backend", "label": "Logger", "sublabel": "lib/log.js",
+      "pos": [640, 410], "size": [150, 64],
+      "sources": [
+        { "path": "lib/log.js", "line": 60, "end_line": 88, "label": "คิว + hash chain + append" },
+        { "path": "lib/routes.js", "line": 182, "end_line": 192, "label": "audit / security" }
+      ]
+    },
+    {
+      "id": "backup", "type": "backend", "label": "Backup", "sublabel": "lib/backup.js",
+      "pos": [420, 410], "size": [150, 64], "tag": "อัตโนมัติ ~4 ชม.",
+      "sources": [
+        { "path": "lib/backup.js", "line": 80, "end_line": 107, "label": "doBackup + คัดลอก" },
+        { "path": "lib/backup.js", "line": 131, "end_line": 141, "label": "autoBackup timer" }
+      ]
+    },
+    {
+      "id": "backups", "type": "database", "label": "backups/", "sublabel": "*.json.gz",
+      "pos": [420, 540], "size": [150, 60],
+      "sources": [
+        { "path": "lib/backup.js", "line": 80, "end_line": 86, "label": "เขียนไฟล์สำรอง" },
+        { "path": "lib/config.js", "line": 26, "label": "BK_DIR" }
+      ]
+    },
+    {
+      "id": "logs", "type": "database", "label": "logs/", "sublabel": "audit security app",
+      "pos": [640, 540], "size": [150, 60],
+      "sources": [
+        { "path": "lib/log.js", "line": 1, "end_line": 8, "label": "3 ชนิด append-only" },
+        { "path": "lib/config.js", "line": 27, "label": "LOG_DIR" }
+      ]
+    },
+    {
+      "id": "data_json", "type": "database", "label": "data.json", "sublabel": "เขียนทันทีทุกครั้ง",
+      "pos": [890, 540], "size": [150, 60],
+      "sources": [
+        { "path": "lib/store.js", "line": 263, "end_line": 267, "label": "writeAtomic" },
+        { "path": "lib/util.js", "line": 38, "end_line": 42, "label": "tmp แล้ว rename" },
+        { "path": "lib/config.js", "line": 22, "end_line": 23, "label": "DATA_FILE" }
+      ]
+    },
+    {
+      "id": "sales", "type": "database", "label": "sales/", "sublabel": "YYYY-MM.jsonl",
+      "pos": [1070, 540], "size": [130, 60],
+      "sources": [
+        { "path": "lib/store.js", "line": 271, "end_line": 274, "label": "appendSale" },
+        { "path": "lib/config.js", "line": 24, "label": "SALES_DIR" }
+      ]
+    },
+    {
+      "id": "offsite", "type": "external", "label": "BACKUP_DIR", "sublabel": "สำเนานอกเครื่อง",
+      "pos": [40, 540], "size": [150, 60],
+      "sources": [
+        { "path": "lib/backup.js", "line": 87, "end_line": 101, "label": "copyFile + mirrorLogs" },
+        { "path": "lib/config.js", "line": 28, "label": "BK_COPY" }
+      ]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "DATA_DIR (นอกโฟลเดอร์โปรแกรม)", "wraps": ["backups", "logs", "data_json", "sales"] }
+  ],
+  "connections": [
+    { "id": "scan", "from": "customer", "to": "customer_page", "label": "สแกน QR โต๊ะ", "variant": "emphasis" },
+    { "id": "customer_http", "from": "customer_page", "to": "server", "label": "สั่งอาหาร · HTTP JSON", "variant": "emphasis" },
+    { "id": "staff_login", "from": "staff", "to": "staff_page", "label": "ใส่ PIN" },
+    { "id": "staff_http", "from": "staff_page", "to": "server", "label": "API + cookie" },
+    { "id": "sse_push", "from": "server", "to": "staff_page", "label": "SSE แจ้งเปลี่ยน", "variant": "dashed" },
+    { "id": "dispatch", "from": "server", "to": "api", "label": "dispatch", "variant": "emphasis" },
+    { "id": "authorize", "from": "api", "to": "auth", "label": "ตรวจสิทธิ์ก่อนทำงาน", "variant": "security" },
+    { "id": "mutate", "from": "api", "to": "store", "label": "แก้ state · changed()", "variant": "emphasis" },
+    { "id": "persist", "from": "store", "to": "data_json", "label": "writeAtomic" },
+    { "id": "archive", "from": "store", "to": "sales", "label": "บิลที่ชำระแล้ว" },
+    { "id": "audit", "from": "api", "to": "logger", "label": "audit / security", "fromSide": "left", "toSide": "right" },
+    { "id": "log_write", "from": "logger", "to": "logs", "label": "append jsonl" },
+    { "id": "start_backup", "from": "server", "to": "backup", "label": "startAuto", "variant": "dashed" },
+    { "id": "backup_write", "from": "backup", "to": "backups", "label": "gzip" },
+    { "id": "backup_copy", "from": "backup", "to": "offsite", "label": "copyFile", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan", "title": "ลูกค้าสั่งอาหาร",
+      "items": [
+        "QR แต่ละโต๊ะมีเลขโต๊ะ + รหัสลับ ทุกคำขอต้องผ่าน checkAccess (ผิดเกิน 30 ครั้ง/นาที ถูกพัก)",
+        "หน้าลูกค้า poll GET /api/table ทุก 5 วินาที เพื่อดูสถานะอาหาร",
+        "ราคาเปลี่ยนระหว่างสั่ง = ตอบ 409 ให้ลูกค้าตรวจยอดใหม่ ไม่คิดเงินต่างจากที่เห็น"
+      ]
+    },
+    {
+      "dot": "emerald", "title": "หน้าพนักงานและครัว",
+      "items": [
+        "ทุกการเปลี่ยนแปลงเรียก changed(): บันทึก data.json ทันที แล้ว broadcast SSE ให้ทุกจอโหลด /api/state ใหม่",
+        "SSE หลุด: staff.html โหลดใหม่ทุก 10 วินาทีจนต่อติด",
+        "QR PromptPay ในบิลสร้างในเบราว์เซอร์ (ppPayload + qrcode.js) หรือใช้รูป QR ที่ร้านอัปโหลด"
+      ]
+    },
+    {
+      "dot": "amber", "title": "ข้อมูลและการสำรอง",
+      "items": [
+        "รูปเมนู โลโก้ และรูป QR รับเงิน อยู่ใน DATA_DIR/images เสิร์ฟผ่าน /img/",
+        "สำรองอัตโนมัติเฉพาะเมื่อข้อมูลเปลี่ยน กดสำรองเองได้ที่ POST /api/backup",
+        "ระหว่างกู้คืน (POST /api/backup/restore) server ปฏิเสธ POST อื่นด้วย 503"
+      ]
+    },
+    {
+      "dot": "rose", "title": "ความปลอดภัย",
+      "items": [
+        "endpoint ที่ไม่ได้ระบุใน PERM = เจ้าของเท่านั้น งานสำคัญต้องยืนยัน PIN ซ้ำ (REAUTH_SEC)",
+        "เปิดได้ทีละโปรแกรมต่อ DATA_DIR (ล็อกด้วย named pipe) กันเลขบิลซ้ำ",
+        "TRUST_PROXY=1 สำหรับ Cloudflare Tunnel ต้องตั้ง STAFF_PIN อย่างน้อย 8 หลัก"
+      ]
+    }
+  ]
+}

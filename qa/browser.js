@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, itemvoid, movetable, splitpay, shift, report, discount, takeaway, stock, acceptance, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -273,7 +273,8 @@ const cases = {
     ok(rr.status === 200, 'กู้คืนไฟล์ที่มี payload ได้', rr.json);
     ok(r[0].status === 400, 'baseUrl แบบ javascript: ถูกปฏิเสธ', r[0].json);
 
-    const page = await staffPage(browser, s, null, errors);
+    // ปิด CSP ในเคสนี้ เพื่อตรวจว่า esc() ยังกันได้เอง (กฎข้อ 9) ไม่ใช่ผ่านเพราะ CSP บล็อกไว้ให้ CSP ตรวจแยกท้ายเคส
+    const page = await staffPage(browser, s, { bypassCSP: true }, errors);
     for (const v of ['kitchen', 'tables', 'menu', 'report', 'settings']) {
       await tab(page, v); await sleep(300);
       if (v === 'tables') { await page.click('[data-a="sel"][data-id="1"]'); await sleep(200); }
@@ -282,7 +283,7 @@ const cases = {
     }
     const staffX = await page.evaluate(() => window.__xss || 0);
     const shopShown = await page.evaluate(() => document.body.innerText.includes('<img src=x onerror='));
-    const cust = await customerPage(browser, s, 1, keys[1], errors);
+    const cust = await customerPage(browser, s, 1, keys[1], errors, { bypassCSP: true });
     await cust.click('[data-a="cat"][data-id="' + cat.id + '"]');
     await cust.click('[data-a="inc"][data-id="' + it.id + '"]');
     await cust.click('[data-a="open"]'); await cust.click('[data-a="notes"]'); await sleep(300);
@@ -297,6 +298,14 @@ const cases = {
     await page.evaluate(h => document.body.insertAdjacentHTML('beforeend', h), P[0]);
     await sleep(300);
     ok(await page.evaluate(() => window.__xss || 0) > 0, 'ตัวควบคุม: payload ที่ไม่ escape ถูกตรวจจับได้');
+    // ชั้นที่สอง: เปิด CSP ตามจริง payload ตัวเดียวกันแบบไม่ escape ต้องไม่ทำงาน (หน้าเว็บยังใช้ได้ปกติ)
+    for (const [label, open] of [['พนักงาน', () => staffPage(browser, s, null, [])], ['ลูกค้า', () => customerPage(browser, s, 1, keys[1], [])]]) {
+      const strict = await open();
+      await strict.evaluate(h => { window.__xss = 0; document.body.insertAdjacentHTML('beforeend', h); }, P[0]);
+      await sleep(300);
+      ok(await strict.evaluate(() => window.__xss || 0) === 0, 'CSP หน้า' + label + ': payload ที่ไม่ escape ไม่ทำงาน');
+      await strict.context().close();
+    }
     await page.context().close(); await cust.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
@@ -1342,6 +1351,150 @@ const cases = {
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await p.context().close(); await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: ส่วนลดท้ายบิล: แคชเชียร์ต้องมี PIN เจ้าของ ใบแจ้งยอดมีบรรทัดส่วนลด ยอดหลังลด อีกเครื่องแก้ส่วนลดระหว่างกดรับเงิน = ไม่ปิดบิลด้วยยอดเก่า */
+  async discount(browser) {
+    const ok = checker('discount'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 2 }, { id: 2, qty: 1 }] }, { staff: false });
+    const ctx = await browser.newContext({ baseURL: s.B }); const c = await ctx.newPage(); watch(c, errors, 'cashier');
+    await c.goto('/staff'); await c.fill('#pin', '520011'); await c.press('#pin', 'Enter'); await c.waitForSelector('#tabs .tab');
+    await tab(c, 'tables'); await c.click('[data-a="sel"][data-id="1"]'); await c.waitForSelector('[data-a="disc"]');
+    await c.click('[data-a="disc"]'); await c.waitForSelector('#disc-dlg[open]');
+    ok(await c.isVisible('#disc-pin-row'), 'แคชเชียร์: หน้าต่างส่วนลดมีช่อง PIN เจ้าของ');
+    await c.fill('#disc-val', '10');
+    ok(/ลด ฿20/.test(await c.textContent('#disc-prev')), 'แสดงตัวอย่าง: ลด 10% ของ 200 = 20', await c.textContent('#disc-prev'));
+    await c.check('#disc-form input[value="ลูกค้าประจำ"]');
+    await c.click('#disc-ok');
+    ok(/PIN/.test(await c.textContent('#disc-err')), 'ไม่ใส่ PIN เจ้าของ: ยังให้ส่วนลดไม่ได้');
+    await c.fill('#disc-pin', PIN); await c.click('#disc-ok');
+    await c.waitForSelector('#disc-dlg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    await c.waitForFunction(() => /ส่วนลด/.test(document.querySelector('.receipt') && document.querySelector('.receipt').textContent), null, { timeout: 6000 }).catch(() => {});
+    const rc = await c.textContent('.receipt');
+    ok(/ส่วนลด 10%/.test(rc) && /−฿20/.test(rc) && /ค่าอาหารหลังลด/.test(rc), 'ใบแจ้งยอด: บรรทัดส่วนลดและค่าอาหารหลังลด', rc.slice(0, 200));
+    ok((await c.textContent('.receipt .grand .a')).trim() === '฿198', 'ยอดสุทธิ: ค่าอาหารหลังลด 180 + ค่าบริการ 18 = 198 (ค่าบริการคิดจากยอดหลังลด)');
+    ok(/อนุมัติโดย เจ้าของร้าน/.test(await c.textContent('#v-tables')), 'บอกว่าใครอนุมัติส่วนลด');
+    // กดรับโอนครั้งแรก แล้วอีกเครื่องแก้ส่วนลดก่อนกดยืนยัน
+    await c.click('[data-a="pay"][data-m="transfer"]');
+    await s.call('POST', '/api/table/discount', { table: 1, kind: 'amt', value: 50, reason: 'โปรโมชัน' });
+    await sleep(800);
+    await c.click('[data-a="pay"][data-m="transfer"]');
+    await sleep(1200);
+    let st = (await s.call('GET', '/api/state')).json;
+    ok(st.bills[1] && st.bills[1].disc === 50, 'ส่วนลดเปลี่ยนระหว่างคิดเงิน: ไม่ปิดบิลด้วยยอดเก่า', st.bills[1]);
+    await c.waitForFunction(() => document.querySelector('.receipt .grand .a').textContent.trim() === '฿165', null, { timeout: 6000 }).catch(() => {});
+    await c.click('[data-a="pay"][data-m="transfer"]'); await c.click('[data-a="pay"][data-m="transfer"]');
+    await until(async () => !(await s.call('GET', '/api/state')).json.bills[1], 6000).catch(() => {});
+    const sale = (await s.call('GET', '/api/report')).json.bills[0];
+    ok(sale && sale.disc === 50 && sale.total === 165, 'กดใหม่หลังเห็นยอดใหม่: ปิดบิล ส่วนลด 50 ยอด 150 + ค่าบริการ 15 = 165', sale && [sale.disc, sale.total]);
+    await c.waitForSelector('.receipt', { timeout: 5000 }).catch(() => {});
+    ok(/ส่วนลด/.test(await c.textContent('.receipt').catch(() => '')), 'ใบเสร็จรับเงินมีบรรทัดส่วนลด');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await ctx.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS: กลับบ้าน/เดลิเวอรี: ขอเลขคิว → สั่งแทนลูกค้า (หน้าสั่งบอกเลขคิว) → จอครัวเห็นคิว+ชื่อ → คิดเงินไม่มีค่าบริการ → ใบเสร็จบอกคิว */
+  async takeaway(browser) {
+    const ok = checker('takeaway'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'tables'); await p.click('[data-a="qnew"][data-ch="takeaway"]'); await p.waitForSelector('#queue-dlg[open]');
+    await p.fill('#q-name', 'คุณเอ'); await p.click('#queue-ok');
+    await p.waitForFunction(() => /คิว 1 · กลับบ้าน · คุณเอ/.test(document.querySelector('#v-tables').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/คิว 1 · กลับบ้าน · คุณเอ/.test(await p.textContent('#v-tables')), 'ขอคิวแล้วเปิดรายละเอียดคิว 1 ทันที');
+    ok(await p.$('#v-tables .tbl[data-id="1001"]'), 'ผังมีช่องคิว Q1');
+    const href = await p.getAttribute('#v-tables a[href^="/order"]', 'href');
+    const o = await p.context().newPage(); watch(o, errors, 'order');
+    await o.goto(href); await o.waitForSelector('.item');
+    ok(/คิว 1/.test(await o.textContent('header.top')), 'หน้าสั่งอาหารบอกว่าเป็นคิว 1 ไม่ใช่โต๊ะ', await o.textContent('header.top .tchip').catch(() => ''));
+    await o.click('.item [data-a="inc"]'); await o.click('[data-a="open"]'); await o.click('[data-a="send"]');
+    await until(async () => (await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 1001), 6000).catch(() => {});
+    ok((await s.call('GET', '/api/state')).json.tickets.some(k => k.table === 1001), 'สั่งเข้าคิวได้');
+    await o.close();
+    await tab(p, 'kitchen'); await p.waitForFunction(() => /คิว 1 · กลับบ้าน · คุณเอ/.test(document.querySelector('#v-kitchen').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/คิว 1 · กลับบ้าน · คุณเอ/.test(await p.textContent('#v-kitchen')), 'จอครัวเห็นคิวและชื่อลูกค้า');
+    await tab(p, 'tables');
+    if (await p.getAttribute('#v-tables .tbl[data-id="1001"]', 'aria-pressed') !== 'true') await p.click('#v-tables .tbl[data-id="1001"]');   // คลิกช่องที่เลือกอยู่ = ยกเลิกการเลือก
+    await p.waitForSelector('[data-a="pay"][data-m="cash"]', { timeout: 6000 }).catch(() => {});
+    ok(await p.getAttribute('[data-a="bsvc"]', 'aria-pressed') === 'false', 'คิวกลับบ้าน: ค่าบริการปิดเป็นค่าเริ่มต้น');
+    const due = await p.getAttribute('[data-a="pay"][data-m="cash"]', 'data-due'), sub = await p.getAttribute('[data-a="pay"][data-m="cash"]', 'data-sub');
+    ok(due === sub, 'ยอดที่ต้องจ่าย = ค่าอาหาร (ไม่มีค่าบริการ)', [due, sub]);
+    await p.click('[data-a="pay"][data-m="transfer"]'); await p.click('[data-a="pay"][data-m="transfer"]');
+    await p.waitForFunction(() => /ปิดบิลคิว 1 แล้ว/.test(document.querySelector('#v-tables').textContent), null, { timeout: 6000 }).catch(() => {});
+    const rc = await p.textContent('#v-tables');
+    ok(/ปิดบิลคิว 1 แล้ว/.test(rc) && /คิว 1 · กลับบ้าน · คุณเอ/.test(await p.textContent('.receipt')), 'ใบเสร็จบอกเลขคิวและชื่อ');
+    ok(!(await s.call('GET', '/api/state')).json.queue[1001], 'ปิดบิลแล้วคิวหาย');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* POS ระยะ 2: สต็อก: เจ้าของเพิ่มวัตถุดิบ รับเข้า ใส่สูตร → ออเดอร์ตัดสต็อก → ใกล้หมดขึ้นป้ายจอครัว → ตรวจนับระหว่างมีออเดอร์ = บอกให้นับใหม่ → รายงานมีกำไรขั้นต้น · แคชเชียร์/ครัวเห็นในแท็บเมนูหมด */
+  async stock(browser) {
+    const ok = checker('stock'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    await s.call('POST', '/api/staff', { name: 'ช่างต้ม', role: 'kitchen', pin: '520022' });
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    const p = await staffPage(browser, s, null, errors);
+    await tab(p, 'stock'); await p.waitForSelector('[data-a="stknew"]');
+    await p.click('[data-a="stknew"]'); await p.waitForSelector('#stk-dlg[open]');
+    await p.fill('#stk-name', 'ไข่ไก่'); await p.fill('#stk-unit', 'ฟอง'); await p.fill('#stk-min', '10'); await p.click('#stk-ok');
+    await p.waitForSelector('[data-a="stk"][data-m="receive"]', { timeout: 6000 }).catch(() => {});
+    ok(/ไข่ไก่/.test(await p.textContent('#v-stock')), 'เพิ่มวัตถุดิบได้');
+    await p.click('[data-a="stk"][data-m="receive"]'); await p.waitForSelector('#stk-dlg[open]');
+    await p.fill('#stk-qty', '30'); await p.fill('#stk-cost', '4'); await p.click('#stk-ok');
+    await p.waitForFunction(() => /30 ฟอง/.test(document.querySelector('#v-stock').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/30 ฟอง/.test(await p.textContent('#v-stock')), 'รับเข้า 30 ฟอง');
+    await p.click('[data-a="rcp"][data-id="1"]'); await p.waitForSelector('#rcp-dlg[open]');
+    await p.fill('#rcp-rows input', '2');
+    ok(/ทุนต่อจาน ฿8/.test(await p.textContent('#rcp-cost')), 'หน้าต่างสูตรบอกทุนต่อจาน 2 × 4 = 8', await p.textContent('#rcp-cost'));
+    await p.click('#rcp-ok');
+    await p.waitForFunction(() => /ไข่ไก่ 2 ฟอง/.test(document.querySelector('#v-stock').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/ไข่ไก่ 2 ฟอง/.test(await p.textContent('#v-stock')), 'ตารางสูตรแสดงสูตรที่บันทึก');
+    await s.call('POST', '/api/order', { table: 1, key: keys[1], items: [{ id: 1, qty: 11 }] }, { staff: false });
+    await p.waitForFunction(() => /8 ฟอง/.test(document.querySelector('#v-stock').textContent), null, { timeout: 6000 }).catch(() => {});
+    ok(/8 ฟอง/.test(await p.textContent('#v-stock')) && /ใกล้หมด/.test(await p.textContent('#v-stock')), 'ออเดอร์ 11 จาน ตัด 22 ฟอง เหลือ 8 ขึ้นใกล้หมด');
+    // ตรวจนับ: เปิดหน้าต่าง แล้วมีออเดอร์ตัดสต็อกก่อนกดบันทึก
+    await p.click('[data-a="stk"][data-m="adjust"]'); await p.waitForSelector('#stk-dlg[open]');
+    await p.fill('#stk-qty', '7');
+    await s.call('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 1 }] }, { staff: false });
+    await sleep(600);
+    ok(await p.inputValue('#stk-qty') === '7', 'ออเดอร์เข้าระหว่างพิมพ์ยอดนับ: ตัวเลขไม่หาย');
+    await p.click('#stk-ok');
+    await p.waitForFunction(() => /เปลี่ยน/.test(document.querySelector('#stk-err').textContent), null, { timeout: 5000 }).catch(() => {});
+    ok(/เปลี่ยน/.test(await p.textContent('#stk-err')) && /6 ฟอง/.test(await p.textContent('#stk-info')), 'ยอดเปลี่ยนระหว่างนับ: บอกให้ตรวจใหม่ พร้อมยอดล่าสุด', await p.textContent('#stk-info'));
+    await p.click('#stk-ok');
+    await p.waitForSelector('#stk-dlg', { state: 'hidden', timeout: 5000 }).catch(() => {});
+    const egg = (await s.call('GET', '/api/stock')).json.items[0];
+    ok(egg.qty === 7, 'กดบันทึกอีกครั้ง: ยอดเป็น 7 ตามที่นับ', egg.qty);
+    await tab(p, 'kitchen');
+    ok(/วัตถุดิบใกล้หมด: ไข่ไก่ เหลือ 7 ฟอง/.test(await p.textContent('#v-kitchen')), 'จอครัวมีป้ายวัตถุดิบใกล้หมด');
+    // แคชเชียร์: ส่วนวัตถุดิบในแท็บเมนูหมด รับเข้าได้ แก้/ลบไม่ได้ · ครัว: ดูอย่างเดียว
+    const login = async (pin, opts) => { const ctx = await browser.newContext(Object.assign({ baseURL: s.B }, opts || {})); const q = await ctx.newPage(); watch(q, errors, pin); await q.goto('/staff'); await q.fill('#pin', pin); await q.press('#pin', 'Enter'); await q.waitForSelector('#tabs .tab'); return q; };
+    const c = await login('520011', { viewport: { width: 390, height: 844 } });
+    await tab(c, 'menu'); await c.waitForSelector('#stk-menu [data-a="stk"]', { timeout: 6000 }).catch(() => {});
+    ok(await c.$('#stk-menu [data-a="stk"][data-m="receive"]') && !(await c.$('#stk-menu [data-a="stk"][data-m="edit"]')) && !(await c.$('[data-a="rcp"]')), 'แคชเชียร์: รับเข้า/ตรวจนับได้ แก้วัตถุดิบ/สูตรไม่ได้');
+    const of = await overflow(c);
+    ok(!of, 'มือถือ: ส่วนวัตถุดิบไม่ล้นจอ', of);
+    const k = await login('520022');
+    await tab(k, 'menu'); await k.waitForSelector('#stk-menu table', { timeout: 6000 }).catch(() => {});
+    ok(/ไข่ไก่/.test(await k.textContent('#stk-menu')) && !(await k.$('#stk-menu [data-a="stk"]')), 'ครัว: เห็นคงเหลือ ไม่มีปุ่มแก้ยอด');
+    // รายงาน: ทุนและกำไรขั้นต้น
+    await s.call('POST', '/api/pay', { table: 1, expectedSub: 660, method: 'cash' });
+    await tab(p, 'report'); await p.waitForFunction(() => /กำไรขั้นต้น/.test(document.querySelector('#v-report').textContent), null, { timeout: 6000 }).catch(() => {});
+    const rt = await p.textContent('#range').catch(() => '');
+    ok(/ต้นทุนวัตถุดิบ฿88/.test(rt) && /กำไรขั้นต้น฿572/.test(rt), 'รายงาน: ทุน 11 × 8 = 88 กำไรขั้นต้น 660 − 88 = 572', rt.slice(0, 260));
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await c.context().close(); await k.context().close(); await s.stop(); rmrf(app.base);
     return ok.done();
   },
 
