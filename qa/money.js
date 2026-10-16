@@ -1,5 +1,5 @@
 'use strict';
-/* เงินทุกกรณี: ค่าบริการ/VAT เปิดปิด, ราคาทศนิยม, แก้ราคากลางมื้อ, กดรับเงินซ้ำ/พร้อมกันสองเครื่อง, ปิดบิลระหว่างสำรอง
+/* เงินทุกกรณี: ค่าบริการเปิดปิด × VAT ทุกโหมด (ไม่จด/แยก/รวม/อัตรา), ราคาทศนิยม, แก้ราคากลางมื้อ, กดรับเงินซ้ำ/พร้อมกันสองเครื่อง, ปิดบิลระหว่างสำรอง
    ยอดต้องตรงกันทุกที่: คำนวณเอง = เซิร์ฟเวอร์ = calc() ในหน้าพนักงาน = สรุปยอด = CSV = sales/*.jsonl, และ PromptPay QR
    node qa/money.js */
 const fs = require('node:fs');
@@ -8,10 +8,14 @@ const vm = require('node:vm');
 const { ROOT, makeApp, start, sleep, rmrf, salesLines, checker } = require('./lib');
 
 const r2 = x => Math.round(x * 100) / 100;
-function expected(lines, svcOn, vatOn) {
-  const sub = r2(lines.reduce((a, l) => a + l.price * l.qty, 0));
-  const svc = svcOn ? Math.round(sub * 0.10) : 0, vat = vatOn ? Math.round((sub + svc) * 0.07) : 0;
-  return { sub, svc, vat, total: r2(sub + svc + vat) };
+/* สูตรอ้างอิงเขียนแยกจากโค้ดระบบ (tasks/spec-vat.md): ทุกอย่างเป็นจำนวนเต็มสตางค์ ปัดครึ่งขึ้นด้วยเลขจำนวนเต็มล้วน
+   vc = { on: ร้านจด VAT, incl: ราคารวม VAT แล้ว, rate: อัตรา % } */
+const roundDiv = (num, den) => Math.floor((2 * num + den) / (2 * den));
+function expected(lines, svcOn, vc) {
+  const subS = lines.reduce((a, l) => a + Math.round(l.price * 100) * l.qty, 0), sub = subS / 100;
+  const svc = svcOn ? Math.round(sub * 0.10) : 0, base = subS + svc * 100, bp = vc.on ? Math.round(vc.rate * 100) : 0;
+  const vat = !bp ? 0 : vc.incl ? roundDiv(base * bp, 10000 + bp) : roundDiv(base * bp, 10000);
+  return { sub, svc, vat: vat / 100, total: (vc.incl ? base : base + vat) / 100 };
 }
 // ดึงฟังก์ชันจากหน้าพนักงานมาใช้ตรงๆ เพื่อเทียบกับเซิร์ฟเวอร์
 function pageFns() {
@@ -19,6 +23,10 @@ function pageFns() {
   const grab = name => html.match(new RegExp('function ' + name + '\\([^)]*\\)\\{[\\s\\S]*?\\n\\}'))[0];
   const ctx = {}; vm.createContext(ctx);
   vm.runInContext([grab('calc'), grab('crc16'), grab('tlv'), grab('ppPayload')].join('\n'), ctx);
+  // ยอดประมาณการในหน้าลูกค้า (ใช้ M = ค่าจาก /api/table)
+  const cust = fs.readFileSync(path.join(process.env.QA_FROM || ROOT, 'public', 'customer.html'), 'utf8');
+  const m = cust.match(/function estimate\([^)]*\)\{[\s\S]*?\n\}/);
+  if (m) vm.runInContext(m[0], ctx);
   return ctx;
 }
 // PromptPay ตามมาตรฐาน EMVCo เขียนแยกเอง (CRC-16/CCITT-FALSE)
@@ -45,14 +53,22 @@ async function main() {
   const pay = async (t, svc, vat, method) => { const sub = (await s.call('GET', '/api/state')).json.bills[t].sub; return s.call('POST', '/api/pay', { table: t, expectedSub: sub, svc, vat, method }); };
   const sales = [];
   let t = 0;
-  for (const svc of [false, true]) for (const vat of [false, true]) for (const qty of [1, 3, 7]) {
-    t = t % 12 + 1;
-    const lines = [{ price: A.price, qty }, { price: B.price, qty: qty + 1 }, { price: C.price, qty: 2 }];
-    await order(t, [{ id: A.id, qty }, { id: B.id, qty: qty + 1 }, { id: C.id, qty: 2 }]);
-    const r = await pay(t, svc, vat, qty % 2 ? 'cash' : 'transfer');
-    const e = expected(lines, svc, vat), c = P.calc(e.sub, svc, vat, 1);
-    sales.push(r.json.sale);
-    ok(r.status === 200 && ['sub', 'svc', 'vat', 'total'].every(k => r.json.sale[k] === e[k] && c[k] === e[k]), 'svc=' + svc + ' vat=' + vat + ' qty=' + qty + ': เซิร์ฟเวอร์ = หน้าพนักงาน = คำนวณเอง', { server: r.json.sale.total, page: c.total, expect: e.total });
+  // ทุกโหมด VAT (ไม่จด / แยก 7% / รวม 7% / แยก 10%) × ค่าบริการ × จำนวน · หน้าเว็บส่ง vat สลับค่าก็ต้องไม่มีผล
+  const MODES = [{ name: 'ไม่จด', on: false, incl: false, rate: 7 }, { name: 'แยก 7%', on: true, incl: false, rate: 7 }, { name: 'รวม 7%', on: true, incl: true, rate: 7 }, { name: 'แยก 10%', on: true, incl: false, rate: 10 }];
+  for (const vc of MODES) {
+    ok((await s.call('POST', '/api/settings', { vatRegistered: vc.on, vatInclusive: vc.incl, vatRate: vc.rate })).status === 200, 'ตั้งโหมด VAT ' + vc.name);
+    for (const svc of [false, true]) for (const qty of [1, 3, 7]) {
+      t = t % 12 + 1;
+      const lines = [{ price: A.price, qty }, { price: B.price, qty: qty + 1 }, { price: C.price, qty: 2 }];
+      await order(t, [{ id: A.id, qty }, { id: B.id, qty: qty + 1 }, { id: C.id, qty: 2 }]);
+      const r = await pay(t, svc, !vc.on, qty % 2 ? 'cash' : 'transfer');
+      const e = expected(lines, svc, vc), c = P.calc(e.sub, svc, 0, vc);
+      P.M = { svc, vatRegistered: vc.on, vatInclusive: vc.incl, vatRate: vc.rate };
+      const g = P.estimate ? P.estimate(e.sub) : null;
+      sales.push(r.json.sale);
+      ok(r.status === 200 && ['sub', 'svc', 'vat', 'total'].every(k => r.json.sale[k] === e[k] && c[k] === e[k]) && (!g || (g.total === e.total && g.vat === e.vat)),
+        vc.name + ' svc=' + svc + ' qty=' + qty + ': เซิร์ฟเวอร์ = หน้าพนักงาน = หน้าลูกค้า = สูตรอ้างอิง', { server: [r.json.sale.total, r.json.sale.vat], page: [c.total, c.vat], customer: g && [g.total, g.vat], expect: [e.total, e.vat] });
+    }
   }
   // แก้ราคากลางมื้อ
   t = 11;
