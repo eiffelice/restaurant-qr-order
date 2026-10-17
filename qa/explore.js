@@ -21,7 +21,7 @@ async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const ok = checker('explore');
   const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
-  const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge' });
+  const browser = await chromium.launch(require('./lib').browserOpt());
   const keys0 = (await s.call('GET', '/api/state')).json.keys;
 
   // 1) ชื่อเมนูยาวสุด (60 ตัวอักษร ไม่มีเว้นวรรค) ทุกหน้าจอที่แสดงชื่อ ที่ 390 px

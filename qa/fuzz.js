@@ -17,15 +17,18 @@ const WEIRD = [
   undefined, null, true, false, 0, -1, 1, 1.5, -0.01, 1e9, -1e9, 2 ** 53, Number.MAX_VALUE, '', ' ', '0', '1', '-1', 'NaN', 'Infinity',
   'x'.repeat(5000), '<img src=x onerror=alert(1)>', '../../data.json', '..\\..\\server.js', '%2e%2e/', '=cmd|calc', '\u0000', '\ud800', 'ไทย 🍜',
   [], [1, 2], [null], [{}], {}, { a: 1 }, { __proto__: { admin: true } }, { constructor: { prototype: { x: 1 } } }, '#ffffff', '#00ff00', 'red;}', '25:61', '00:00', '23:59',
-  'owner', 's1', 'cash', 'transfer', 'bill', 'staff', 'new', 'cooking', 'ready', 'served', 'kitchen', 'cashier', 'hot'
+  'owner', 's1', 'cash', 'transfer', 'bill', 'staff', 'new', 'cooking', 'ready', 'served', 'kitchen', 'cashier', 'hot',
+  'buy', 'sell', 'wholesale', 'retail', 'cafe', 'buyback', 0.333, 0.0004, 10001
 ];
 const FIELDS = ['table', 'key', 'id', 'items', 'memo', 'reqId', 'kind', 'status', 'from', 'reason', 'approvePin', 'expectedSub', 'svc', 'vat', 'method',
   'received', 'name', 'price', 'cat', 'station', 'desc', 'hidden', 'was', 'notes', 'dir', 'soldOut', 'shop', 'promptpay', 'tables', 'baseUrl',
-  'acceptOrders', 'accent', 'requireSeat', 'hours', 'pin', 'role', 'active', 'open', 'expect', 'address', 'phone', 'taxId', 'footer'];
+  'acceptOrders', 'accent', 'requireSeat', 'hours', 'pin', 'role', 'active', 'open', 'expect', 'address', 'phone', 'taxId', 'footer',
+  'level', 'kitchen', 'biz', 'modes', 'sku', 'unit', 'dec', 'price2'];
 function value(depth) {
   const r = rnd();
   if (depth < 2 && r < 0.12) return Array.from({ length: Math.floor(rnd() * 4) }, () => ({ id: value(depth + 1), qty: value(depth + 1), note: value(depth + 1) }));
   if (depth < 2 && r < 0.2) return { on: value(depth + 1), open: value(depth + 1), close: value(depth + 1) };
+  if (depth < 2 && r < 0.25) return { table: value(depth + 1), kitchen: value(depth + 1), counter: value(depth + 1), buy: value(depth + 1) };
   return pick(WEIRD);
 }
 function body() {
@@ -52,6 +55,8 @@ function req(s, method, p, raw, headers) {
   const ok = checker('fuzz');
   console.log('seed', seed, 'ครั้งต่อ endpoint ต่อบทบาท', N);
   const app = makeApp(); const s = start(app.code, { PORT: String(6500 + Math.floor(Math.random() * 300)) }); await s.ready; await s.login();
+  // เปิดทุกวิธีขาย (โต๊ะ จอครัว หน้าร้าน รับซื้อ) ให้ fuzz เข้าถึงโค้ดขายหน้าร้านและคิวด้วย
+  await s.call('POST', '/api/settings', { modes: { table: true, kitchen: true, counter: true, buy: true } });
   const cash = (await s.call('POST', '/api/staff', { name: 'ฟัซ', role: 'cashier', pin: '611111' })).json;
   const kit = (await s.call('POST', '/api/staff', { name: 'ฟัซครัว', role: 'kitchen', pin: '622222' })).json;
   const wai = (await s.call('POST', '/api/staff', { name: 'ฟัซเสิร์ฟ', role: 'waiter', pin: '633333' })).json;

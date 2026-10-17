@@ -27,7 +27,10 @@ async function main() {
   await s.call('POST', '/api/settings', { tagline: 'อาหารไทยรสชาติต้นตำรับ', address: '88/8 ถ.สุขุมวิท', phone: '02-123-4567', social: { facebook: 'facebook.com/x', instagram: '@x', line: '@x', tiktok: '@x' }, shareUrl: 'https://maps.app.goo.gl/x' });
   const m3 = (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 3);
   await s.call('POST', '/api/menu/item', Object.assign({}, m3, { rec: true }));
-  const browser = await chromium.launch({ channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge', headless: true });
+  // ขายหน้าร้าน + รับซื้อ (ร้านอาหารที่ขายกลับบ้านด้วย) ให้มีแท็บขายหน้าร้านและหน้าเลือกประเภทธุรกิจครบ
+  await s.call('POST', '/api/settings', { modes: { counter: true, buy: true } });
+  await s.call('POST', '/api/menu/item', Object.assign({}, m3, { rec: true, sku: '8850001', unit: 'จาน', price2: 80 }));
+  const browser = await chromium.launch(Object.assign(require('./lib').browserOpt(), { headless: true }));
   const all = [];
   for (const scheme of ['light', 'dark']) {
     const ctx = await browser.newContext({ baseURL: s.B, colorScheme: scheme, viewport: { width: 1280, height: 900 } });
@@ -35,10 +38,15 @@ async function main() {
     await p.goto('/staff'); await p.waitForSelector('#pin');
     all.push(...await scan(p, 'staff login ' + scheme));
     await p.fill('#pin', PIN); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
-    for (const v of ['kitchen', 'tables', 'menu', 'report', 'settings']) {
+    for (const v of ['kitchen', 'tables', 'counter', 'menu', 'report', 'settings']) {
       await p.click('#tabs [data-v="' + v + '"]'); await sleep(400);
       if (v === 'tables') { await p.click('[data-a="sel"][data-id="1"]'); await sleep(200); }
+      if (v === 'counter') {
+        if (!(await p.$('#pos-cart .cline'))) { await p.click('.pitem[data-id="3"]'); await p.click('.pitem[data-id="15"]'); }
+        await p.click('[data-a="pnotes"][data-i="0"]'); await p.click('[data-a="ppay"][data-m="cash"]'); await sleep(200);
+      }
       if (v === 'menu') { await p.click('[data-a="eopen"][data-id="1"]'); await sleep(200); }
+      if (v === 'settings') { await p.waitForSelector('[data-a="bzpick"]'); await p.click('[data-a="bzpick"][data-v="cafe"]'); await sleep(200); }
       all.push(...await scan(p, 'staff ' + v + ' ' + scheme));
     }
     await s.call('POST', '/api/settings', { look: scheme });      // หน้าลูกค้าตั้งโทนเองได้: สแกนทั้งโทนสว่างและมืด

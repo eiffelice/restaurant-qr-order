@@ -7,7 +7,6 @@ const { chromium } = require('playwright-core');
 const { makeApp, start, sleep, rmrf, PIN, fakePhoto, fakeCover } = require('./lib');
 
 const OUT = path.join(__dirname, '..', 'docs', 'screenshots');
-const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 const DESK = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 };
 // รูปอาหาร/โลโก้/ภาพพื้นหลังจริง: ไฟล์ m<id>-*.jpg, logo-*, cover-* ในโฟลเดอร์นี้ (ค่าเริ่มต้น images/ ของร้านบนเครื่องนี้)
@@ -25,7 +24,7 @@ const SHOP = process.env.SHOTS_SHOP || 'ครัวป้าแดง', TAGLINE
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
-  const browser = await chromium.launch({ channel: CHANNEL });
+  const browser = await chromium.launch(require('./lib').browserOpt());
   const png = { headers: { 'content-type': 'image/png' } };
   const st0 = (await s.call('GET', '/api/state')).json, keys = st0.keys;
 
