@@ -28,7 +28,11 @@ async function main() {
   const m3 = (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 3);
   await s.call('POST', '/api/menu/item', Object.assign({}, m3, { rec: true }));
   // ขายหน้าร้าน + รับซื้อ (ร้านอาหารที่ขายกลับบ้านด้วย) ให้มีแท็บขายหน้าร้านและหน้าเลือกประเภทธุรกิจครบ
-  await s.call('POST', '/api/settings', { modes: { counter: true, buy: true } });
+  await s.call('POST', '/api/settings', { modes: { counter: true, buy: true, stock: true, docs: true }, taxId: '0105561234567', promptpay: '0812345678' });
+  // เอกสารและสต็อก: มีใบแจ้งหนี้ค้างชำระ (ปุ่มรับชำระ + QR) สินค้าที่นับสต็อก (ใกล้หมด/หมด)
+  await s.call('POST', '/api/stock/adjust', { mode: 'count', lines: [{ id: 1, qty: 2, expect: 0 }, { id: 2, qty: 0, expect: 0 }, { id: 3, qty: 40, expect: 0 }] });
+  await s.call('POST', '/api/menu/item', Object.assign({}, (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === 1), { min: 5 }));
+  const inv = (await s.call('POST', '/api/doc', { type: 'INV', vat: true, discount: 5, party: { name: 'บริษัท ลูกค้า จำกัด', address: '1 ถ.สุขุมวิท', taxId: '0105500000001' }, lines: [{ id: 3, qty: 2, price: 120 }, { name: 'ค่าขนส่ง', qty: 1, price: 50 }] })).json.doc;
   await s.call('POST', '/api/menu/item', Object.assign({}, m3, { rec: true, sku: '8850001', unit: 'จาน', price2: 80 }));
   const browser = await chromium.launch(Object.assign(require('./lib').browserOpt(), { headless: true }));
   const all = [];
@@ -38,7 +42,7 @@ async function main() {
     await p.goto('/staff'); await p.waitForSelector('#pin');
     all.push(...await scan(p, 'staff login ' + scheme));
     await p.fill('#pin', PIN); await p.press('#pin', 'Enter'); await p.waitForSelector('#tabs .tab');
-    for (const v of ['kitchen', 'tables', 'counter', 'menu', 'report', 'settings']) {
+    for (const v of ['kitchen', 'tables', 'counter', 'docs', 'stock', 'menu', 'report', 'settings']) {
       await p.click('#tabs [data-v="' + v + '"]'); await sleep(400);
       if (v === 'tables') { await p.click('[data-a="sel"][data-id="1"]'); await sleep(200); }
       if (v === 'counter') {
@@ -46,6 +50,20 @@ async function main() {
         await p.click('[data-a="pnotes"][data-i="0"]'); await p.click('[data-a="ppay"][data-m="cash"]'); await sleep(200);
       }
       if (v === 'menu') { await p.click('[data-a="eopen"][data-id="1"]'); await sleep(200); }
+      if (v === 'docs') {
+        await p.waitForSelector('[data-a="dopen"]'); all.push(...await scan(p, 'staff docs list ' + scheme));
+        await p.click('[data-a="dopen"][data-v="' + inv.no + '"]'); await p.waitForSelector('.docp'); await p.click('[data-a="dcancel"]'); await sleep(200);
+        all.push(...await scan(p, 'staff docs invoice ' + scheme));
+        await p.click('[data-a="dback"]'); await p.click('[data-a="dnew"][data-v="QT"]'); await p.fill('#d-pname', 'ลูกค้า'); await p.fill('#d-ln-0', 'ค่าแรง'); await p.fill('#d-lp-0', '500'); await sleep(200);
+        all.push(...await scan(p, 'staff docs editor ' + scheme));
+        await p.click('[data-a="dback"]'); await p.click('[data-a="dcontacts"]'); await p.click('[data-a="ctnew"]'); await sleep(200);
+      }
+      if (v === 'stock') {
+        await p.waitForSelector('[data-a="skcard"]'); all.push(...await scan(p, 'staff stock list ' + scheme));
+        await p.click('[data-a="skcard"][data-id="1"]'); await p.waitForSelector('#v-stock table.list'); all.push(...await scan(p, 'staff stock card ' + scheme));
+        await p.click('[data-a="skback"]'); await p.click('[data-a="skadj"][data-v="out"]'); await p.fill('#sk-add', '1'); await p.press('#sk-add', 'Enter').catch(() => {}); await sleep(200);
+        if (!(await p.$('#sk-q-0'))) { await p.click('[data-a="skmode"][data-v="out"]'); }
+      }
       if (v === 'settings') { await p.waitForSelector('[data-a="bzpick"]'); await p.click('[data-a="bzpick"][data-v="cafe"]'); await sleep(200); }
       all.push(...await scan(p, 'staff ' + v + ' ' + scheme));
     }
