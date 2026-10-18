@@ -88,6 +88,55 @@ async function main() {
   ok(csv.every(c => { const x = sales.find(y => y.no === +c[0]); return x && +c[4] === x.sub && +c[5] === x.svc && +c[6] === x.vat && +c[7] === x.total; }), 'CSV ตรงกับทุกบิลทุกช่อง');
   console.log('    ผลรวมดิบใน /api/report = ' + rep.total + ' (เศษทศนิยมของ float หน้าจอปัดเหลือ 2 ตำแหน่ง)');
   await s.stop(); rmrf(app.base);
+  await counter(ok);
   ok.done();
+}
+
+/* ขายหน้าร้าน: ตะกร้าสุ่ม (จำนวนทศนิยม ราคามีสตางค์ ราคาส่ง แถวซ้ำ รับซื้อ ค่าบริการ/VAT)
+   posTotals() ของหน้าพนักงาน = เซิร์ฟเวอร์ทุกช่อง (ถ้าไม่ตรงแม้สตางค์เดียว ขายไม่ได้เพราะ expectedSub ไม่ตรง) แล้วสรุปยอด = CSV = sales/*.jsonl */
+function posFns(items, settings) {
+  const html = fs.readFileSync(path.join(process.env.QA_FROM || ROOT, 'public', 'staff.html'), 'utf8');
+  const multi = name => html.match(new RegExp('function ' + name + '\\([^)]*\\)\\{[\\s\\S]*?\\n\\}'))[0];
+  const line = name => html.match(new RegExp('^function ' + name + '\\(.*$', 'm'))[0];
+  const ctx = { S: { pos: null, d: { menu: { items }, settings, biz: { kind: 'sell' } } } }; vm.createContext(ctx);
+  vm.runInContext([multi('calc'), multi('posInit'), multi('posTotals'), line('round2'), line('posKind'), line('posPrice'), line('okLine'), line('itemById'), line('modes')].join('\n'), ctx);
+  return ctx;
+}
+async function counter(ok) {
+  const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+  await s.call('POST', '/api/settings', { modes: { counter: true, buy: true } });
+  const defs = [['หมูสับ', 89, 0, true], ['กุ้ง', 279.5, 259.25, true], ['สายไฟ', 12.75, 10.5, true], ['น้ำดื่ม', 10, 0, false], ['สมุด', 19.99, 17.5, false], ['ขนม', 33.33, 0, false], ['ทองแดง', 0.35, 0, true]];
+  const items = [];
+  for (const [name, price, price2, dec] of defs) items.push((await s.call('POST', '/api/menu/item', { name, price, price2: price2 || '', dec, cat: 1, station: 'hot', unit: dec ? 'กก.' : 'ชิ้น' })).json.item);
+  const st = (await s.call('GET', '/api/state')).json;
+  let seed = 4242; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const sales = []; let bad = 0, sample = null;
+  for (let n = 0; n < 60; n++) {
+    const P = posFns(st.menu.items, st.settings);
+    const kind = n % 5 === 4 ? 'buy' : 'sell', level = rnd() < 0.4 ? 'wholesale' : 'retail', svc = rnd() < 0.5, vat = rnd() < 0.5;
+    const lines = Array.from({ length: 1 + Math.floor(rnd() * 6) }, () => {
+      const m = items[Math.floor(rnd() * items.length)];
+      const qty = m.dec ? Math.max(0.001, Math.round(rnd() * 25000) / 1000) : 1 + Math.floor(rnd() * 30);
+      return { id: m.id, qty, txt: String(qty), note: [] };
+    });
+    P.S.pos = { lines, level, kind, svc, vat, memo: '', reqId: null };
+    const c = P.posTotals();
+    const r = await s.call('POST', '/api/sale', { items: lines.map(l => ({ id: l.id, qty: l.qty })), kind, level, svc, vat, method: rnd() < 0.5 ? 'cash' : 'transfer', expectedSub: c.sub });
+    const x = r.json && r.json.sale;
+    if (r.status !== 200 || !x || x.sub !== c.sub || x.svc !== c.svc || x.vat !== c.vat || x.total !== c.total) { bad++; sample = sample || { status: r.status, server: x, page: c, lines }; }
+    else sales.push(x);
+  }
+  ok(bad === 0, 'ขายหน้าร้าน 60 ตะกร้าสุ่ม (ทศนิยม ราคาส่ง รับซื้อ ค่าบริการ/VAT): หน้าพนักงาน = เซิร์ฟเวอร์ทุกช่อง', sample);
+  const sum = a => r2(a.reduce((p, q) => p + q, 0));
+  const sell = sales.filter(x => x.kind !== 'buy'), buy = sales.filter(x => x.kind === 'buy');
+  const rep = (await s.call('GET', '/api/report')).json;
+  ok(rep.count === sell.length && r2(rep.total) === sum(sell.map(x => x.total)) && rep.buy.count === buy.length && rep.buy.total === sum(buy.map(x => x.total)),
+    'สรุปยอด: ยอดขาย = ผลรวมบิลขาย, รับซื้อ = ผลรวมบิลรับซื้อ (ไม่ปนกัน)', { sell: [rep.total, sum(sell.map(x => x.total))], buy: [rep.buy.total, sum(buy.map(x => x.total))] });
+  ok(buy.every(x => x.svc === 0 && x.vat === 0), 'รับซื้อไม่มีค่าบริการ/VAT');
+  const csv = (await s.call('GET', '/api/export.csv')).text.trim().split('\r\n').slice(1).map(l => l.slice(1, -1).split('","'));
+  ok(csv.length === sales.length && csv.every(c => { const x = sales.find(y => y.no === +c[0]); return x && +c[4] === x.sub && +c[7] === x.total && c[9] === (x.kind === 'buy' ? 'รับซื้อ' : 'ขาย'); }), 'CSV ตรงกับทุกบิลทุกช่อง รวมประเภทขาย/รับซื้อ');
+  const jl = salesLines(app.code);
+  ok(jl.length === sales.length && sales.every(x => { const l = jl.find(y => y.no === x.no); return l && l.total === x.total && JSON.stringify(l.items) === JSON.stringify(x.items); }), 'sales/*.jsonl ตรงกับทุกบิล รวมจำนวนทศนิยม');
+  await s.stop(); rmrf(app.base);
 }
 main().catch(e => { console.error(e); process.exit(2); });

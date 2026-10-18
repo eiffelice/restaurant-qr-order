@@ -24,11 +24,19 @@ const cases = {
     const ackOrders = new Map();   // memo -> table
     const ackPays = [];            // { no, table }
     const paidTables = new Set();
+    // ปิดบิลที่ถูก kill -9 ก่อนได้คำตอบ: เซิร์ฟเวอร์อาจบันทึกไปแล้ว (บิลอยู่ใน sales/ ออเดอร์ของโต๊ะนั้นจึงหายจากจอถูกต้อง)
+    // ไม่ใช่ "ตอบ 200 แล้วหาย" เดิมนับเป็นปัญหา (false positive บน Linux ราว 1 ใน 3 รอบ ทั้งโค้ดเก่าและใหม่)
+    let inflight = null;
     for (let round = 1; round <= 20; round++) {
       const s = start(app.code); await s.ready; await s.login();
       const st = (await s.call('GET', '/api/state')).json;
       // ตรวจผลของรอบก่อน
       // ปัญหาแต่ละรายการนับครั้งเดียว แล้วเลิกติดตาม
+      if (inflight) {
+        const done = salesLines(app.code).some(l => !l._bad && l.table === inflight.t && l.at >= inflight.since && !ackPays.some(p => p.no === l.no));
+        if (done) inflight.memos.forEach(m => paidTables.add(m));
+        inflight = null;
+      }
       const memos = new Set(st.tickets.map(k => k.memo));
       for (const [memo, t] of ackOrders) if (!memos.has(memo) && !paidTables.has(memo)) { problems.push('รอบ ' + round + ': ออเดอร์ ' + memo + ' (โต๊ะ ' + t + ') ตอบ 200 แล้วแต่หาย'); ackOrders.delete(memo); }
       const rep = (await s.call('GET', '/api/report')).json;
@@ -57,7 +65,9 @@ const cases = {
             const tickets = (await s.call('GET', '/api/state').catch(() => null));
             if (!tickets || !tickets.json) continue;
             const open = tickets.json.tickets.filter(k => k.table === t);
+            inflight = { t, since: Date.now() - 1000, memos: open.map(k => k.memo).concat([...ackOrders].filter(([, tt]) => tt === t).map(([m]) => m)) };
             const r = await payTable(s, t).catch(() => null);
+            if (r) inflight = null;          // ได้คำตอบแล้ว (สำเร็จหรือไม่ก็รู้ผล)
             if (r && r.status === 200) { ackPays.push({ no: r.json.sale.no, table: t }); open.forEach(k => paidTables.add(k.memo)); for (const [m, tt] of ackOrders) if (tt === t) paidTables.add(m); }
             continue;
           }

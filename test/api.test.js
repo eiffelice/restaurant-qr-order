@@ -1847,3 +1847,505 @@ describe('กู้คืนไฟล์สำรองที่รูปขอ�
   });
 });
 
+
+describe('หลายประเภทธุรกิจ: ขายหน้าร้าน ขายตามน้ำหนัก ราคาส่ง รับซื้อ และคิว', () => {
+  const sales = dir => { try { return fs.readdirSync(path.join(dir, 'sales')).flatMap(f => fs.readFileSync(path.join(dir, 'sales', f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))); } catch (e) { return []; } };
+  const counterOn = (s, extra) => s.call('POST', '/api/settings', { modes: Object.assign({ counter: true }, extra || {}) });
+  const sell = (s, body) => s.call('POST', '/api/sale', Object.assign({ method: 'cash' }, body));
+
+  test('ร้านเดิมที่ยังไม่เลือกประเภทธุรกิจ: ทำงานแบบร้านอาหารเหมือนเดิม ยังไม่มีขายหน้าร้าน', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const st = (await s.call('GET', '/api/state')).json;
+    assert.equal(st.settings.biz, '');
+    assert.deepEqual(st.settings.modes, { table: true, kitchen: true, counter: false, buy: false, stock: false, docs: false });
+    assert.equal(st.biz.terms.item, 'เมนู');
+    assert.equal(st.biz.terms.kitchen, 'ครัว');
+    const r = await sell(s, { items: [{ id: 1, qty: 1 }], expectedSub: 60 });
+    assert.equal(r.status, 409, 'ยังไม่เปิดขายหน้าร้าน');
+    assert.equal(sales(s.dir).length, 0);
+    const list = (await s.call('GET', '/api/biz')).json.list;
+    assert.equal(list.length, 14);
+    ['cafe', 'retail', 'wholesale', 'fresh', 'restaurant', 'hardware', 'salon', 'stationery', 'bubbletea', 'bakery', 'fashion', 'pharmacy', 'online', 'buyback']
+      .forEach(k => assert.ok(list.some(p => p.key === k), 'มีประเภท ' + k));
+    await s.stop();
+  });
+
+  test('เลือกประเภทธุรกิจและโหมด: ตรวจค่า เลิกใช้โต๊ะที่ยังมีบิลไม่ได้ (ไม่มีอะไรเปลี่ยน) QR โต๊ะสั่งไม่ได้เมื่อเลิกใช้โต๊ะ และลง audit', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    assert.equal((await s.call('POST', '/api/settings', { biz: 'casino' })).status, 400);
+    assert.equal((await s.call('POST', '/api/settings', { modes: { table: false, counter: false } })).status, 400, 'ต้องมีทางขายอย่างน้อยหนึ่งทาง');
+    assert.equal((await s.call('POST', '/api/settings', { modes: { buy: true } })).status, 400, 'รับซื้อต้องใช้หน้าขายหน้าร้าน');
+    assert.equal((await s.call('POST', '/api/settings', { modes: { table: 'no' } })).status, 400);
+    await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] });
+    const busy = await s.call('POST', '/api/settings', { shop: 'ร้านใหม่', biz: 'retail', modes: { table: false, kitchen: false, counter: true } });
+    assert.equal(busy.status, 400);
+    assert.match(busy.json.error, /โต๊ะ 3/);
+    let st = (await s.call('GET', '/api/state')).json;
+    assert.deepEqual([st.settings.shop, st.settings.biz, st.settings.modes.table], ['ร้านของฉัน', '', true], 'ผิดแล้วไม่มีอะไรเปลี่ยน');
+    await payTable(s, 3);
+    const v0 = st.menu.version;
+    assert.equal((await s.call('POST', '/api/settings', { biz: 'retail', modes: { table: false, kitchen: false, counter: true } })).status, 200);
+    st = (await s.call('GET', '/api/state')).json;
+    assert.equal(st.biz.key, 'retail');
+    assert.equal(st.biz.terms.item, 'สินค้า');
+    assert.ok(st.menu.version > v0, 'หน้าลูกค้าเห็นว่าต้องโหลดใหม่');
+    const o = await s.guest('POST', '/api/order', { table: 4, key: keys[4], items: [{ id: 1, qty: 1 }] });
+    assert.equal(o.status, 403);
+    assert.equal(o.json.code, 'off');
+    assert.equal((await s.guest('GET', '/api/table?t=4&k=' + keys[4])).json.open, false);
+    assert.equal((await s.guest('GET', '/api/menu')).json.terms.food, 'สินค้า');
+    const a = readLog(s.dir, 'audit').filter(e => e.action === 'settings.changed').pop();
+    assert.equal(a.after.biz, 'retail');
+    assert.equal(a.after.modes.counter, true);
+    await s.stop();
+  });
+
+  test('โหลดสินค้าตัวอย่าง: แทนที่เมนูทั้งหมด id ไม่ใช้ซ้ำ รูปเดิมถูกลบ เจ้าของเท่านั้น และลง audit', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const up = await upload(s, 1, JPG);
+    const imgFile = path.join(s.dir, 'images', up.json.image);
+    assert.ok(fs.existsSync(imgFile));
+    await s.call('POST', '/api/soldout', { id: 2, soldOut: true });
+    const before = (await s.call('GET', '/api/state')).json.menu;
+    const maxId = Math.max(...before.items.map(i => i.id));
+    await withStaff(s);
+    const c = await device(s, '520011');
+    assert.equal((await c.call('POST', '/api/biz/sample', { biz: 'fresh' })).status, 403);
+    assert.equal((await s.call('POST', '/api/biz/sample', { biz: 'nope' })).status, 400);
+    const r = await s.call('POST', '/api/biz/sample', { biz: 'fresh' });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const st = (await s.call('GET', '/api/state')).json;
+    assert.equal(st.menu.items.length, r.json.items);
+    assert.ok(st.menu.items.every(i => i.id > maxId), 'id ใหม่ไม่ซ้ำกับเมนูที่เคยมี');
+    assert.ok(st.menu.items.some(i => i.dec && i.unit === 'กก.'), 'ของสดขายตามน้ำหนัก');
+    assert.ok(st.menu.version > before.version);
+    assert.deepEqual(st.settings.soldOut, []);
+    assert.ok(!fs.existsSync(imgFile), 'รูปของเมนูเดิมถูกลบ');
+    const a = readLog(s.dir, 'audit').find(e => e.action === 'menu.sample_loaded');
+    assert.deepEqual([a.biz, a.before.items, a.after.items], ['fresh', before.items.length, r.json.items]);
+    // สำรองเมนูเดิมไว้ก่อนแทนที่ กู้คืนแล้วเมนูเดิมกลับมา
+    assert.match(r.json.safetyBackup, /before-sample/);
+    const bk = await getBackup(s, r.json.safetyBackup);
+    assert.equal(bk.json.data.menu.items.length, before.items.length);
+    assert.ok(bk.json.images[up.json.image], 'รูปเมนูเดิมอยู่ในไฟล์สำรอง');
+    await s.stop();
+  });
+
+  test('ขายหน้าร้าน: ราคามาจากเซิร์ฟเวอร์ ค่าบริการ/VAT สูตรเดิม ยอดไม่ตรงได้ 409 ส่งซ้ำด้วย reqId เดิมไม่ขายซ้ำ ลงยอดขาย สรุปยอด และ CSV', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.equal((await counterOn(s)).status, 200);
+    // ลูกค้าเห็น/พนักงานเห็นยอดเก่า: ไม่ขายด้วยยอดใหม่เงียบๆ
+    const bad = await sell(s, { items: [{ id: 1, qty: 2, price: 1 }, { id: 15, qty: 1 }], expectedSub: 2 });
+    assert.equal(bad.status, 409);
+    assert.equal(bad.json.code, 'price_changed');
+    assert.equal(sales(s.dir).length, 0);
+    const body = { items: [{ id: 1, qty: 2, price: 1 }, { id: 15, qty: 1 }], expectedSub: 160, svc: true, vat: true, received: 200, reqId: 'a1b2c3d4e5f60718', memo: 'กลับบ้าน\n\u0007' };
+    const ok = await sell(s, body);
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+    assert.deepEqual([ok.json.sale.sub, ok.json.sale.svc, ok.json.sale.vat, ok.json.sale.total], [160, 16, 12, 188]);   // 10% ของ 160, 7% ของ 176 = 12.32
+    assert.equal(ok.json.change, 12);
+    assert.equal(ok.json.sale.table, 0);
+    assert.equal(ok.json.sale.memo, 'กลับบ้าน');
+    const again = await sell(s, body);
+    assert.deepEqual(again.json, ok.json, 'กดซ้ำได้ผลเดิม');
+    assert.equal(sales(s.dir).length, 1, 'ไม่ขายซ้ำ');
+    assert.equal((await sell(s, { items: [{ id: 1, qty: 1 }], expectedSub: 60, received: 50 })).status, 400, 'เงินที่รับมาไม่พอ');
+    assert.equal((await sell(s, { items: [{ id: 1, qty: 1.5 }], expectedSub: 90 })).status, 400, 'สินค้าที่ไม่ได้ขายตามน้ำหนักต้องเป็นจำนวนเต็ม');
+    assert.equal((await sell(s, { items: [{ id: 1, qty: 0 }], expectedSub: 0 })).status, 400);
+    assert.equal((await sell(s, { items: [], expectedSub: 0 })).status, 400);
+    await s.call('POST', '/api/soldout', { id: 3, soldOut: true });
+    assert.equal((await sell(s, { items: [{ id: 3, qty: 1 }], expectedSub: 90 })).status, 400, 'ของหมดขายไม่ได้');
+    const it = (await s.call('POST', '/api/menu/item', item({ hidden: true }))).json.item;
+    assert.equal((await sell(s, { items: [{ id: it.id, qty: 1 }], expectedSub: 45 })).status, 400, 'สินค้าที่ซ่อนขายไม่ได้');
+    // ลงสรุปยอดและ CSV
+    const rep = (await s.call('GET', '/api/report')).json;
+    assert.equal(rep.count, 1);
+    assert.equal(rep.total, 188);
+    assert.equal(rep.cash, 188);
+    assert.equal(rep.bills[0].no, ok.json.sale.no);
+    const row = (await s.call('GET', '/api/export.csv')).text.split('\r\n')[1];
+    assert.match(row, /"หน้าร้าน"/);
+    assert.match(row, /"ขาย","กลับบ้าน","0","ผัดกะเพราหมูสับ x2; ชาไทยเย็น x1"$/);
+    const a = readLog(s.dir, 'audit').find(e => e.action === 'sale.created');
+    assert.deepEqual([a.no, a.total, a.received, a.change, a.staff], [ok.json.sale.no, 188, 200, 12, 'owner']);
+    assert.ok(readLog(s.dir, 'audit').some(e => e.action === 'sale.rejected' && e.expectedSub === 2 && e.actualSub === 160));
+    // แคชเชียร์ขายได้ พนักงานเสิร์ฟ/ครัวไม่ได้ (เงิน)
+    await withStaff(s);
+    await s.call('POST', '/api/staff', { name: 'น้องเอ', role: 'waiter', pin: '520033' });
+    const c = await device(s, '520011'), w = await device(s, '520033'), k = await device(s, '520022');
+    assert.equal((await c.call('POST', '/api/sale', { items: [{ id: 15, qty: 1 }], expectedSub: 40, method: 'transfer' })).status, 200);
+    assert.equal((await w.call('POST', '/api/sale', { items: [{ id: 15, qty: 1 }], expectedSub: 40 })).status, 403);
+    assert.equal((await k.call('POST', '/api/sale', { items: [{ id: 15, qty: 1 }], expectedSub: 40 })).status, 403);
+    await s.stop();
+  });
+
+  test('ขายตามน้ำหนักและราคาส่ง: จำนวนทศนิยม 3 ตำแหน่ง ปัดเป็นสตางค์ต่อแถว ราคาส่งทั้งบิล และยังอยู่ครบหลังเปิดระบบใหม่', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.login();
+    await counterOn(s);
+    const pork = (await s.call('POST', '/api/menu/item', item({ name: 'หมูสับ', price: 89, unit: 'กก.', dec: true }))).json.item;
+    const cement = (await s.call('POST', '/api/menu/item', item({ name: 'ปูนซีเมนต์', price: 155, price2: 145, unit: 'ถุง', sku: '6001' }))).json.item;
+    assert.deepEqual([pork.dec, pork.unit, cement.price2, cement.sku], [true, 'กก.', 145, '6001']);
+    // หมูสับสองแถว 0.35 + 0.333 = 0.683 กก. × 89 = 60.787 → 60.79 · ปูนราคาส่ง 2 × 145 = 290
+    const r = await sell(s, { items: [{ id: pork.id, qty: 0.35 }, { id: pork.id, qty: 0.333 }, { id: cement.id, qty: 2 }], level: 'wholesale', expectedSub: 350.79 });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.sale.level, 'wholesale');
+    assert.deepEqual(r.json.sale.items, [{ name: 'หมูสับ', qty: 0.683, price: 89, unit: 'กก.' }, { name: 'ปูนซีเมนต์', qty: 2, price: 145, unit: 'ถุง' }]);
+    const retail = await sell(s, { items: [{ id: cement.id, qty: 2 }], expectedSub: 310 });
+    assert.equal(retail.status, 200, 'ไม่เลือกราคาส่ง = ราคาปลีก');
+    assert.equal((await sell(s, { items: [{ id: pork.id, qty: 0.0004 }], expectedSub: 0 })).status, 400);
+    assert.equal((await sell(s, { items: [{ id: pork.id, qty: 'abc' }], expectedSub: 0 })).status, 400);
+    assert.match((await s.call('GET', '/api/export.csv')).text, /หมูสับ x0\.683 กก\.; ปูนซีเมนต์ x2 ถุง/);
+    await s.stop();
+    s = start(dir); await s.ready; await s.login();
+    const top = (await s.call('GET', '/api/report')).json.top;
+    assert.deepEqual(top.find(x => x.name === 'หมูสับ'), { name: 'หมูสับ', qty: 0.683 }, 'จำนวนทศนิยมไม่ถูกตัดทิ้งตอนเปิดระบบใหม่');
+    assert.equal(sales(dir).length, 2);
+    await s.stop();
+  });
+
+  test('สินค้า: รหัสสินค้าห้ามซ้ำ ตัวอักษรแปลกไม่รับ หน้าจอรุ่นเก่าที่ไม่ส่งช่องใหม่ไม่ล้างค่าเดิม และ was ครอบช่องใหม่', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const a = (await s.call('POST', '/api/menu/item', item({ name: 'สมุด', sku: 'NB-01', unit: 'เล่ม', price2: 12 }))).json.item;
+    const dup = await s.call('POST', '/api/menu/item', item({ name: 'สมุดอีกแบบ', sku: 'nb-01' }));
+    assert.equal(dup.status, 400);
+    assert.match(dup.json.error, /สมุด/);
+    assert.equal((await s.call('POST', '/api/menu/item', item({ sku: '<b>' }))).status, 400);
+    assert.equal((await s.call('POST', '/api/menu/item', item({ price2: -1 }))).status, 400);
+    // หน้าจอรุ่นก่อน (ไม่รู้จัก sku/unit/dec/price2) แก้ราคา: ช่องใหม่ต้องอยู่ครบ
+    const old = await s.call('POST', '/api/menu/item', { id: a.id, name: 'สมุด', price: 20, cat: 1, station: 'hot', desc: '' });
+    assert.equal(old.status, 200);
+    assert.deepEqual([old.json.item.sku, old.json.item.unit, old.json.item.price2, old.json.item.price], ['NB-01', 'เล่ม', 12, 20]);
+    const stale = await s.call('POST', '/api/menu/item', item({ id: a.id, name: 'สมุด', price: 20, sku: 'NB-02', was: { sku: 'NB-00' } }));
+    assert.equal(stale.status, 409, 'อีกเครื่องเปลี่ยนรหัสสินค้าไปแล้ว');
+    assert.equal((await s.call('POST', '/api/menu/item', item({ id: a.id, name: 'สมุด', price: 20, sku: 'NB-02', price2: '', was: { sku: 'NB-01' } }))).json.item.price2, 0, 'เว้นว่าง = ไม่มีราคาส่ง');
+    await s.stop();
+  });
+
+  test('รับซื้อของ: ร้านจ่ายเงินให้ลูกค้า ไม่มีค่าบริการ/VAT ยอดแยกจากยอดขาย ไม่นับเป็นเมนูขายดี', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await counterOn(s);
+    assert.equal((await sell(s, { kind: 'buy', items: [{ id: 1, qty: 1 }], expectedSub: 60 })).status, 409, 'ยังไม่เปิดโหมดรับซื้อ');
+    await counterOn(s, { buy: true });
+    await s.call('POST', '/api/soldout', { id: 1, soldOut: true });
+    const b = await sell(s, { kind: 'buy', items: [{ id: 1, qty: 5 }], expectedSub: 300, svc: true, vat: true, received: 1000 });
+    assert.equal(b.status, 200, JSON.stringify(b.json));
+    assert.deepEqual([b.json.sale.kind, b.json.sale.svc, b.json.sale.vat, b.json.sale.total, b.json.change], ['buy', 0, 0, 300, null]);
+    await sell(s, { items: [{ id: 15, qty: 2 }], expectedSub: 80, method: 'transfer' });
+    const rep = (await s.call('GET', '/api/report')).json;
+    assert.deepEqual([rep.count, rep.total, rep.cash, rep.transfer], [1, 80, 0, 80], 'ยอดขายไม่รวมรับซื้อ');
+    assert.deepEqual(rep.buy, { count: 1, total: 300, cash: 300, transfer: 0 });
+    assert.ok(!rep.top.some(x => x.name === 'ผัดกะเพราหมูสับ'));
+    assert.equal(rep.days[6].total, 80);
+    assert.ok(!(await s.guest('GET', '/api/menu')).json.popular.includes(1), 'ของที่รับซื้อไม่ใช่เมนูขายดี');
+    assert.match((await s.call('GET', '/api/export.csv')).text, /"รับซื้อ"/);
+    await s.stop();
+  });
+
+  test('ส่งเข้าจอครัว/บาร์เป็นคิว: เลขคิวต่อเนื่อง ไม่อยู่ในบิลโต๊ะ ยกเลิกจากจอไม่ได้ ลูกค้ารับแล้วหายจากจอ เลิกใช้จอไม่ได้ถ้าคิวค้าง', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.login();
+    await counterOn(s, { kitchen: true });
+    const r1 = await sell(s, { items: [{ id: 1, qty: 1, note: ['ไม่เผ็ด', 'แปลกๆ'] }, { id: 15, qty: 1 }], expectedSub: 100, kitchen: true, memo: 'คุณเอ' });
+    assert.equal(r1.status, 200, JSON.stringify(r1.json));
+    assert.equal(r1.json.queue, 1);
+    const r2 = await sell(s, { items: [{ id: 16, qty: 1 }], expectedSub: 50, kitchen: true });
+    assert.equal(r2.json.queue, 2);
+    const r3 = await sell(s, { items: [{ id: 16, qty: 1 }], expectedSub: 50 });
+    assert.equal(r3.json.queue, null, 'ไม่ได้เลือกส่งเข้าจอ = ไม่มีคิว');
+    let st = (await s.call('GET', '/api/state')).json;
+    const q1 = st.tickets.filter(k => k.q === 1);
+    assert.deepEqual(q1.map(k => [k.table, k.station]).sort(), [[0, 'bar'], [0, 'hot']], 'แยกตั๋วตามจุดทำ');
+    assert.deepEqual(q1.find(k => k.station === 'hot').items[0].note, ['ไม่เผ็ด'], 'หมายเหตุผ่านเฉพาะที่ร้านกำหนด');
+    assert.equal(q1[0].memo, 'คุณเอ');
+    assert.deepEqual(st.bills, {}, 'คิวจ่ายแล้ว ไม่มีบิลค้าง');
+    const rep = (await s.call('GET', '/api/report')).json;
+    assert.deepEqual([rep.pending, rep.openTables, rep.count], [0, 0, 3]);
+    assert.equal((await s.call('POST', '/api/ticket/void', { id: q1[0].id, reason: 'ลูกค้าเปลี่ยนใจ' })).status, 409, 'คิวที่จ่ายแล้วยกเลิกจากจอไม่ได้');
+    const off = await s.call('POST', '/api/settings', { modes: { kitchen: false } });
+    assert.equal(off.status, 400);
+    assert.match(off.json.error, /คิว 1, 2/);
+    // เปิดระบบใหม่: คิวยังอยู่
+    await s.stop();
+    s = start(dir); await s.ready; await s.login();
+    st = (await s.call('GET', '/api/state')).json;
+    assert.equal(st.tickets.filter(k => k.table === 0).length, 3);
+    for (const k of st.tickets.filter(x => x.table === 0)) {
+      for (const [from, to] of [['new', 'cooking'], ['cooking', 'ready'], ['ready', 'served']]) {
+        assert.equal((await s.call('POST', '/api/ticket', { id: k.id, from, status: to })).status, 200);
+      }
+    }
+    st = (await s.call('GET', '/api/state')).json;
+    assert.equal(st.tickets.length, 0, 'ลูกค้ารับแล้ว ตั๋วหายจากจอ');
+    assert.equal((await s.call('POST', '/api/settings', { modes: { kitchen: false } })).status, 200);
+    assert.equal((await sell(s, { items: [{ id: 16, qty: 1 }], expectedSub: 50, kitchen: true })).json.queue, null, 'ไม่ใช้จอครัว = ไม่ส่งคิว');
+    assert.ok(readLog(dir, 'audit').some(e => e.action === 'ticket.status' && e.queue === 1 && e.after === 'served'));
+    await s.stop();
+  });
+
+  test('data.json ที่ประเภทธุรกิจ โหมด คิว หรือสินค้าผิดรูป: ระบบเปิดได้ ค่าผิดถูกซ่อมเป็นค่าตั้งต้น', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.stop();
+    const D = JSON.parse(fs.readFileSync(path.join(dir, 'data.json'), 'utf8'));
+    D.settings.biz = '<script>';
+    D.settings.modes = { table: false, counter: false, kitchen: 'yes' };
+    D.queue = { day: 'x', n: -3 };
+    D.tickets = [{ id: 1, table: 0, station: 'hot', status: 'new', createdAt: 1, items: [{ id: 1, name: 'x', price: 1, qty: 1 }] },
+      { id: 2, table: 0, q: 4, station: 'hot', status: 'new', createdAt: 1, items: [{ id: 1, name: 'x', price: 1, qty: 0.5 }] },
+      { id: 3, table: 2, q: 9, station: 'hot', status: 'new', createdAt: 1, items: [{ id: 1, name: 'x', price: 1, qty: 1 }] }];
+    D.sales = [{ no: 1, at: Date.now(), table: 0, sub: 10, svc: 0, vat: 0, total: 10, method: 'cash', kind: 'gift', memo: 5, items: [{ name: 'หมู', qty: 0.25, price: 40 }, { name: 'เสีย', qty: -1, price: 1 }] }];
+    D.menu.items[0].sku = 123; D.menu.items[0].price2 = -5; D.menu.items[0].dec = 'true'; D.menu.items[0].unit = 'ก'.repeat(40);
+    fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify(D));
+    s = start(dir); await s.ready; await s.login();
+    const st = (await s.call('GET', '/api/state')).json;
+    assert.equal(st.settings.biz, '');
+    assert.deepEqual(st.settings.modes, { table: true, kitchen: true, counter: false, buy: false, stock: false, docs: false });
+    assert.deepEqual(st.tickets.map(k => [k.id, k.q]), [[2, 4], [3, undefined]], 'คิวไม่มีเลขถูกตัดทิ้ง ตั๋วโต๊ะไม่มีเลขคิว');
+    const m = st.menu.items[0];
+    assert.deepEqual([m.sku, m.price2, m.dec, m.unit.length], ['', 0, false, 12]);
+    const rep = (await s.call('GET', '/api/report')).json;
+    assert.equal(rep.bills[0].kind, undefined);
+    assert.deepEqual(rep.bills[0].items, [{ name: 'หมู', qty: 0.25, price: 40 }]);
+    assert.equal(rep.bills[0].memo, undefined);
+    await s.stop();
+  });
+});
+
+describe('สต็อกสินค้าและเอกสาร (ใบเสนอราคา ใบแจ้งหนี้ ใบสั่งซื้อ ใบรับสินค้า ใบเบิก ใบตรวจนับ)', () => {
+  const Y = new Date().getFullYear();
+  const journal = (dir, kind) => { try { return fs.readdirSync(path.join(dir, 'journal')).filter(f => f.startsWith(kind + '-')).flatMap(f => fs.readFileSync(path.join(dir, 'journal', f), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))); } catch (e) { return []; } };
+  const item = async (s, id) => (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === id);
+  const on = (s, modes) => s.call('POST', '/api/settings', { modes: Object.assign({ counter: true, stock: true, docs: true }, modes || {}) });
+
+  test('สต็อก: ตรวจนับเริ่มนับ ขายหน้าร้าน/ปิดบิลโต๊ะตัด รับซื้อเพิ่ม บัตรสต็อกมียอดคงเหลือทุกครั้ง หน้าลูกค้าเห็นหมดเมื่อสต็อกหมด', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const keys = (await s.call('GET', '/api/state')).json.keys;
+    assert.equal((await s.call('POST', '/api/stock/adjust', { mode: 'count', lines: [{ id: 1, qty: 5 }] })).status, 409, 'ยังไม่เปิดสต็อก');
+    await on(s, { buy: true });
+    const c = await s.call('POST', '/api/stock/adjust', { mode: 'count', reason: 'ยอดเริ่มต้น', lines: [{ id: 1, qty: 5 }] });
+    assert.equal(c.status, 200, JSON.stringify(c.json));
+    assert.equal(c.json.doc.no, 'CNT' + Y + '-0001');
+    assert.deepEqual([(await item(s, 1)).track, (await item(s, 1)).stock], [true, 5]);
+    const stale = await s.call('POST', '/api/stock/adjust', { mode: 'count', lines: [{ id: 1, qty: 9, expect: 4 }] });
+    assert.equal(stale.status, 409, 'ยอดเปลี่ยนระหว่างนับ ห้ามทับเงียบๆ');
+    await s.call('POST', '/api/sale', { items: [{ id: 1, qty: 2 }], expectedSub: 120, method: 'cash' });
+    assert.equal((await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 4 }] })).status, 400, 'สั่งเกินสต็อกที่เหลือไม่ได้');
+    await s.guest('POST', '/api/order', { table: 2, key: keys[2], items: [{ id: 1, qty: 3 }] });
+    assert.equal((await item(s, 1)).stock, 3, 'สั่งที่โต๊ะยังไม่ตัด ตัดตอนปิดบิล');
+    await payTable(s, 2);
+    assert.equal((await item(s, 1)).stock, 0);
+    assert.equal((await s.guest('POST', '/api/order', { table: 3, key: keys[3], items: [{ id: 1, qty: 1 }] })).status, 400, 'สต็อกหมด ลูกค้าสั่งผ่าน QR ไม่ได้');
+    assert.ok((await s.guest('GET', '/api/menu')).json.items.find(i => i.id === 1).soldOut);
+    assert.ok((await s.guest('GET', '/api/table?t=3&k=' + keys[3])).json.soldOut.includes(1));
+    assert.equal((await s.call('POST', '/api/sale', { items: [{ id: 1, qty: 1 }], expectedSub: 60, method: 'cash' })).status, 200, 'หน้าร้านขายได้แม้ระบบบอกหมด (ของอยู่ในมือ) สต็อกติดลบ');
+    assert.equal((await item(s, 1)).stock, -1);
+    await s.call('POST', '/api/sale', { kind: 'buy', items: [{ id: 1, qty: 2 }], expectedSub: 120, method: 'cash' });
+    assert.equal((await item(s, 1)).stock, 1, 'รับซื้อ = เข้า');
+    assert.equal((await s.call('POST', '/api/stock/adjust', { mode: 'out', lines: [{ id: 1, qty: 1 }] })).status, 400, 'เบิกออกต้องมีเหตุผล');
+    const out = await s.call('POST', '/api/stock/adjust', { mode: 'out', reason: 'ของเสีย', lines: [{ id: 1, qty: 1 }] });
+    assert.equal(out.json.doc.no, 'OUT' + Y + '-0001');
+    const gin = await s.call('POST', '/api/stock/adjust', { mode: 'in', reason: 'ซื้อจากตลาด', party: { name: 'ร้านส่งเจริญ' }, lines: [{ id: 1, qty: 10, price: 30 }, { id: 2, qty: 4 }] });
+    assert.equal(gin.status, 200, JSON.stringify(gin.json));
+    assert.deepEqual([(await item(s, 1)).stock, (await item(s, 1)).cost, (await item(s, 2)).stock, (await item(s, 2)).track], [10, 30, 4, true]);
+    const card = (await s.call('GET', '/api/stock?id=1')).json;
+    assert.deepEqual(card.moves.map(v => [v.kind, v.qty, v.bal]), [['count', 5, 5], ['sale', -2, 3], ['sale', -3, 0], ['sale', -1, -1], ['buy', 2, 1], ['out', -1, 0], ['gr', 10, 10]]);
+    assert.ok(card.moves.every(v => v.ref), 'ทุกบรรทัดอ้างเลขบิลหรือเลขเอกสาร');
+    assert.equal(journal(s.dir, 'stock').length, 8, 'ประวัติสต็อกลงไฟล์ครบ');
+    const csv = (await s.call('GET', '/api/stock.csv')).text;
+    assert.match(csv, /"ผัดกะเพราหมูสับ","จานเดียว","","10","30","300"/);
+    const a = readLog(s.dir, 'audit').filter(e => e.action === 'stock.adjusted');
+    assert.equal(a.length, 3);
+    await s.stop();
+  });
+
+  test('ใบเสนอราคา → ใบแจ้งหนี้ (ตัดสต็อก) → รับชำระ (บิลขาย ลงสรุปยอดและ CSV) เลขที่รันต่อเนื่อง ยอดคิดที่เซิร์ฟเวอร์ แก้ทับกันไม่ได้', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    const qt = { type: 'QT', party: { name: 'บริษัท ตัวอย่าง จำกัด', taxId: '0105555555555', branch: 'สำนักงานใหญ่', address: '1 ถ.สุขุมวิท' }, saveContact: true,
+      lines: [{ id: 2, qty: 3, price: 70 }, { name: 'ค่าขนส่ง', qty: 1, unit: 'เที่ยว', price: 150 }], discount: 20, vat: true, note: 'ราคานี้รวมติดตั้ง' };
+    assert.equal((await s.call('POST', '/api/doc', qt)).status, 409, 'ยังไม่เปิดเอกสาร');
+    await on(s);
+    await s.call('POST', '/api/stock/adjust', { mode: 'count', lines: [{ id: 2, qty: 10 }] });
+    for (const [bad, msg] of [[{ party: { name: '' } }, /ชื่อลูกค้า/], [{ party: { name: 'x', taxId: '123' } }, /13 หลัก/], [{ discount: 9999 }, /ส่วนลด/], [{ lines: [] }, /ยังไม่มีรายการ/], [{ lines: [{ name: 'x', qty: 1, price: '' }] }, /ราคา/], [{ lines: [{ id: 999, qty: 1, price: 1 }] }, /ไม่พบสินค้า/]]) {
+      const r = await s.call('POST', '/api/doc', Object.assign({}, qt, bad));
+      assert.equal(r.status, 400, JSON.stringify(bad)); assert.match(r.json.error, msg);
+    }
+    const q = (await s.call('POST', '/api/doc', qt)).json.doc;
+    assert.equal(q.no, 'QT' + Y + '-0001');
+    assert.deepEqual([q.sub, q.disc, q.net, q.vatAmt, q.total], [360, 20, 340, 23.8, 363.8]);
+    assert.equal(q.lines[0].name, 'ข้าวผัดกุ้ง', 'รายการจากสินค้าใช้ชื่อสินค้า');
+    assert.equal(q.due - q.date, 30 * 86400000, 'ยืนราคา 30 วันตามค่าตั้งต้น');
+    const contacts = (await s.call('GET', '/api/contacts')).json.list;
+    assert.equal(contacts[0].name, 'บริษัท ตัวอย่าง จำกัด');
+    assert.equal(q.party.contactId, contacts[0].id);
+    assert.equal((await s.call('POST', '/api/doc', Object.assign({}, qt, { no: q.no, rev: q.rev + 5 }))).status, 409, 'อีกเครื่องแก้ไปแล้ว');
+    const q2 = (await s.call('POST', '/api/doc', Object.assign({}, qt, { no: q.no, rev: q.rev, discount: 0, saveContact: false }))).json.doc;
+    assert.deepEqual([q2.no, q2.rev, q2.total], [q.no, 2, 385.2]);
+    // ลูกค้าตกลง → ใบแจ้งหนี้ ตัดสต็อก
+    const inv = (await s.call('POST', '/api/doc/convert', { no: q.no, rev: 2 })).json.doc;
+    assert.deepEqual([inv.no, inv.type, inv.status, inv.ref, inv.total], ['INV' + Y + '-0001', 'INV', 'unpaid', q.no, 385.2]);
+    assert.equal((await item(s, 2)).stock, 7);
+    assert.equal((await s.call('GET', '/api/doc?no=' + q.no)).json.doc.status, 'accepted');
+    assert.equal((await s.call('POST', '/api/doc', Object.assign({}, qt, { no: inv.no, rev: inv.rev }))).status, 409, 'ใบแจ้งหนี้ที่ออกแล้วแก้ไม่ได้');
+    assert.equal((await s.call('GET', '/api/state')).json.docStats.unpaid, 1);
+    // รับชำระ
+    assert.equal((await s.call('POST', '/api/doc/pay', { no: inv.no, expectedTotal: 1, method: 'transfer' })).status, 409);
+    const paid = await s.call('POST', '/api/doc/pay', { no: inv.no, expectedTotal: 385.2, method: 'transfer' });
+    assert.equal(paid.status, 200, JSON.stringify(paid.json));
+    assert.deepEqual([paid.json.sale.doc, paid.json.sale.total, paid.json.sale.sub, paid.json.sale.vat], [inv.no, 385.2, 360, 25.2]);
+    assert.equal((await item(s, 2)).stock, 7, 'รับชำระไม่ตัดสต็อกซ้ำ');
+    assert.equal((await s.call('POST', '/api/doc/pay', { no: inv.no, expectedTotal: 385.2 })).status, 409, 'รับชำระซ้ำไม่ได้');
+    const rep = (await s.call('GET', '/api/report')).json;
+    assert.deepEqual([rep.count, rep.total, rep.transfer], [1, 385.2, 385.2]);
+    assert.match((await s.call('GET', '/api/export.csv')).text, new RegExp('"' + inv.no + ' บริษัท ตัวอย่าง จำกัด","0","ข้าวผัดกุ้ง x3; ค่าขนส่ง x1 เที่ยว"'));
+    assert.equal((await s.call('POST', '/api/doc/cancel', { no: inv.no, reason: 'ลูกค้าคืนของ' })).status, 409, 'รับชำระแล้วยกเลิกไม่ได้');
+    // ใบแจ้งหนี้ใบใหม่แล้วยกเลิก: คืนสต็อก
+    const inv2 = (await s.call('POST', '/api/doc', { type: 'INV', party: { name: 'คุณเอ' }, lines: [{ id: 2, qty: 2, price: 90 }] })).json.doc;
+    assert.deepEqual([inv2.no, (await item(s, 2)).stock], ['INV' + Y + '-0002', 5]);
+    assert.equal((await s.call('POST', '/api/doc/cancel', { no: inv2.no })).status, 400, 'ต้องมีเหตุผล');
+    assert.equal((await s.call('POST', '/api/doc/cancel', { no: inv2.no, reason: 'ออกผิด' })).status, 200);
+    assert.equal((await item(s, 2)).stock, 7, 'ยกเลิกแล้วคืนสต็อก');
+    // รายการ ค้นหา และสิทธิ์
+    const list = (await s.call('GET', '/api/docs?type=sales')).json;
+    assert.deepEqual(list.docs.map(d => d.no).sort(), [inv.no, inv2.no, q.no].sort());
+    assert.equal((await s.call('GET', '/api/docs?status=open')).json.docs.length, 0);
+    assert.equal((await s.call('GET', '/api/docs?q=คุณเอ')).json.docs[0].no, inv2.no);
+    assert.equal((await s.call('GET', '/api/docs?month=' + monthNow() + '&type=INV')).json.docs.length, 2, 'ค้นจาก journal/ ได้');
+    await withStaff(s);
+    const cs = await device(s, '520011');
+    const cq = await cs.call('POST', '/api/doc', Object.assign({}, qt, { saveContact: false }));
+    assert.equal(cq.json.doc.no, 'QT' + Y + '-0002', 'แคชเชียร์ออกใบเสนอราคาได้');
+    assert.equal((await cs.call('POST', '/api/doc', { type: 'PO', party: { name: 'ผู้ขาย' }, lines: [{ name: 'x', qty: 1, price: 1 }] })).status, 403, 'ใบสั่งซื้อเฉพาะเจ้าของ');
+    assert.equal((await cs.call('POST', '/api/doc/cancel', { no: cq.json.doc.no, reason: 'xx' })).status, 403, 'ยกเลิกเอกสารเฉพาะเจ้าของ');
+    const revs = journal(s.dir, 'docs').filter(r => r.no === q.no).map(r => r.rev);
+    assert.deepEqual(revs, [1, 2, 3], 'ทุกครั้งที่เอกสารเปลี่ยนลง journal');
+    assert.ok(['doc.created', 'doc.updated', 'doc.converted', 'doc.paid', 'doc.cancelled', 'contact.created'].every(a => readLog(s.dir, 'audit').some(e => e.action === a)));
+    await s.stop();
+  });
+
+  test('ใบสั่งซื้อ: รับของตามจริง → ใบรับสินค้า สต็อกเพิ่ม ต้นทุนล่าสุดเปลี่ยน สินค้าที่ยังไม่นับเริ่มนับ ยกเลิกได้เฉพาะก่อนรับของ', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    await on(s);
+    const po = (await s.call('POST', '/api/doc', { type: 'PO', party: { name: 'ห้างส่งวัสดุ' }, lines: [{ id: 3, qty: 10, price: 40 }, { id: 4, qty: 5, price: 25 }], vat: true })).json.doc;
+    assert.deepEqual([po.no, po.status, po.due, po.total], ['PO' + Y + '-0001', 'open', null, 561.75]);   // (400 + 125) × 1.07
+    assert.equal((await item(s, 3)).track, false, 'สั่งซื้อยังไม่เพิ่มสต็อก');
+    assert.equal((await s.call('POST', '/api/doc/receive', { no: po.no, rev: po.rev + 1, lines: [{ qty: 8 }, { qty: 0 }] })).status, 409);
+    assert.equal((await s.call('POST', '/api/doc/receive', { no: po.no, rev: po.rev, lines: [{ qty: 0 }, { qty: 0 }] })).status, 400);
+    const r = await s.call('POST', '/api/doc/receive', { no: po.no, rev: po.rev, lines: [{ qty: 8, price: 42 }, { qty: 0 }] });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.deepEqual([r.json.doc.no, r.json.doc.type, r.json.doc.ref, r.json.doc.lines.length, r.json.po.status], ['GR' + Y + '-0001', 'GR', po.no, 1, 'received']);
+    assert.deepEqual(r.json.po.lines.map(l => l.got), [8, 0]);
+    const i3 = await item(s, 3);
+    assert.deepEqual([i3.track, i3.stock, i3.cost], [true, 8, 42], 'เริ่มนับสต็อกจากที่รับ ต้นทุนล่าสุด');
+    assert.equal((await s.call('POST', '/api/doc/receive', { no: po.no, rev: r.json.po.rev, lines: [{ qty: 1 }, { qty: 1 }] })).status, 409, 'รับซ้ำไม่ได้');
+    const po2 = (await s.call('POST', '/api/doc', { type: 'PO', party: { name: 'ห้างส่งวัสดุ' }, lines: [{ id: 3, qty: 1, price: 40 }] })).json.doc;
+    assert.equal((await s.call('POST', '/api/doc/cancel', { no: po2.no, reason: 'สั่งซ้ำ' })).json.doc.status, 'cancelled');
+    assert.equal((await s.call('POST', '/api/doc/cancel', { no: po.no, reason: 'xx' })).status, 409, 'รับของแล้วยกเลิกไม่ได้');
+    // เลิกใช้เอกสารทั้งที่มีใบสั่งซื้อรอรับของไม่ได้
+    await s.call('POST', '/api/doc', { type: 'PO', party: { name: 'ห้างส่งวัสดุ' }, lines: [{ id: 3, qty: 1, price: 40 }] });
+    const off = await s.call('POST', '/api/settings', { modes: { docs: false } });
+    assert.equal(off.status, 400); assert.match(off.json.error, /PO/);
+    await s.stop();
+  });
+
+  test('เลขที่เอกสารไม่ซ้ำแม้ data.json ย้อนไปฉบับเก่า และไฟล์สำรองมีประวัติสต็อก/เอกสาร กู้คืนแล้วกลับมาครบ', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.login();
+    await on(s);
+    const qt = n => s.call('POST', '/api/doc', { type: 'QT', party: { name: 'ลูกค้า ' + n }, lines: [{ name: 'งาน ' + n, qty: 1, price: 100 }] });
+    assert.equal((await qt(1)).json.doc.no, 'QT' + Y + '-0001');
+    await s.call('POST', '/api/stock/adjust', { mode: 'count', lines: [{ id: 1, qty: 7 }] });
+    const bk = (await s.call('POST', '/api/backup', {})).json.backup;
+    const old = fs.readFileSync(path.join(dir, 'data.json'));
+    await qt(2); await qt(3);
+    await s.stop();
+    fs.writeFileSync(path.join(dir, 'data.json'), old);             // data.json ย้อนไปก่อนออก QT-0002/0003
+    s = start(dir); await s.ready; await s.login();
+    assert.equal((await qt(4)).json.doc.no, 'QT' + Y + '-0004', 'ไม่ใช้เลข 0002 ซ้ำกับที่ส่งให้ลูกค้าไปแล้ว');
+    const data = (await getBackup(s, bk.name)).json;
+    assert.ok(Object.keys(data.journal).some(f => /^docs-/.test(f)) && Object.keys(data.journal).some(f => /^stock-/.test(f)), 'ไฟล์สำรองมี journal/');
+    const r = await restoreRaw(s, (await getBackup(s, bk.name)).buf);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    await s.login();
+    assert.equal((await s.call('GET', '/api/stock?id=1')).json.moves.length, 1, 'บัตรสต็อกกลับมาจากไฟล์สำรอง');
+    assert.equal((await s.call('GET', '/api/docs?month=' + monthNow() + '&type=QT')).json.docs.length, 1, 'เอกสารเป็นแบบตอนสำรอง');
+    assert.equal((await qt(5)).json.doc.no, 'QT' + Y + '-0005', 'กู้คืนแล้วเลขเอกสารไม่ย้อน');
+    await s.stop();
+  });
+
+  test('เขียนประวัติสต็อก/เอกสารลง journal/ ไม่ได้: ป้ายเตือน ขายต่อได้ เขียนครบเมื่อกลับมาปกติ ไม่ซ้ำแม้ปิดเปิดใหม่', async () => {
+    const dir = makeApp(), jd = path.join(dir, 'journal');
+    let s = start(dir); await s.ready; await s.login();
+    await on(s);
+    await s.call('POST', '/api/stock/adjust', { mode: 'count', lines: [{ id: 1, qty: 50 }] });
+    const warn = async () => (await s.call('GET', '/api/state')).json.health.saveError;
+    fs.rmSync(jd, { recursive: true, force: true }); fs.writeFileSync(jd, 'x');      // สร้างโฟลเดอร์ journal ไม่ได้
+    assert.equal((await s.call('POST', '/api/sale', { items: [{ id: 1, qty: 1 }], expectedSub: 60, method: 'cash' })).status, 200, 'ขายได้ตามปกติ');
+    assert.equal((await s.call('POST', '/api/doc', { type: 'INV', party: { name: 'ก' }, lines: [{ id: 1, qty: 2, price: 60 }] })).status, 200);
+    await new Promise(r => setTimeout(r, 300));
+    assert.ok(await warn(), 'ต้องเตือน');
+    await s.stop();
+    s = start(dir); await s.ready; await s.login();
+    assert.ok(await warn(), 'เปิดใหม่แล้วยังเขียนไม่ได้ ต้องเตือน');
+    fs.rmSync(jd);
+    await until(async () => !(await warn()), 8000);
+    // ตรวจนับ 50 เขียนไปแล้วในโฟลเดอร์เดิมที่ถูกลบทิ้ง ยังอยู่ใน data.json (วันนี้) จึงถูกเขียนกลับด้วย
+    assert.deepEqual(journal(dir, 'stock').map(v => v.qty), [50, -1, -2], 'ความเคลื่อนไหวที่ค้างถูกเขียนครบ');
+    assert.deepEqual(journal(dir, 'docs').map(d => d.type).sort(), ['CNT', 'INV'], 'ใบตรวจนับ (เขียนกลับ) และใบแจ้งหนี้ที่ค้าง');
+    await s.stop();
+    s = start(dir); await s.ready;
+    assert.equal(journal(dir, 'stock').length, 3, 'เปิดใหม่ไม่เขียนซ้ำ');
+    await s.stop();
+  });
+
+  test('data.json ที่เอกสาร ผู้ติดต่อ สต็อก ผิดรูป: ระบบเปิดได้ ตัดทิ้งเฉพาะที่เสีย', async () => {
+    const dir = makeApp();
+    let s = start(dir); await s.ready; await s.stop();
+    const D = JSON.parse(fs.readFileSync(path.join(dir, 'data.json'), 'utf8'));
+    D.contacts = [{ id: 'c1', name: 'ดี', kind: 'weird', taxId: 5 }, { id: 'x', name: 'เสีย' }, null];
+    D.docs = [{ no: 'QT2026-0009', type: 'QT', status: 'open', date: Date.now(), lines: [{ name: 'ก', qty: 1, price: 10 }, { qty: 'x' }], party: { name: 'ดี' } },
+      { no: 'INV2026-0001', type: 'QT', status: 'open', date: 1, lines: [] }, { no: '../x', type: 'PO', status: 'open', date: 1, lines: [] }, { no: 'PO2026-0001', type: 'PO', status: 'paid', date: 1, lines: [] }];
+    D.menu.items[0].stock = 'x'; D.menu.items[0].track = 'yes'; D.menu.items[0].cost = -1;
+    D.moves = [{ id: 'bad' }];
+    D.docSeq = { QT: { y: 'x' } };
+    fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify(D));
+    s = start(dir); await s.ready; await s.login();
+    const st = (await s.call('GET', '/api/state')).json;
+    assert.deepEqual([st.menu.items[0].stock, st.menu.items[0].track, st.menu.items[0].cost], [0, false, 0]);
+    const c = (await s.call('GET', '/api/contacts')).json.list;
+    assert.deepEqual(c.map(x => [x.id, x.kind, x.taxId]), [['c1', 'customer', '']]);
+    const docs = (await s.call('GET', '/api/docs')).json.docs;
+    assert.deepEqual(docs.map(d => d.no), ['QT2026-0009']);
+    assert.deepEqual([docs[0].lines.length, docs[0].total], [1, 10], 'แถวเสียตัดทิ้ง ยอดคิดใหม่จากแถวที่เหลือ');
+    await on(s);
+    const n = (await s.call('POST', '/api/doc', { type: 'QT', party: { name: 'ข' }, lines: [{ name: 'ข', qty: 1, price: 1 }] })).json.doc.no;
+    assert.equal(n, Y === 2026 ? 'QT2026-0010' : 'QT' + Y + '-0001', 'เลขต่อจากที่มีอยู่ ไม่ซ้ำเลขเดิม');
+    await s.stop();
+  });
+
+  // หน้าออกเอกสารคิดยอดเอง (docCalc) ระหว่างพิมพ์ ถ้าไม่ตรงกับเซิร์ฟเวอร์ (store.docTotals) ยอดบนหน้าจอกับบนเอกสารจะต่างกันเป็นสตางค์
+  test('ยอดเอกสารในหน้าพนักงาน = เซิร์ฟเวอร์ทุกสตางค์ และจำนวนเงินเป็นตัวหนังสือถูกต้อง', () => {
+    const html = fs.readFileSync(path.join(ROOT, 'public', 'staff.html'), 'utf8');
+    const fn = name => {
+      const i = html.indexOf('function ' + name + '(');
+      assert.ok(i >= 0, 'ไม่พบ ' + name);
+      let d = 0, j = html.indexOf('{', i);
+      for (; j < html.length; j++) { if (html[j] === '{') d++; else if (html[j] === '}' && --d === 0) break; }
+      return html.slice(i, j + 1);
+    };
+    const consts = /var TH_D=[^\n]+/.exec(html)[0];
+    const page = new Function(consts + '\n' + ['round2', 'r3', 'docCalc', 'bahtText'].map(fn).join('\n') + '\nreturn { docCalc, bahtText };')();
+    const { docTotals } = require('../lib/store');
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let k = 0; k < 500; k++) {
+      const lines = Array.from({ length: 1 + Math.floor(rnd() * 6) }, () => ({ qty: Math.round(rnd() * 50000) / 1000 || 1, price: Math.round(rnd() * 500000) / 100 }));
+      const sub = docTotals(lines, 0, false).sub, disc = rnd() < 0.5 ? 0 : Math.round(rnd() * sub * 100) / 100, vat = rnd() < 0.5;
+      assert.deepEqual(page.docCalc(lines, disc, vat), docTotals(lines, disc, vat), JSON.stringify({ lines, disc, vat }));
+    }
+    const T = { 0: 'ศูนย์บาทถ้วน', 0.5: 'ห้าสิบสตางค์', 1: 'หนึ่งบาทถ้วน', 11: 'สิบเอ็ดบาทถ้วน', 21: 'ยี่สิบเอ็ดบาทถ้วน', 101: 'หนึ่งร้อยเอ็ดบาทถ้วน', 110: 'หนึ่งร้อยสิบบาทถ้วน',
+      1234.5: 'หนึ่งพันสองร้อยสามสิบสี่บาทห้าสิบสตางค์', 20000.01: 'สองหมื่นบาทหนึ่งสตางค์', 1000000: 'หนึ่งล้านบาทถ้วน', 1000001: 'หนึ่งล้านเอ็ดบาทถ้วน',
+      11000000: 'สิบเอ็ดล้านบาทถ้วน', 21500321.21: 'ยี่สิบเอ็ดล้านห้าแสนสามร้อยยี่สิบเอ็ดบาทยี่สิบเอ็ดสตางค์', 168.51: 'หนึ่งร้อยหกสิบแปดบาทห้าสิบเอ็ดสตางค์' };
+    Object.keys(T).forEach(n => assert.equal(page.bahtText(+n), T[n], n));
+  });
+});

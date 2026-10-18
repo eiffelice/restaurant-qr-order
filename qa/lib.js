@@ -149,4 +149,7 @@ async function fakeCover(browser, hue) {
   await p.context().close();
   return Buffer.from(b64, 'base64');
 }
-module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker, fakePhoto, fakeCover };
+// เบราว์เซอร์ที่ใช้ทดสอบ: Edge (ค่าเริ่มต้น) / QA_BROWSER=chrome / QA_BROWSER_PATH=<ไฟล์โปรแกรม> ใช้ Chromium ที่ติดตั้งไว้แล้ว (เช่น เครื่อง Linux)
+function browserOpt() { return process.env.QA_BROWSER_PATH ? { executablePath: process.env.QA_BROWSER_PATH } : { channel: process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge' }; }
+
+module.exports = { ROOT, PIN, makeApp, start, call, sleep, until, rmrf, salesLines, checker, fakePhoto, fakeCover, browserOpt };

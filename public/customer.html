@@ -361,6 +361,8 @@ function closedText(){return (STAT&&STAT.closedText)||'ร้านปิดร�
 function closedShort(){var r=STAT&&STAT.closedReason;return r==='seat'?'รอพนักงานเปิดโต๊ะ':r==='hours'?'นอกเวลารับออเดอร์':'ร้านปิดรับออเดอร์ชั่วคราว';}
 
 function $(s){return document.querySelector(s);}
+/* คำที่ใช้ตามประเภทธุรกิจของร้าน (lib/biz.js ส่งมาใน /api/menu) ร้านอาหารใช้คำเดิมทุกคำ */
+function words(){return (M&&M.terms)||{item:'เมนู',kitchen:'ครัว',order:'สั่งอาหาร',food:'อาหาร',unit:'จาน'};}
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function baht(n){return '฿'+Number(n).toLocaleString('th-TH',{maximumFractionDigits:2});}
 var tt;
@@ -487,7 +489,7 @@ function badgeOf(m){
 }
 function skeleton(){
   if($('#main'))return;
-  $('#app').innerHTML='<header class="top" id="hdr"></header><nav class="cats" aria-label="หมวดอาหาร"><div class="wrap"><div class="in" id="catin"></div></div></nav>'+
+  $('#app').innerHTML='<header class="top" id="hdr"></header><nav class="cats" aria-label="หมวด'+esc(words().food)+'"><div class="wrap"><div class="in" id="catin"></div></div></nav>'+
     '<div class="wrap srch"><div class="sbox" role="search">'+IC.search+'<input id="q" type="search" placeholder="ค้นหาเมนู…" aria-label="ค้นหาเมนู" autocomplete="off" enterkeyhint="search"><button class="x" data-a="qclear" aria-label="ล้างคำค้นหา" hidden>'+IC.x+'</button></div></div>'+
     '<div id="barw"></div><main class="wrap" id="main"></main><footer class="wrap foot" id="foot" hidden></footer>'+
     '<nav class="bnav" aria-label="ไปที่"><div class="in" id="bnav"></div></nav>';
@@ -536,7 +538,7 @@ function cardHtml(m){
   return '<div class="item'+(m.soldOut?' out':'')+'">'+
     '<button class="open" data-a="detail" data-id="'+m.id+'" aria-label="'+esc(m.name)+' '+baht(m.price)+(b?' '+b[1]:'')+' ดูรายละเอียด">'+
     '<span class="pic">'+picHtml(m)+'</span><span class="txt">'+(b?'<span class="pill badge '+b[0]+'">'+b[1]+'</span>':'')+
-    '<span class="nm">'+esc(m.name)+'</span>'+(m.desc?'<span class="ds">'+esc(m.desc)+'</span>':'')+'<span class="pr">'+baht(m.price)+'</span></span></button>'+
+    '<span class="nm">'+esc(m.name)+'</span>'+(m.desc?'<span class="ds">'+esc(m.desc)+'</span>':'')+'<span class="pr">'+baht(m.price)+(m.unit?' <small>/ '+esc(m.unit)+'</small>':'')+'</span></span></button>'+
     cardCtl(m)+'</div>';
 }
 function rcardHtml(m,rank){
@@ -639,7 +641,7 @@ function renderStatus(){
   });
   if(STAT.tickets.length){
     var sub=STAT.sub,svc=M.svc?Math.round(sub*.1):0,vat=M.vat?Math.round((sub+svc)*.07):0;
-    h+='<div class="srow"><b>ยอดอาหารรวม</b><b>'+baht(sub)+'</b></div>';
+    h+='<div class="srow"><b>ยอด'+esc(words().food)+'รวม</b><b>'+baht(sub)+'</b></div>';
     if(svc||vat) h+='<div class="small muted">ประมาณการรวม'+(svc?' ค่าบริการ 10%':'')+(vat?' VAT 7%':'')+' = '+baht(sub+svc+vat)+' (ยอดจริงตอนชำระเงิน)</div>';
   }
   h+='</div><div class="help">';
@@ -681,7 +683,7 @@ function renderDetail(){
   var h='<div class="d-in"><div class="hero'+(m.image?'':' noimg '+tone(m.cat))+(out?' out':'')+'">'+(m.image?'<img src="/img/'+esc(m.image)+'" alt="">':'<span class="big">'+IC.dish+'</span>')+
     '<div class="top"><button class="circle" data-a="dback" aria-label="กลับไปหน้าเมนู">'+IC.back+'</button><span class="tag">โต๊ะ '+T+'</span><span class="sp"></span></div>'+
     '<div class="cap-name">'+(cn?'<span class="tag">'+esc(cn)+'</span>':'')+'<h2 id="d-name">'+esc(m.name)+'</h2></div></div>';
-  h+='<div class="buy"><div class="notch"><div class="price"><b>'+baht(m.price)+'</b><span>/ จาน</span></div>'+
+  h+='<div class="buy"><div class="notch"><div class="price"><b>'+baht(m.price)+'</b><span>/ '+esc(m.unit||words().unit||'จาน')+'</span></div>'+
     '<span class="step"><button data-a="ddec" aria-label="ลดจำนวน"'+(D.qty<=1||cant?' disabled':'')+'>'+IC.minus+'</button><b aria-live="polite">'+D.qty+'</b><button data-a="dinc" aria-label="เพิ่มจำนวน"'+(D.qty>=20||cant?' disabled':'')+'>'+IC.plus+'</button></span></div>'+
     '<button class="cap" data-a="dadd"'+(cant?' disabled':'')+'><span class="lb">'+(out?'หมดแล้ว':closed?esc(closedShort()):'เพิ่มรายการ<br>'+baht(m.price*D.qty))+'</span><span class="arr">'+IC.arr+'</span></button></div>';
   h+='<div class="d-body">';
@@ -692,7 +694,7 @@ function renderDetail(){
   }
   h+='<div class="panel" id="d-panel"'+(M.notes.length?' role="tabpanel" aria-labelledby="tab-'+D.tab+'"':'')+'>';
   if(D.tab==='notes'&&M.notes.length){
-    h+='<p class="small muted" style="margin:0 0 10px">เลือกได้หลายข้อ ส่งถึงครัวพร้อมเมนูนี้</p><div class="chips">'+M.notes.map(function(n){return '<button class="chip" data-a="dnote" data-n="'+esc(n)+'" aria-pressed="'+(D.note.indexOf(n)>=0)+'">'+esc(n)+'</button>';}).join('')+'</div>';
+    h+='<p class="small muted" style="margin:0 0 10px">เลือกได้หลายข้อ ส่งถึง'+esc(words().kitchen)+'พร้อม'+esc(words().item)+'นี้</p><div class="chips">'+M.notes.map(function(n){return '<button class="chip" data-a="dnote" data-n="'+esc(n)+'" aria-pressed="'+(D.note.indexOf(n)>=0)+'">'+esc(n)+'</button>';}).join('')+'</div>';
   } else h+=m.desc?'<p style="margin:0">'+esc(m.desc)+'</p>':'<p class="muted" style="margin:0">ร้านยังไม่ได้ใส่รายละเอียดของเมนูนี้</p>';
   h+='</div>';
   var inCart=qtyOf(m.id);
@@ -724,7 +726,7 @@ function renderSheet(){
   if(!sheetOpen)return;
   var h='<h2><span>รายการสั่ง · โต๊ะ '+T+'</span><button class="circle" data-a="close" aria-label="ปิดรายการสั่ง">'+IC.x+'</button></h2>';
   if(sendErr)h+='<div class="err" role="alert">'+esc(sendErr)+'</div>';
-  if(!lines.length)h+='<div class="center muted">ยังไม่ได้เลือกอาหาร</div>';
+  if(!lines.length)h+='<div class="center muted">ยังไม่ได้เลือก'+esc(words().food)+'</div>';
   lines.forEach(function(l,i){
     var m=item(l.id);if(!m)return;
     h+='<div class="cl"><div class="th'+(m.image?'':' noimg '+tone(m.cat))+'">'+(m.image?'<img src="/img/'+esc(m.image)+'" alt="">':IC.dish)+'</div><div class="bd">'+
@@ -736,11 +738,11 @@ function renderSheet(){
       '</div></div>';
   });
   if(lines.length){
-    h+='<label for="memo" class="small muted" style="display:block;margin-top:12px">ข้อความถึงครัว (ถ้ามี)</label><input id="memo" class="memo" maxlength="80" value="'+esc(memo)+'" placeholder="เช่น แพ้ถั่ว ขอจานเปล่า" autocomplete="off">';
+    h+='<label for="memo" class="small muted" style="display:block;margin-top:12px">ข้อความถึง'+esc(words().kitchen)+' (ถ้ามี)</label><input id="memo" class="memo" maxlength="80" value="'+esc(memo)+'" placeholder="เช่น แพ้ถั่ว ขอจานเปล่า" autocomplete="off">';
     h+='<div class="total"><span>รวม</span><span>'+baht(cartTotal())+'</span></div>';
     var closed=closedForGuests(),over=cartCount()>MAX_QTY||lines.length>MAX_LINES;
     if(over)h+='<div class="err" role="alert">สั่งได้ครั้งละไม่เกิน '+MAX_QTY+' จาน ('+MAX_LINES+' รายการ) ลดจำนวนแล้วสั่งส่วนที่เหลือในครั้งถัดไป</div>';
-    h+='<button class="cap" data-a="send"'+(sending||closed||over?' disabled':'')+'><span class="lb">'+(closed?esc(closedShort()):(sending?'กำลังส่ง…':'สั่งอาหาร · '+baht(cartTotal())))+'</span><span class="arr">'+IC.arr+'</span></button>';
+    h+='<button class="cap" data-a="send"'+(sending||closed||over?' disabled':'')+'><span class="lb">'+(closed?esc(closedShort()):(sending?'กำลังส่ง…':esc(words().order)+' · '+baht(cartTotal())))+'</span><span class="arr">'+IC.arr+'</span></button>';
     h+='<div class="small muted" style="text-align:center;margin-top:8px">ราคายังไม่รวมค่าบริการและภาษี (ถ้ามี)</div>';
   }
   var keep=document.activeElement&&document.activeElement.id==='memo';
@@ -934,7 +936,7 @@ function send(){
   // expect = ยอดที่ลูกค้าเห็น ถ้าราคาเปลี่ยนระหว่างนั้น เซิร์ฟเวอร์ตอบ 409 แล้วหน้านี้โหลดราคาใหม่ให้ตรวจก่อนกดอีกครั้ง
   api('/api/order',{table:T,key:K,items:items,memo:memo,reqId:reqId,expect:Math.round(cartTotal()*100)/100}).then(function(r){
     sending=false;
-    if(r.ok){lines=[];openNotes={};memo='';reqId=null;saveCart();closeSheet();renderAll();renderSheet();toast('ส่งออเดอร์เข้าครัวแล้ว');refreshStatus();}
+    if(r.ok){lines=[];openNotes={};memo='';reqId=null;saveCart();closeSheet();renderAll();renderSheet();toast('ส่งออเดอร์เข้า'+words().kitchen+'แล้ว');refreshStatus();}
     else{sendErr=r.j.error||'ส่งไม่สำเร็จ';if(r.j.code==='price_changed'){reqId=null;saveCart();}renderSheet();refreshStatus();}
   }).catch(function(){sending=false;sendErr='ส่งไม่สำเร็จ ตรวจสอบสัญญาณ แล้วกดสั่งอีกครั้ง (ระบบจะไม่ส่งซ้ำ)';renderSheet();});
 }

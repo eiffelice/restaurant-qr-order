@@ -1,7 +1,7 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, counter, docs, all
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -10,10 +10,9 @@ const zlib = require('node:zlib');
 const { chromium } = require('playwright-core');
 const { makeApp, start, sleep, until, rmrf, salesLines, checker, PIN, fakePhoto, fakeCover } = require('./lib');
 
-const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 const MOBILE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
 
-async function launch() { return chromium.launch({ channel: CHANNEL, headless: process.env.QA_HEADED ? false : true }); }
+async function launch() { return chromium.launch(Object.assign(require('./lib').browserOpt(), { headless: process.env.QA_HEADED ? false : true })); }
 // เก็บ error จาก console และ JS ทุกหน้า เพื่อสรุปท้ายเคส
 // ไม่นับ 4xx ที่เบราว์เซอร์ log เองแต่หน้าเว็บจัดการแล้ว (401 ก่อนกรอก PIN, 409 ยอดเปลี่ยน) นับ 5xx และ JS error ทุกตัว
 function watch(page, errors, label) {
@@ -1090,6 +1089,12 @@ const cases = {
     await w.reload(); await w.waitForSelector('#tabs .tab');
     const before = await w.isVisible('#sound'); await w.click('#sound'); await sleep(300);
     ok(before && !(await w.isVisible('#sound')), 'รีเฟรชแล้วยังไม่แตะจอ: มีป้ายเปิดเสียง แตะแล้วเสียงเปิดและป้ายหาย');
+    // แตะครั้งแรกเป็นปุ่มอื่น (ไม่ใช่ป้าย): ป้ายหายตอนนิ้วยังกดอยู่ ปุ่มเลื่อน นิ้วยกบนปุ่มอื่น → แท็บไม่เปลี่ยน (เดิม)
+    await w.reload(); await w.waitForSelector('#tabs .tab');
+    const target = (await w.$$eval('#tabs .tab', b => b.map(x => x.dataset.v))).filter(v => v !== 'kitchen').pop();
+    const pill = await w.isVisible('#sound');
+    await w.click('#tabs [data-v="' + target + '"]'); await sleep(300);
+    ok(pill && await w.getAttribute('#tabs [data-v="' + target + '"]', 'aria-selected') === 'true', 'แตะแท็บครั้งแรกหลังรีเฟรช (ป้ายเปิดเสียงหายพอดี): แท็บเปลี่ยนจริง', target);
     const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     for (const p of [k, w, o]) await p.context().close();
@@ -1209,6 +1214,236 @@ const cases = {
     const real = errors.filter(e => !/ERR_INTERNET_DISCONNECTED|Failed to load resource|net::ERR/.test(e));
     ok(real.length === 0, 'console ไม่มี error', real);
     await browser.close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  },
+
+  /* หลายประเภทธุรกิจ: เลือกประเภทในหน้าตั้งค่า ขายหน้าร้าน (สแกนบาร์โค้ด ขายตามน้ำหนัก เงินทอน) คิวเข้าบาร์ รับซื้อ */
+  async counter(browser) {
+    const ok = checker('counter'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    const p = await staffPage(browser, s, { viewport: { width: 1280, height: 900 } }, errors);
+    ok(/ยังไม่ได้เลือกประเภทธุรกิจ/.test(await p.textContent('#health')), 'ร้านเดิม: เจ้าของเห็นป้ายชวนเลือกประเภทธุรกิจ');
+    ok(!(await p.$('#tabs [data-v="counter"]')) && await p.$('#tabs [data-v="tables"]'), 'ร้านเดิม: แท็บเหมือนเดิม (ยังไม่มีขายหน้าร้าน)');
+    // เลือกร้านค้าปลีก + สินค้าตัวอย่าง ผ่านหน้าจอ
+    await p.click('#health [data-v="settings"]'); await p.waitForSelector('[data-a="bzpick"][data-v="retail"]');
+    await p.click('[data-a="bzpick"][data-v="retail"]');
+    await p.click('[data-a="bzsample"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(await p.evaluate(() => document.activeElement.id === 'cf-no'), 'แทนที่ด้วยตัวอย่าง: หน้าต่างยืนยัน โฟกัสที่ "ไม่แทนที่"');
+    await p.click('#cf-ok');
+    await until(async () => (await s.call('GET', '/api/state')).json.settings.biz === 'retail', 5000).catch(() => {});
+    await p.waitForSelector('#tabs [data-v="counter"]', { timeout: 5000 }).catch(() => {});
+    const tabs = await p.$$eval('#tabs .tab', b => b.map(x => x.dataset.v));
+    ok(tabs[0] === 'counter' && !tabs.includes('tables') && !tabs.includes('kitchen'), 'ร้านค้าปลีก: แท็บแรกคือขายหน้าร้าน ไม่มีโต๊ะ/ครัว', tabs);
+    ok(!(await p.$('#health .banner.info')), 'เลือกแล้ว ป้ายชวนเลือกหายไป');
+    const st = (await s.call('GET', '/api/state')).json;
+    ok(st.menu.items.some(i => i.sku === '1001') && (await s.call('GET', '/api/backups')).json.list.some(f => f.reason === 'before-sample'), 'มีสินค้าตัวอย่างพร้อมรหัส และสำรองเมนูเดิมไว้ก่อน');
+    // ขายหน้าร้าน: สแกนบาร์โค้ด (พิมพ์รหัส + Enter) และ จำนวน*รหัส
+    await tab(p, 'counter'); await p.waitForSelector('#pos-q');
+    await p.fill('#pos-q', '1001'); await p.press('#pos-q', 'Enter');
+    await p.keyboard.type('3*2002'); await p.keyboard.press('Enter'); await sleep(200);
+    const lines = () => p.$$eval('#pos-cart .cline .nm', x => x.map(e => e.textContent));
+    ok(JSON.stringify(await lines()) === JSON.stringify(['น้ำดื่ม 600 มล.', 'บะหมี่กึ่งสำเร็จรูป']) && await p.inputValue('#pos-qty-1') === '3', 'สแกนรหัส 1001 และ 3*2002 ลงตะกร้า', await lines());
+    ok(await p.evaluate(() => document.activeElement.id === 'pos-q') && await p.inputValue('#pos-q') === '', 'สแกนแล้วช่องว่าง โฟกัสอยู่ที่ช่องสแกนรอชิ้นถัดไป');
+    // แตะสินค้าแล้วเครื่องสแกนพิมพ์ต่อ: ตัวอักษรเข้าช่องสแกน ไม่หาย
+    await p.click('.pitem[data-id="' + st.menu.items.find(i => i.sku === '1002').id + '"]');
+    await p.keyboard.type('1003'); await p.keyboard.press('Enter'); await sleep(200);
+    ok((await lines()).includes('กาแฟกระป๋อง'), 'โฟกัสอยู่ที่ปุ่มสินค้า แล้วสแกน: รหัสเข้าช่องสแกนเอง', await lines());
+    ok(/฿63/.test(await p.textContent('#pos-cart .grand')), 'ยอดรวม 10 + 21 + 17 + 15 = 63', await p.textContent('#pos-cart .grand'));
+    await p.fill('#pos-q', '9999'); await p.press('#pos-q', 'Enter'); await sleep(100);
+    ok(/ไม่พบ/.test(await toastText(p)), 'รหัสที่ไม่มี: บอกว่าไม่พบ');
+    // พิมพ์จำนวนค้างอยู่ระหว่างมีการเปลี่ยนแปลงจากเครื่องอื่น: โฟกัสและตัวเลขไม่หาย
+    await p.click('#pos-qty-0'); await p.fill('#pos-qty-0', '1'); await p.keyboard.type('2');
+    await s.call('POST', '/api/soldout', { id: st.menu.items.find(i => i.sku === '3001').id, soldOut: true });
+    await sleep(800);
+    ok(await p.evaluate(() => document.activeElement.id === 'pos-qty-0') && await p.inputValue('#pos-qty-0') === '12', 'มีการเปลี่ยนแปลงระหว่างพิมพ์จำนวน: โฟกัสและตัวเลขไม่หาย');
+    // รีเฟรช: ตะกร้ายังอยู่
+    await p.reload(); await p.waitForSelector('#pos-cart .cline');
+    ok((await lines()).length === 4 && await p.inputValue('#pos-qty-0') === '12', 'รีเฟรชหน้าแล้วตะกร้ายังอยู่');
+    // รับเงินสด: ราคาเปลี่ยนระหว่างกดรับเงินกับกดยืนยัน → ไม่ขาย ให้เห็นยอดใหม่
+    await p.click('[data-a="ppay"][data-m="cash"]'); await p.keyboard.type('500'); await sleep(100);
+    ok(/ทอน ฿327/.test(await p.textContent('#pos-change')), 'ใส่เงินที่รับมา 500: ทอน 327 (ยอด 120 + 21 + 17 + 15 = 173)', await p.textContent('#pos-change'));
+    const water = st.menu.items.find(i => i.sku === '1001');
+    await s.call('POST', '/api/menu/item', { id: water.id, name: water.name, price: 12, cat: water.cat, station: water.station });
+    await sleep(600);
+    await p.click('[data-a="ppay"][data-m="cash"]'); await sleep(600);
+    ok((await s.call('GET', '/api/report')).json.count === 0 && /ราคา/.test(await toastText(p)), 'ราคาเปลี่ยนก่อนกดยืนยัน: ไม่ขาย บอกให้ตรวจยอดใหม่');
+    ok(/฿197/.test(await p.textContent('#pos-cart .grand')), 'ตะกร้าแสดงยอดใหม่ 12×12 + 21 + 17 + 15 = 197', await p.textContent('#pos-cart .grand'));
+    await p.click('[data-a="ppay"][data-m="cash"]'); await p.keyboard.type('300');
+    await p.dblclick('[data-a="ppay"][data-m="cash"]'); await sleep(900);
+    const rep = (await s.call('GET', '/api/report')).json;
+    ok(rep.count === 1 && rep.total === 197, 'ขายได้ 1 บิล (ดับเบิลคลิกไม่ขายซ้ำ) ยอด 197', [rep.count, rep.total]);
+    ok(/ทอน ฿103/.test(await p.textContent('#pos-cart')) && /ขายหน้าร้าน/.test(await p.textContent('#pos-cart .receipt')), 'หลังขาย: แสดงเงินทอนและใบเสร็จ "ขายหน้าร้าน"');
+    ok(await p.isVisible('#pos-cart [data-a="printr"]'), 'มีปุ่มพิมพ์ใบเสร็จ');
+    // XSS ชื่อสินค้าในหน้าขาย ตะกร้า และใบเสร็จ
+    const X = '<img src=x onerror="window.__xss=1">';
+    const xi = (await s.call('POST', '/api/menu/item', { name: 'สบู่' + X, price: 5, cat: water.cat, station: water.station, sku: 'X1', unit: X.slice(0, 12) })).json.item;
+    await sleep(600); await p.click('[data-a="posnext"]');
+    await p.fill('#pos-q', 'X1'); await p.press('#pos-q', 'Enter'); await sleep(200);
+    await p.click('[data-a="ppay"][data-m="transfer"]'); await p.click('[data-a="ppay"][data-m="transfer"]'); await sleep(800);
+    ok(!(await p.evaluate(() => window.__xss)) && (await p.textContent('#pos-cart .receipt')).includes('<img'), 'ชื่อ/หน่วยสินค้าที่มี HTML แสดงเป็นข้อความทุกที่');
+    // จอมือถือ: ไม่เลื่อนแนวนอน มีแถบยอดรวมด้านล่าง
+    const m = await staffPage(browser, s, MOBILE, errors);
+    await m.waitForSelector('#pos-q'); await m.fill('#pos-q', '1001'); await m.press('#pos-q', 'Enter'); await sleep(200);
+    ok(!(await overflow(m)), 'มือถือ 390 px: หน้าขายไม่เลื่อนแนวนอน', await overflow(m));
+    ok(await m.isVisible('#pos-sum') && /฿12/.test(await m.textContent('#pos-sum')), 'มือถือ: มีแถบยอดรวมติดขอบล่าง');
+    await m.context().close();
+    // ร้านกาแฟ: ส่งเข้าบาร์เป็นคิว → บาร์ทำเสร็จ → หน้าร้านเรียกคิว
+    await s.call('POST', '/api/settings', { biz: 'cafe', modes: { table: false, kitchen: true, counter: true, buy: false } });
+    await sleep(600); await p.click('[data-a="posnext"]').catch(() => {});
+    await p.click('.pitem[data-id="' + xi.id + '"]'); await sleep(100);
+    await p.click('[data-a="ppay"][data-m="transfer"]'); await p.click('[data-a="ppay"][data-m="transfer"]'); await sleep(800);
+    ok(/คิว\s*1/.test(await p.textContent('#pos-cart')), 'ร้านกาแฟ: ขายแล้วได้เลขคิว 1');
+    await tab(p, 'kitchen'); await sleep(300);
+    ok(/คิว 1/.test(await p.textContent('#v-kitchen .card')) && !(await p.$('#v-kitchen [data-a="void"]')), 'จอบาร์เห็นคิว 1 ไม่มีปุ่มยกเลิก (จ่ายแล้ว)');
+    await p.click('#v-kitchen [data-a="adv"]'); await sleep(400); await p.click('#v-kitchen [data-a="adv"]'); await sleep(600);
+    await tab(p, 'counter'); await sleep(300);
+    ok(/คิว 1 พร้อมรับ/.test(await p.textContent('#pos-qs')), 'หน้าร้านเห็น "คิว 1 พร้อมรับ"');
+    await p.click('[data-a="qdone"]'); await sleep(700);
+    ok((await s.call('GET', '/api/state')).json.tickets.length === 0 && (await p.textContent('#pos-qs')).trim() === '', 'กด "ลูกค้ารับแล้ว": คิวหายจากจอ');
+    // ร้านรับซื้อ: ใส่น้ำหนัก จ่ายเงิน ยอดแยกจากยอดขาย
+    await s.call('POST', '/api/settings', { biz: 'buyback', modes: { table: false, kitchen: false, counter: true, buy: true } });
+    const scrap = (await s.call('POST', '/api/menu/item', { name: 'กระดาษลัง', price: 3.5, cat: water.cat, station: water.station, unit: 'กก.', dec: true })).json.item;
+    await sleep(600); await p.click('[data-a="posnext"]').catch(() => {});
+    ok(await p.getAttribute('[data-a="pkind"][data-v="buy"]', 'aria-pressed') === 'true', 'ร้านรับซื้อ: เริ่มที่โหมดรับซื้อ');
+    await p.click('.pitem[data-id="' + scrap.id + '"]');
+    ok(await p.evaluate(() => /^pos-qty-/.test(document.activeElement.id)), 'แตะสินค้าขายตามน้ำหนัก: โฟกัสช่องจำนวนให้ใส่น้ำหนัก');
+    await p.keyboard.type('12.5'); await sleep(200);
+    ok(/฿43\.75/.test(await p.textContent('#pos-cart .grand')), '12.5 กก. × 3.5 = 43.75', await p.textContent('#pos-cart .grand'));
+    await p.click('[data-a="ppay"][data-m="cash"]'); await p.click('[data-a="ppay"][data-m="cash"]'); await sleep(800);
+    ok(/ใบรับซื้อสินค้า/.test(await p.textContent('#pos-cart .receipt')), 'ออกใบรับซื้อ');
+    const r2 = (await s.call('GET', '/api/report')).json;
+    ok(r2.buy.total === 43.75 && r2.total === 197 + 5 + 5, 'รับซื้อแยกจากยอดขาย', [r2.buy, r2.total]);
+    await tab(p, 'report'); await sleep(800);
+    ok(/รับซื้อวันนี้/.test(await p.textContent('#v-report')), 'สรุปยอดมีช่องรับซื้อวันนี้');
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+    return ok.done();
+  }
+  ,
+  /* เอกสารและสต็อก (ร้านค้าปลีก): ตรวจนับผ่านหน้าจอ (สแกนรหัส) ระหว่างนับมีการขาย → 409 นับใหม่ · ใบเสนอราคา → ใบแจ้งหนี้ → รับชำระ
+     ยอดในหน้าจอ = ยอดที่เซิร์ฟเวอร์คิด · ตัวหนังสือจำนวนเงิน · พิมพ์ A4 · ใบสั่งซื้อรับของไม่ครบ · ยกเลิกคืนสต็อก · ใบค้างไม่หายเมื่อรีเฟรช · แคชเชียร์ · จอมือถือ */
+  async docs(browser) {
+    const ok = checker('docs'); const errors = [];
+    const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { biz: 'retail', modes: { table: false, kitchen: false, counter: true, buy: false, stock: true, docs: true }, svc: false, taxId: '0105561234567', promptpay: '0812345678' });
+    await s.call('POST', '/api/biz/sample', { biz: 'retail' });
+    const items = (await s.call('GET', '/api/state')).json.menu.items, water = items.find(i => i.sku === '1001'), soda = items.find(i => i.sku === '1002'), coffee = items[2];
+    const p = await staffPage(browser, s, { viewport: { width: 1280, height: 900 } }, errors);
+    const tabs = await p.$$eval('#tabs .tab', b => b.map(x => x.dataset.v));
+    ok(tabs.join(',') === 'counter,docs,stock,menu,report,settings', 'ร้านค้าปลีก: มีแท็บเอกสารและสต็อก', tabs);
+    // 1) ตรวจนับ: สแกนรหัส → พิมพ์จำนวน → Enter กลับไปช่องสแกน
+    await tab(p, 'stock'); await p.click('[data-a="skadj"][data-v="count"]'); await p.waitForSelector('#sk-add');
+    await p.fill('#sk-add', '1001'); await p.press('#sk-add', 'Enter');
+    ok(await p.evaluate(() => document.activeElement.id === 'sk-q-0'), 'สแกนรหัสแล้วโฟกัสช่องจำนวนของรายการนั้น');
+    await p.keyboard.type('24'); await p.keyboard.press('Enter');
+    ok(await p.evaluate(() => document.activeElement.id === 'sk-add'), 'Enter ที่ช่องจำนวน กลับไปช่องสแกน');
+    await p.keyboard.type('1002'); await p.keyboard.press('Enter'); await p.keyboard.type('6');
+    // ใบค้างไม่หายเมื่อรีเฟรช
+    await p.reload(); await p.waitForSelector('#tabs .tab'); await tab(p, 'stock');
+    await p.waitForSelector('[data-a="skresume"]'); await p.click('[data-a="skresume"]');
+    ok(await p.inputValue('#sk-q-0') === '24' && await p.inputValue('#sk-q-1') === '6', 'รีเฟรชระหว่างนับ: ใบตรวจนับและจำนวนที่ใส่ยังอยู่');
+    await p.click('[data-a="skgo"]'); await p.waitForSelector('.docp');
+    let st = (await s.call('GET', '/api/state')).json;
+    const w1 = st.menu.items.find(i => i.id === water.id);
+    ok(w1.track && w1.stock === 24, 'บันทึกตรวจนับแล้ว น้ำดื่มเริ่มนับสต็อก = 24', w1.stock);
+    ok(/ใบตรวจนับสต็อก/.test(await p.textContent('.docp')) && /CNT\d{4}-0001/.test(await p.textContent('.docp')), 'ได้ใบตรวจนับ CNT เลขที่ 0001');
+    // 2) นับซ้ำ ระหว่างนั้นหน้าร้านขายไป 2 → เซิร์ฟเวอร์ปฏิเสธ (ไม่ทับยอดขายเงียบๆ) แล้วนับรายการนั้นใหม่ได้
+    await p.click('[data-a="skback"]'); await p.click('[data-a="skadj"][data-v="count"]');
+    await p.fill('#sk-add', water.name); await p.press('#sk-add', 'Enter'); await p.keyboard.type('20');
+    const sold = await s.call('POST', '/api/sale', { items: [{ id: water.id, qty: 2 }], method: 'cash', expectedSub: water.price * 2 });
+    ok(sold.status === 200, 'ขายหน้าร้านระหว่างนับ', sold.json);
+    await sleep(800);
+    ok(/ระหว่างนับ ยอดในระบบเปลี่ยนจาก 24 เป็น 22/.test(await p.textContent('#v-stock')), 'หน้าจอนับเตือนว่ายอดในระบบเปลี่ยนระหว่างนับ');
+    await p.click('[data-a="skgo"]'); await sleep(500);
+    ok(/ยอดคงเหลือเปลี่ยนระหว่างนับ/.test(await p.textContent('#v-stock .err')) && (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === water.id).stock === 22, 'กดบันทึก: เซิร์ฟเวอร์ปฏิเสธ ยอด 22 ไม่ถูกทับ');
+    await p.click('[data-a="skre"][data-i="0"]'); await p.keyboard.type('21'); await p.click('[data-a="skgo"]'); await p.waitForSelector('.docp');
+    ok((await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === water.id).stock === 21, 'นับรายการนั้นใหม่แล้วบันทึกได้ (21)');
+    await p.click('[data-a="skback"]'); await p.click('[data-a="skcard"][data-id="' + water.id + '"]'); await p.waitForSelector('#v-stock table.list');
+    const card = await p.textContent('#v-stock table.list');
+    ok(/ปรับตามการตรวจนับ[\s\S]*ขาย[\s\S]*R\d{8}-\d{4}[\s\S]*ปรับตามการตรวจนับ/.test(card), 'บัตรสต็อก: ตรวจนับ → ขาย (เลขบิล) → ตรวจนับ');
+    await p.click('[data-a="skback"]');
+    // 3) ใบเสนอราคา: พิมพ์ลูกค้าใหม่ สแกนรหัสในแถว ส่วนลด VAT · ยอดในหน้าจอต้องเท่ากับที่เซิร์ฟเวอร์คิด
+    await tab(p, 'docs'); await p.click('[data-a="dnew"][data-v="QT"]'); await p.waitForSelector('#d-pname');
+    await p.fill('#d-pname', 'บริษัท ก่อสร้างไทย จำกัด'); await p.fill('#d-paddr', '1 ถ.สุขุมวิท กรุงเทพฯ'); await p.fill('#d-ptax', '0105500000001');
+    await p.fill('#d-ln-0', '1001'); await p.press('#d-ln-0', 'Enter');
+    ok(await p.inputValue('#d-ln-0') === water.name && await p.inputValue('#d-lp-0') === String(water.price) && await p.evaluate(() => document.activeElement.id === 'd-lq-0'), 'สแกนรหัสในแถว: ได้ชื่อและราคาสินค้า โฟกัสช่องจำนวน');
+    await p.fill('#d-lq-0', '7');
+    await p.fill('#d-ln-1', 'ค่าขนส่ง'); await p.fill('#d-lq-1', '1'); await p.fill('#d-lp-1', '99.99');
+    await p.fill('#d-disc', '12.5'); await p.click('[data-a="dtog"][data-k="vat"]');
+    const shown = (await p.textContent('#d-tot .g:last-child')).replace(/[฿,\s]/g, '');
+    await p.click('[data-a="dsave"]'); await p.waitForSelector('.docp');
+    const docs1 = (await s.call('GET', '/api/docs?type=QT')).json.docs, qt = docs1[0];
+    ok(qt && +shown === qt.total, 'ยอดในหน้าออกเอกสาร = ยอดที่เซิร์ฟเวอร์คิด', [shown, qt && qt.total]);
+    ok(qt && qt.lines[0].id === water.id && !qt.lines[1].id && qt.vat && qt.discount === 12.5, 'แถวที่สแกนผูกกับสินค้า แถวพิมพ์เองไม่ผูก');
+    const paper = await p.textContent('.docp');
+    ok(/ใบเสนอราคา/.test(paper) && paper.includes('(' + qt.total.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ')') === false && /บาท/.test(await p.textContent('.docp .words')), 'กระดาษ: ชื่อเอกสาร และจำนวนเงินเป็นตัวหนังสือ', await p.textContent('.docp .words'));
+    ok((await s.call('GET', '/api/contacts')).json.list.some(c => c.name === 'บริษัท ก่อสร้างไทย จำกัด' && c.taxId === '0105500000001'), 'ลูกค้าใหม่ถูกบันทึกในรายชื่อ');
+    // พิมพ์ A4: สำเนากระดาษไปที่ #print-area ชื่อหน้าต่าง = เลขที่เอกสาร (ชื่อไฟล์ PDF)
+    await p.evaluate(() => { window.print = () => { window.__printed = { title: document.title, cls: document.body.className, n: document.querySelectorAll('#print-area .docp').length }; }; });
+    await p.click('[data-a="dprint"]'); await sleep(300);
+    const pr = await p.evaluate(() => window.__printed);
+    ok(pr && pr.n === 1 && /pm-doc/.test(pr.cls) && pr.title.startsWith(qt.no), 'พิมพ์: ใช้กระดาษ A4 ชุดเดียว ชื่อไฟล์เป็นเลขที่เอกสาร', pr);
+    await p.emulateMedia({ media: 'print' });
+    const pdf = await p.pdf({ preferCSSPageSize: true, printBackground: true });
+    await p.emulateMedia({ media: 'screen' }); await p.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    const box = /\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/.exec(pdf.toString('latin1')), pages = (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) || []).length;
+    ok(box && Math.abs(+box[1] - 595) < 2 && Math.abs(+box[2] - 842) < 2 && pages === 1, 'PDF ขนาด A4 หน้าเดียว', box && [box[1], box[2], pages]);
+    // 4) ลูกค้าตกลง → ใบแจ้งหนี้ (กดสองครั้ง) ตัดสต็อก → รับชำระ (กดสองครั้ง) → ใบเสร็จ
+    await p.click('[data-a="dconv"]'); ok(/แตะอีกครั้ง/.test(await p.textContent('[data-a="dconv"]')), 'ออกใบแจ้งหนี้ต้องกดยืนยันอีกครั้ง');
+    await p.click('[data-a="dconv"]'); await p.waitForFunction(() => /INV\d{4}-0001/.test(document.querySelector('#v-docs h3').textContent));
+    ok((await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === water.id).stock === 14, 'ออกใบแจ้งหนี้แล้วตัดสต็อก 21 − 7 = 14');
+    ok(/ใบส่งของ\/ใบแจ้งหนี้\/ใบกำกับภาษี/.test(await p.textContent('.docp')) && await p.$('.docp svg'), 'ร้านมีเลขผู้เสียภาษี + VAT: ใบแจ้งหนี้เป็นใบกำกับภาษี มี QR PromptPay');
+    await p.click('[data-a="dpaper"][data-v="dn"]');
+    ok(!/ราคาต่อหน่วย/.test(await p.textContent('.docp')) && /ใบส่งของ/.test(await p.textContent('.docp h2')), 'แบบใบส่งของ: ไม่มีราคา');
+    await p.click('[data-a="dpaper"][data-v=""]');
+    await p.click('[data-a="dpay"]'); await p.click('[data-a="dpay"]'); await p.waitForSelector('[data-a="dpaper"][data-v="rc"]');
+    const rep1 = (await s.call('GET', '/api/report')).json, bill = rep1.bills.find(b => b.doc);
+    ok(bill && bill.total === qt.total && /ใบเสร็จรับเงิน/.test(await p.textContent('.docp h2')), 'รับชำระแล้ว: เข้ายอดขายวันนี้ แสดงใบเสร็จ', bill);
+    ok((await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === water.id).stock === 14, 'รับชำระไม่ตัดสต็อกซ้ำ');
+    // 5) ใบสั่งซื้อ: รับของไม่ครบ ราคาตามบิลจริง → สต็อกเพิ่ม ต้นทุนเปลี่ยน
+    await p.click('[data-a="dback"]'); await p.click('[data-a="dnew"][data-v="PO"]');
+    await p.fill('#d-pname', 'ห้างหุ้นส่วน ค้าส่ง'); await p.fill('#d-ln-0', soda.name); await p.fill('#d-lq-0', '24'); await p.fill('#d-lp-0', '9');
+    await p.click('[data-a="dsave"]'); await p.waitForSelector('[data-a="drecv"]');
+    ok((await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === soda.id).stock === 6, 'ออกใบสั่งซื้อแล้ว สต็อกยังไม่เปลี่ยน');
+    await p.click('[data-a="drecv"]'); await p.fill('#r-q-0', '20'); await p.fill('#r-p-0', '9.25'); await p.click('[data-a="drecvgo"]');
+    await p.waitForFunction(() => /GR\d{4}-0001/.test(document.querySelector('#v-docs h3').textContent));
+    const s2 = (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === soda.id);
+    ok(s2.stock === 26 && s2.cost === 9.25, 'รับของ 20 จาก 24: สต็อก 6 + 20 = 26 ต้นทุน 9.25', [s2.stock, s2.cost]);
+    // 6) ยกเลิกใบแจ้งหนี้ที่ยังไม่จ่าย: ต้องมีเหตุผล + หน้าต่างยืนยัน → สต็อกคืน
+    await p.click('[data-a="dback"]'); await p.click('[data-a="dnew"][data-v="INV"]');
+    await p.fill('#d-pname', 'บริษัท ก่อสร้างไทย จำกัด'); await sleep(100);
+    ok(await p.inputValue('#d-paddr') === '1 ถ.สุขุมวิท กรุงเทพฯ', 'พิมพ์ชื่อลูกค้าเดิม: ที่อยู่มาเอง');
+    await p.fill('#d-ln-0', coffee.name); await p.fill('#d-lq-0', '3');
+    await p.click('[data-a="dsave"]'); await p.waitForSelector('[data-a="dcancel"]');
+    const cBefore = (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === coffee.id);
+    await p.click('[data-a="dcancel"]'); await p.click('[data-a="dcancelgo"]');
+    ok(/ใส่เหตุผล/.test(await p.textContent('#v-docs .err')), 'ยกเลิกโดยไม่มีเหตุผลไม่ได้');
+    await p.fill('#d-cancel', 'ลูกค้าขอเลื่อน'); await p.click('[data-a="dcancelgo"]'); await p.waitForSelector('#confirm-dlg[open]');
+    ok(await p.evaluate(() => document.activeElement.id === 'cf-no'), 'หน้าต่างยืนยันยกเลิก: โฟกัสที่ "ไม่ยกเลิก"');
+    await p.click('#cf-ok'); await p.waitForSelector('.docp .stamp');
+    ok(!cBefore.track || (await s.call('GET', '/api/state')).json.menu.items.find(i => i.id === coffee.id).stock === cBefore.stock + 3, 'ยกเลิกแล้วคืนสต็อก');
+    // 7) แคชเชียร์: ออก/รับชำระเอกสารได้ ไม่มีใบสั่งซื้อและปรับสต็อก
+    await s.call('POST', '/api/staff', { name: 'สมใจ', role: 'cashier', pin: '520011' });
+    const cctx = await browser.newContext(Object.assign({ baseURL: s.B }, MOBILE)); const c = await cctx.newPage(); watch(c, errors, 'cashier');
+    await c.goto('/staff'); await c.fill('#pin', '520011'); await c.press('#pin', 'Enter'); await c.waitForSelector('#tabs .tab');
+    ok((await c.$$eval('#tabs .tab', b => b.map(x => x.dataset.v))).join(',') === 'counter,docs,stock,menu,report', 'แคชเชียร์เห็นเอกสารและสต็อก (ไม่มีตั้งค่า)');
+    await tab(c, 'docs'); await c.waitForSelector('[data-a="dnew"][data-v="QT"]');
+    ok(!(await c.$('[data-a="dnew"][data-v="PO"]')), 'แคชเชียร์ไม่มีปุ่มใบสั่งซื้อ');
+    await tab(c, 'stock'); await c.waitForSelector('#sk-q');
+    ok(!(await c.$('[data-a="skadj"]')) && !(await c.$('a[href="/api/stock.csv"]')), 'แคชเชียร์ดูสต็อกได้ ปรับสต็อก/ดาวน์โหลด CSV ไม่ได้');
+    // 8) จอมือถือ: รายการเอกสารและกระดาษไม่ล้นจอ
+    await tab(c, 'docs'); await c.click('[data-a="dfilter"][data-v="all"]'); await sleep(500);
+    const o1 = await overflow(c);
+    await c.click('[data-a="dopen"][data-v="' + qt.no + '"]'); await c.waitForSelector('.docp'); await sleep(200);
+    const o2 = await overflow(c);
+    ok(!o1 && !o2, 'มือถือ 390px: รายการและกระดาษเอกสารไม่เลื่อนแนวนอน', o1 || o2 || undefined);
+    // log: ทุกการทำรายการมี audit
+    const au = (await s.call('GET', '/api/audit')).json.events.map(e => e.action);
+    ok(['stock.adjusted', 'doc.created', 'doc.converted', 'doc.paid', 'doc.received', 'doc.cancelled', 'contact.created'].every(a => au.includes(a)), 'ทุกการทำรายการอยู่ใน audit log', au.filter(a => /^(doc|stock|contact)/.test(a)));
+    const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+    ok(real.length === 0, 'console ไม่มี error', real);
+    await p.context().close(); await cctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   }
 };

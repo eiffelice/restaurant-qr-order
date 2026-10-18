@@ -10,12 +10,11 @@ const { chromium } = require('playwright-core');
 const { makeApp, start, sleep, rmrf, PIN, fakePhoto } = require('./lib');
 
 const OUT = path.join(__dirname, 'out', 'shots');
-const CHANNEL = process.env.QA_BROWSER === 'chrome' ? 'chrome' : 'msedge';
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const app = makeApp(); const s = start(app.code); await s.ready; await s.login();
-  const browser = await chromium.launch({ channel: CHANNEL });
+  const browser = await chromium.launch(require('./lib').browserOpt());
   const keys = (await s.call('GET', '/api/state')).json.keys;
   const png = { headers: { 'content-type': 'image/png' } };
   // รูปเมนู 3 จาน (ที่เหลือไม่มีรูป ตามสภาพร้านช่วงแรก) + คำอธิบาย + ชื่อยาว
