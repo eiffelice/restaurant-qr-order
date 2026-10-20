@@ -10,13 +10,16 @@
     BACKUP_DIR    โฟลเดอร์ที่จะคัดลอกไฟล์สำรองไปเก็บอีกที่ เช่น โฟลเดอร์ Google Drive หรือแฟลชไดรฟ์
     TRUST_PROXY=1 ใช้เมื่อเปิดผ่าน Cloudflare Tunnel ที่รันบนเครื่องเดียวกัน (ต้องตั้ง STAFF_PIN อย่างน้อย 6 หลัก)
     ORDER_LIMIT   จำนวนครั้งที่ลูกค้าสั่งได้ต่อนาทีต่อเครื่อง (ค่าเริ่มต้น 8)
-    BACKUP_EVERY_MIN, REAUTH_SEC, OWNER_SESSION_MIN  ดูตารางใน AGENTS.md (อ่านค่าทั้งหมดที่ lib/config.js)
+    MYSQL_URL     สำเนาข้อมูลไป MySQL/MariaDB ไว้ดูรายงาน (ไม่บังคับ) เช่น mysql://ordervai:รหัสผ่าน@192.168.1.20:3306/ordervai
+    BACKUP_EVERY_MIN, REAUTH_SEC, OWNER_SESSION_MIN, MYSQL_*  ดูตารางใน AGENTS.md (อ่านค่าทั้งหมดที่ lib/config.js)
 
   โครงสร้าง
     lib/config.js   ค่าตั้งต้นและ environment
     lib/util.js     ฟังก์ชันช่วย: วันที่ ไฟล์ HTTP
     lib/store.js    ข้อมูลร้าน การบันทึก การตรวจซ่อมข้อมูล การคำนวณบิล
     lib/backup.js   สำรองและกู้คืนข้อมูล
+    lib/mysql.js    ตัวเชื่อม MySQL/MariaDB (ไม่ต้องติดตั้งเพิ่ม)
+    lib/mirror.js   สำเนาข้อมูลไป MySQL ทางเดียว
     lib/routes.js   API ทั้งหมด
 */
 const http = require('http');
@@ -29,6 +32,7 @@ const C = require('./lib/config');
 const U = require('./lib/util');
 const log = require('./lib/log');
 
+if (C.MYSQL_ERR) U.die(C.MYSQL_ERR);
 if (C.TRUST_PROXY && (C.PIN === '1234' || C.PIN.length < 6)) {
   U.die('เปิดระบบออกอินเทอร์เน็ต (TRUST_PROXY=1) ต้องตั้งรหัสพนักงานอย่างน้อย 6 หลัก เช่น STAFF_PIN=839274 node server.js');
 }
@@ -36,6 +40,7 @@ if (C.TRUST_PROXY && (C.PIN === '1234' || C.PIN.length < 6)) {
 const store = require('./lib/store');
 const theme = require('./lib/theme');
 const backup = require('./lib/backup');
+const mirror = require('./lib/mirror');
 const { api, clients, requireStaff, lanUrl, lanCandidates } = require('./lib/routes');
 
 /* ข้อมูลชุดเดียวกันเปิดได้ทีละโปรแกรม ถ้าเปิดซ้อน (แม้คนละพอร์ต) สองตัวจะเขียน data.json ทับกันและออกเลขบิลซ้ำ
@@ -135,7 +140,7 @@ server.on('error', e => {
 lockDataDir(() => {
   store.load();
   log.prune(); setInterval(log.prune, C.DAY).unref();
-  ['SIGINT', 'SIGTERM'].forEach(s => process.on(s, () => { store.writeFinal(); process.exit(0); }));
+  ['SIGINT', 'SIGTERM'].forEach(s => process.on(s, () => { mirror.stop(); store.writeFinal(); process.exit(0); }));
   server.listen(C.PORT, '0.0.0.0', () => {
     const all = lanCandidates();
     console.log('\nออเดอร์ไว พร้อมใช้งาน\n');
@@ -144,10 +149,16 @@ lockDataDir(() => {
     if (all.length > 1) console.log('  ที่อยู่อื่นของเครื่องนี้: ' + all.slice(1).map(a => 'http://' + a + ':' + C.PORT).join(', '));
     console.log('  เก็บข้อมูลที่ :  ' + C.DATA_DIR);
     console.log('  ไฟล์สำรอง :  ' + C.BK_DIR + (C.BK_COPY ? '  และคัดลอกไป ' + C.BK_COPY : '  (ตั้ง BACKUP_DIR เพื่อคัดลอกไปเก็บอีกที่)'));
+    if (C.MYSQL) {
+      console.log('  สำเนาไป MySQL :  ' + C.MYSQL.target + ' (สาขา ' + C.MYSQL.shop + (C.MYSQL.ssl ? ', เข้ารหัส' : '') + ')');
+      // ไม่เข้ารหัสข้ามอินเทอร์เน็ต: รหัสผ่าน (ส่งแบบ RSA) และข้อมูลยอดขายถูกดักได้
+      if (!C.MYSQL.ssl && !/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|localhost$|::1$|\[?fd|\[?fe80)/i.test(C.MYSQL.host)) console.log('  ! MySQL ไม่ได้เข้ารหัส ถ้าอยู่นอกวง LAN (เช่น บนคลาวด์) เพิ่ม ?ssl=1 ท้าย MYSQL_URL');
+    }
     if (C.PIN === '1234' || C.PIN.length < 6) console.log('\n  ! รหัสพนักงานสั้นหรือเป็นค่าเริ่มต้น ควรตั้งอย่างน้อย 6 หลัก:  STAFF_PIN=รหัสใหม่ node server.js');
     console.log('');
     log.app('info', 'start', { port: C.PORT, trustProxy: C.TRUST_PROXY });
     log.startVerifier();
     backup.startAuto();
+    mirror.start();
   });
 });

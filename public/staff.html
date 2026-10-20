@@ -2143,7 +2143,8 @@ function renderSettings(){
   h+='<div class="panel np" id="theme"></div>';
   h+='<div class="panel np" id="stf"></div>';
   h+='<div class="panel np" id="bk"></div>';
-  if(!md.table){h+='</div>';$('#v-settings').innerHTML=h;renderBiz();renderStaff();renderBackups();renderTheme();return;}
+  h+='<div class="panel np" id="mysql"></div>';
+  if(!md.table){h+='</div>';$('#v-settings').innerHTML=h;renderBiz();renderStaff();renderBackups();renderMysql();renderTheme();return;}
   h+='<div class="panel"><div class="sec-title np"><h3>QR ประจำโต๊ะ</h3><span class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" data-a="printqr">พิมพ์ QR ทุกโต๊ะ (A4 หน้าละ 6 ใบ)</button><button class="btn" data-a="qrzip">ดาวน์โหลดทุกโต๊ะ (.zip)</button></span></div>';
   var b=baseUrl();
   if(/localhost|127\.0\.0\.1/.test(b))h+='<div class="banner warn np">QR ชี้ไปที่ localhost ซึ่งมือถือลูกค้าเปิดไม่ได้ ใส่ที่อยู่เครื่องในช่อง "ที่อยู่เว็บที่ใส่ใน QR"</div>';
@@ -2156,6 +2157,7 @@ function renderSettings(){
   renderBiz();
   renderStaff();
   renderBackups();
+  renderMysql();
   renderTheme();
 }
 
@@ -2518,6 +2520,32 @@ function renderBackups(){
   }
   el.innerHTML=h;
 }
+/* ---------- สำเนาข้อมูลไป MySQL (ตั้งที่ MYSQL_URL ตอนเปิดโปรแกรม หน้านี้ดูสถานะและสั่งส่ง) ---------- */
+function renderMysql(){
+  var el=$('#mysql');if(!el)return;
+  var m=S.d.mysql,h='<div class="sec-title"><h3>สำเนาข้อมูลไป MySQL</h3>'+(m&&m.on?'<button class="btn" data-a="mysqlsync"'+(m.syncing||S.mysqlBusy?' disabled':'')+'>'+(m.syncing||S.mysqlBusy?'กำลังส่ง…':'ส่งตอนนี้')+'</button>':'')+'</div>';
+  if(!m||!m.on){
+    el.innerHTML=h+'<p class="muted small" style="margin:0">ส่งยอดขาย เอกสาร ประวัติสต็อก สินค้า และรายชื่อลูกค้า ไปเก็บใน MySQL หรือ MariaDB อีกชุด ไว้ทำรายงานด้วย Excel, Power BI, Looker Studio หรือ SQL ข้อมูลจริงยังอยู่ในเครื่องนี้ MySQL ล่มร้านก็ขายได้ตามปกติ · เปิดใช้: ตั้ง MYSQL_URL ตอนเปิดโปรแกรม (ดู README หัวข้อ MySQL)</p>';
+    return;
+  }
+  var pill=m.state==='ok'?'<span class="pill ok">ส่งแล้ว</span>':m.state==='conflict'?'<span class="pill crit">หยุดส่ง</span>':m.state==='error'?'<span class="pill '+(m.alert?'crit':'warn')+'">ส่งไม่สำเร็จ</span>':'<span class="pill warn">กำลังเชื่อมต่อ</span>';
+  h+='<div class="status-line">'+pill+'<span>'+esc(m.target)+' · สาขา '+esc(m.shop)+' · '+(m.tls?'เข้ารหัส':'ไม่เข้ารหัส')+(m.server?' · '+esc(m.server):'')+'</span></div>';
+  if(m.lastOk)h+='<div class="status-line"><span class="pill">ล่าสุด</span><span>ส่งสำเร็จเมื่อ '+fmtDate(m.lastOk)+' · ส่งเองภายในไม่กี่วินาทีหลังขายหรือแก้ข้อมูล และตรวจซ้ำทุก '+m.syncSec+' วินาที</span></div>';
+  if(m.error)h+='<div class="banner '+(m.state==='conflict'||m.alert?'crit':'warn')+'" id="mysql-err"><span>'+esc(m.error)+(m.since?' (ตั้งแต่ '+fmtDate(m.since)+')':'')+' · ร้านขายต่อได้ตามปกติ ข้อมูลในเครื่องครบ ส่งได้เมื่อไรระบบส่งที่ค้างให้เอง</span></div>';
+  if(m.counts)h+='<p class="muted small" style="margin:8px 0">ใน MySQL ของสาขานี้: บิล '+fmtQty(m.counts.sales)+' · เอกสาร '+fmtQty(m.counts.docs)+' · ความเคลื่อนไหวสต็อก '+fmtQty(m.counts.moves)+' · สินค้า '+fmtQty(m.counts.products)+' · รายชื่อ '+fmtQty(m.counts.contacts)+'</p>';
+  h+='<p class="muted small" style="margin:0 0 10px">MySQL เป็นสำเนาไว้ดูรายงาน แก้ข้อมูลใน MySQL ไม่มีผลกับร้าน ตารางขึ้นต้นด้วย ov_ (ตัวอย่างคำสั่งรายงานอยู่ใน README)</p>';
+  h+='<span class="row" style="gap:8px;flex-wrap:wrap;justify-content:flex-start">'+(m.state==='conflict'?'<button class="btn primary" data-a="mysqltake">ใช้ฐานข้อมูลนี้กับเครื่องนี้</button>':'')+'<button class="btn" data-a="mysqlresync"'+(S.mysqlBusy?' disabled':'')+'>ส่งใหม่ทั้งหมด</button></span>';
+  el.innerHTML=h;
+}
+function mysqlAct(path,body,okMsg){
+  S.mysqlBusy=true;renderMysql();
+  return act(path,body).then(function(r){
+    S.mysqlBusy=false;
+    if(r&&r.ok){S.d.mysql=r.j.mysql;var m=r.j.mysql;toast(m.syncing?'กำลังส่ง ข้อมูลเยอะใช้เวลาสักครู่ ส่งต่อเบื้องหลังได้':m.state==='ok'?okMsg:'ส่งไม่สำเร็จ: '+(m.error||''));}
+    renderMysql();
+  });
+}
+
 /* อ่านไฟล์สำรองเพื่อแสดงสรุปก่อนกู้คืน: แตก gzip ในเบราว์เซอร์ ถ้าเบราว์เซอร์เก่าทำไม่ได้ ก็ยังกู้คืนได้แต่ไม่มีสรุป */
 function readBackupText(file){
   return file.arrayBuffer().then(function(ab){
@@ -2637,6 +2665,8 @@ function renderHealth(){
   var e=S.d.health&&S.d.health.saveError,el=$('#health');
   el.innerHTML=e?'<div class="banner crit" style="margin-top:12px"><span>บันทึกข้อมูลลงเครื่องไม่สำเร็จตั้งแต่ '+new Date(e.at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' ('+esc(e.message)+') ข้อมูลล่าสุดยังอยู่ในโปรแกรม อย่าเพิ่งปิดโปรแกรม ตรวจพื้นที่ดิสก์หรือโปรแกรมที่อาจล็อกไฟล์ ระบบกำลังลองบันทึกใหม่ให้เองเรื่อยๆ</span><button class="btn sm" data-a="tab" data-v="settings">ไปดาวน์โหลดไฟล์สำรอง</button></div>':'';
   if(isOwner()&&!S.d.settings.biz&&S.tab!=='settings')el.innerHTML+='<div class="banner info" style="margin-top:12px"><span>ยังไม่ได้เลือกประเภทธุรกิจ ระบบทำงานแบบร้านอาหาร (โต๊ะ + จอครัว) ถ้าเป็นร้านกาแฟ ร้านค้าปลีก ร้านขายส่ง ของสด เสริมสวย ขายออนไลน์ ร้านรับซื้อของ ฯลฯ เลือกเพื่อเปิดหน้าขายหน้าร้านและปรับหน้าจอให้เหมาะ</span><button class="btn sm" data-a="tab" data-v="settings">เลือกประเภทธุรกิจ</button></div>';
+  var my=S.d.mysql;
+  if(my&&my.on&&my.alert&&S.tab!=='settings')el.innerHTML+='<div class="banner warn" style="margin-top:12px"><span>สำเนาข้อมูลไป MySQL '+(my.state==='conflict'?'หยุดส่ง':'ส่งไม่สำเร็จ')+(my.since?'ตั้งแต่ '+new Date(my.since).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}):'')+' ('+esc(my.error||'')+') ร้านขายต่อได้ตามปกติ ข้อมูลในเครื่องครบ · ดูที่แท็บตั้งค่า</span></div>';
   if(S.d.weakPin)el.innerHTML+='<div class="banner crit" style="margin-top:12px"><span>รหัสเจ้าของร้านเป็นค่าเริ่มต้นหรือสั้นเกินไป ใครที่ต่อ WiFi ร้านเดาเข้าเป็นเจ้าของได้ (เปลี่ยนเบอร์ PromptPay ให้เงินเข้าบัญชีอื่นได้) ปิดโปรแกรมแล้วเปิดใหม่ด้วย STAFF_PIN อย่างน้อย 6 หลัก (ดู README)</span></div>';
 }
 function render(){
@@ -2886,6 +2916,17 @@ document.addEventListener('click',function(e){
   else if(a==='logodel'){
     confirmBox({title:'เอาโลโก้ร้านออก?',lines:['โลโก้จะหายจากหน้าลูกค้า หน้าเข้าสู่ระบบ ใบเสร็จ และแผ่น QR','ไฟล์โลโก้ถูกลบจากเครื่อง ถ้าต้องการใช้อีกต้องอัปโหลดใหม่'],ok:'เอาโลโก้ออก'})
       .then(function(ok){if(ok)act('/api/settings/logo/delete',{},'เอาโลโก้ออกแล้ว').then(function(r){if(r&&r.ok)load();});});
+  }
+  else if(a==='mysqlsync'){mysqlAct('/api/mysql/sync',{},'ส่งสำเนาไป MySQL แล้ว');}
+  else if(a==='mysqlresync'){
+    var my=S.d.mysql||{};
+    confirmBox({title:'ส่งข้อมูลไป MySQL ใหม่ทั้งหมด?',lines:['ข้อมูลสาขา "'+my.shop+'" ใน MySQL ('+my.target+') จะถูกแทนที่ด้วยข้อมูลในเครื่องนี้ทั้งหมด','ข้อมูลในเครื่องนี้ไม่ถูกแตะต้อง','ข้อมูลหลายปีใช้เวลาสักครู่ ระหว่างนี้ขายได้ตามปกติ'],ok:'ส่งใหม่ทั้งหมด',no:'ยกเลิก'})
+      .then(function(ok){if(ok)mysqlAct('/api/mysql/resync',{},'ส่งข้อมูลใหม่ทั้งหมดแล้ว');});
+  }
+  else if(a==='mysqltake'){
+    var mt=S.d.mysql||{};
+    confirmBox({title:'ใช้ฐานข้อมูลนี้กับเครื่องนี้?',lines:['ใช้เมื่อย้ายร้านมาเครื่องใหม่ หรือเครื่องเดิมเลิกใช้แล้ว','ข้อมูลสาขา "'+mt.shop+'" ใน MySQL จะถูกแทนที่ด้วยข้อมูลในเครื่องนี้ และเครื่องเดิมจะหยุดส่ง','ถ้าเป็นอีกสาขาที่ยังเปิดอยู่ อย่ากด ให้ตั้ง MYSQL_SHOP ของเครื่องนี้ให้ต่างกันแทน'],ok:'ใช้กับเครื่องนี้',no:'ยกเลิก'})
+      .then(function(ok){if(ok)mysqlAct('/api/mysql/resync',{takeover:true},'เครื่องนี้ส่งสาขานี้แล้ว');});
   }
   else if(a==='openorders'){act('/api/settings',{acceptOrders:true},'เปิดรับออเดอร์ผ่าน QR แล้ว');}
   /* ประเภทธุรกิจ */

@@ -2349,3 +2349,205 @@ describe('สต็อกสินค้าและเอกสาร (ใบ�
     Object.keys(T).forEach(n => assert.equal(page.bahtText(+n), T[n], n));
   });
 });
+
+/* ---------- สำเนาข้อมูลไป MySQL: เซิร์ฟเวอร์ MySQL จำลอง (ตรวจรหัสผ่านตามโปรโตคอลจริงฝั่งเซิร์ฟเวอร์ จดทุกคำสั่ง SQL) ----------
+   ทดสอบกับ MySQL 8 / MariaDB ตัวจริงด้วย qa/mysql.js */
+const net = require('node:net');
+const crypto = require('node:crypto');
+function fakeMysql(users) {
+  const queries = [], seen = [], conns = new Set(), shops = {};
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const pem = publicKey.export({ type: 'spki', format: 'pem' });
+  const H = (alg, b) => crypto.createHash(alg).update(b).digest();
+  const xor = (a, b) => Buffer.from(a.map((x, i) => x ^ b[i % b.length]));
+  const lenc = n => n < 251 ? Buffer.from([n]) : Buffer.from([0xfc, n & 0xff, n >> 8]);
+  const lstr = s => { const b = Buffer.from(s); return Buffer.concat([lenc(b.length), b]); };
+  const srv = net.createServer(sock => {
+    conns.add(sock); sock.on('close', () => conns.delete(sock)); sock.on('error', () => {});
+    let buf = Buffer.alloc(0), seq = 0, phase = 'auth', user = null;
+    const nonce = Buffer.from(Array.from(crypto.randomBytes(20), b => 33 + (b % 90)));
+    const send = p => { const h = Buffer.alloc(4); h.writeUIntLE(p.length, 0, 3); seq = (seq + 1) & 0xff; h[3] = seq; sock.write(Buffer.concat([h, p])); };
+    const ok = (n) => send(Buffer.concat([Buffer.from([0]), lenc(n || 0), Buffer.from([0, 2, 0, 0, 0])]));
+    const err = (code, msg) => { const b = Buffer.concat([Buffer.from([0xff, code & 0xff, code >> 8]), Buffer.from('#28000' + msg)]); send(b); };
+    const eof = () => send(Buffer.from([0xfe, 0, 0, 2, 0]));
+    const caps = 0x1 | 0x2 | 0x8 | 0x200 | 0x2000 | 0x8000 | 0x80000 | 0x200000;
+    seq = -1;
+    send(Buffer.concat([Buffer.from([10]), Buffer.from('8.0.99-fake\0'), Buffer.from([1, 0, 0, 0]), nonce.subarray(0, 8), Buffer.from([0]),
+      Buffer.from([caps & 0xff, (caps >> 8) & 0xff, 45, 2, 0, (caps >> 16) & 0xff, (caps >> 24) & 0xff, 21]), Buffer.alloc(10), nonce.subarray(8), Buffer.from([0]),
+      Buffer.from('caching_sha2_password\0')]));
+    const native = pw => xor(H('sha1', pw), H('sha1', Buffer.concat([nonce, H('sha1', H('sha1', pw))])));
+    const sha2 = pw => xor(H('sha256', pw), H('sha256', Buffer.concat([H('sha256', H('sha256', pw)), nonce])));
+    const pass = how => { seen.push(how); phase = 'cmd'; ok(); };
+    function onPacket(p) {
+      if (phase === 'auth') {
+        let i = 32; const ue = p.indexOf(0, i), name = p.toString('utf8', i, ue); i = ue + 1;
+        const alen = p[i]; const auth = p.subarray(i + 1, i + 1 + alen);
+        user = users[name];
+        if (!user) return err(1045, "Access denied for user '" + name + "'");
+        if (user.plugin === 'mysql_native_password') { phase = 'switch'; return send(Buffer.concat([Buffer.from([0xfe]), Buffer.from('mysql_native_password\0'), nonce, Buffer.from([0])])); }
+        if (!auth.equals(sha2(Buffer.from(user.pw)))) return err(1045, "Access denied for user '" + name + "' (using password: YES)");
+        phase = 'full'; return send(Buffer.from([0x01, 0x04]));        // ยังไม่มีในแคช: ต้องยืนยันเต็ม (ไม่มี TLS = ขอกุญแจ RSA)
+      }
+      if (phase === 'switch') return p.equals(native(Buffer.from(user.pw))) ? pass('native') : err(1045, 'Access denied (using password: YES)');
+      if (phase === 'full') { if (p.length === 1 && p[0] === 2) { phase = 'rsa'; return send(Buffer.concat([Buffer.from([1]), Buffer.from(pem)])); } return err(1045, 'expected key request'); }
+      if (phase === 'rsa') {
+        const plain = xor(crypto.privateDecrypt({ key: privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING }, p), nonce);
+        return plain.equals(Buffer.concat([Buffer.from(user.pw), Buffer.from([0])])) ? pass('sha2-rsa') : err(1045, 'Access denied (using password: YES)');
+      }
+      if (p[0] === 0x01) return sock.end();
+      const sql = p.subarray(1).toString('utf8'); queries.push(sql);
+      const claim = /^INSERT INTO ov_shops .* VALUES \('([^']*)','([0-9a-f]{16})'/.exec(sql);
+      if (claim) shops[claim[1]] = claim[2];
+      if (/^\s*(SELECT|SHOW)/i.test(sql)) {
+        // จำแค่ว่าสาขาไหนเป็นของเครื่องไหน (ov_shops) คำถามอื่นตอบว่าว่าง
+        const sel = /^SELECT (.+?) FROM ov_shops WHERE shop='([^']*)'/.exec(sql), cols = sel ? sel[1].split(',').map(c => c.trim()) : ['x'];
+        send(Buffer.from([cols.length]));
+        cols.forEach(c => send(Buffer.concat([lstr('def'), lstr(''), lstr(''), lstr(''), lstr(c), lstr(c), Buffer.from([0x0c, 45, 0, 0, 0, 1, 0, 0xfd, 0, 0, 0, 0, 0])])));
+        eof();
+        if (sel && shops[sel[2]]) send(Buffer.concat(cols.map(c => lstr(c === 'instance' ? shops[sel[2]] : ''))));
+        eof();
+      } else ok(1);
+    }
+    sock.on('data', d => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 4 && buf.length >= 4 + buf.readUIntLE(0, 3)) {
+        const n = buf.readUIntLE(0, 3); seq = buf[3]; const p = buf.subarray(4, 4 + n); buf = buf.subarray(4 + n);
+        if (phase === 'cmd') seq = 0;
+        onPacket(p);
+      }
+    });
+  });
+  return {
+    queries, seen,
+    listen: port => new Promise(r => srv.listen(port || 0, '127.0.0.1', () => r(srv.address().port))),
+    close: () => new Promise(r => { conns.forEach(c => c.destroy()); srv.close(() => r()); })
+  };
+}
+// แยกข้อความในเครื่องหมาย ' ตามกฎของ MySQL (backslash escape + '' ซ้อน) ส่วนที่อยู่นอกข้อความต้องไม่มีตัวคั่นคำสั่ง/คอมเมนต์
+function sqlLiterals(sql) {
+  const lits = []; let out = '';
+  for (let i = 0; i < sql.length;) {
+    if (sql[i] !== "'") { out += sql[i++]; continue; }
+    let v = ''; i++;
+    for (;;) {
+      if (i >= sql.length) throw new Error('ข้อความไม่ปิด: ' + sql.slice(0, 200));
+      const c = sql[i];
+      if (c === '\\') { const n = sql[i + 1]; v += { 0: '\0', n: '\n', r: '\r', t: '\t', Z: '\x1a', b: '\b' }[n] || n; i += 2; continue; }
+      if (c === "'") { if (sql[i + 1] === "'") { v += "'"; i += 2; continue; } i++; break; }
+      v += c; i++;
+    }
+    lits.push(v); out += '?';
+  }
+  return { lits, out };
+}
+const freePort = () => new Promise(r => { const t = net.createServer(); t.listen(0, '127.0.0.1', () => { const p = t.address().port; t.close(() => r(p)); }); });
+
+describe('สำเนาข้อมูลไป MySQL', () => {
+  const NASTY = ["it's", "\\'; DROP TABLE ov_sales; --", 'a\\', "x'); DELETE FROM ov_sales; /*", '😀 ไทย ' + "'".repeat(5), 'tab\tnl\nnul\0end', '\\\\\'\''];
+
+  test('lit(): ข้อความทุกแบบออกมาเป็นค่าเดียวตรงตามต้นฉบับ ไม่มีส่วนไหนหลุดออกนอกเครื่องหมาย', () => {
+    const { lit } = require('../lib/mysql');
+    let seed = 11; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const chars = ["'", '\\', '"', '`', ';', '-', '/', '*', '\0', '\n', 'a', 'ก', '😀', '%', '_', '\x1a'];
+    const all = NASTY.concat(Array.from({ length: 300 }, () => Array.from({ length: Math.floor(rnd() * 12) }, () => chars[Math.floor(rnd() * chars.length)]).join('')));
+    all.forEach(s => { const r = sqlLiterals('SELECT ' + lit(s) + ' AS a'); assert.deepEqual(r.lits, [s]); assert.equal(r.out, 'SELECT ? AS a'); });
+    assert.equal(lit(null), 'NULL'); assert.equal(lit(NaN), 'NULL'); assert.equal(lit(12.5), '12.5'); assert.equal(lit(true), '1');
+  });
+
+  test('MYSQL_URL ผิด: ระบบไม่ยอมเปิด บอกว่าผิดตรงไหน และไม่พิมพ์รหัสผ่าน', async () => {
+    for (const [url, want] of [['mysql://ov:Sup3rSecret@127.0.0.1:3306/', 'ชื่อฐานข้อมูล'], ['mysql://ov:Sup3rSecret@127.0.0.1/db?sslmod=1', 'sslmod'], ['ov:Sup3rSecret@nohost', 'MYSQL_URL']]) {
+      const s = start(makeApp(), { MYSQL_URL: url });
+      const e = await s.ready.then(() => null, x => x);
+      assert.ok(e && e.code === 1, url + ' ต้องเปิดไม่ได้');
+      assert.ok(e.out.includes(want), e.out);
+      assert.ok(!e.out.includes('Sup3rSecret'), 'ห้ามพิมพ์รหัสผ่าน');
+    }
+  });
+
+  test('ไม่ได้ตั้ง MYSQL_URL: ปุ่มส่งได้ 409 สถานะบอกว่ายังไม่เปิด', async () => {
+    const s = start(makeApp()); await s.ready; await s.login();
+    assert.deepEqual((await s.call('GET', '/api/state')).json.mysql, { on: false });
+    assert.equal((await s.call('POST', '/api/mysql/sync', {})).status, 409);
+    assert.equal((await s.call('POST', '/api/mysql/resync', {})).status, 409);
+    await s.stop();
+  });
+
+  test('ส่งบิล เอกสาร สินค้า ไป MySQL (caching_sha2 ยืนยันเต็มด้วย RSA) ค่าแปลกถูก escape ไม่มีรหัสผ่านในหน้าจอหรือ log', async () => {
+    const PW = "pä$$ #/?@ไทย'\\";
+    const db = fakeMysql({ ov: { pw: PW, plugin: 'caching_sha2_password' } }), port = await db.listen();
+    const s = start(makeApp(), { MYSQL_URL: 'mysql://ov@127.0.0.1:' + port + '/ordervai', MYSQL_PASSWORD: PW, MYSQL_SYNC_SEC: '1' });
+    try {
+      await s.ready; await s.login();
+      assert.ok(s.output.includes('ov@127.0.0.1:' + port + '/ordervai'), 'บอกปลายทางตอนเปิด');
+      await s.call('POST', '/api/settings', { modes: { table: true, kitchen: true, counter: true, buy: false, stock: true, docs: true } });
+      const st = (await s.call('GET', '/api/state')).json, item = st.menu.items[0];
+      const memo = NASTY[1].slice(0, 30);
+      const sale = await s.call('POST', '/api/sale', { items: [{ id: item.id, qty: 2 }], expectedSub: item.price * 2, method: 'cash', memo });
+      assert.equal(sale.status, 200, JSON.stringify(sale.json));
+      for (const n of NASTY.slice(0, 4)) assert.equal((await s.call('POST', '/api/contact', { name: n.replace(/[\0\t\n]/g, ' '), kind: 'customer' })).status, 200);
+      const no = sale.json.sale.no;
+      await until(() => db.queries.some(q => q.startsWith('REPLACE INTO ov_sales') && q.includes(',' + no + ",'R")) && db.queries.some(q => q.startsWith('REPLACE INTO ov_contacts')), 8000);
+      assert.deepEqual(db.seen.slice(0, 1), ['sha2-rsa'], 'รหัสผ่านถูกตรวจที่เซิร์ฟเวอร์ ส่งแบบเข้ารหัส RSA');
+      const q = db.queries.find(x => x.startsWith('REPLACE INTO ov_sales') && x.includes(',' + no + ",'R"));
+      assert.ok(sqlLiterals(q).lits.includes(memo), 'หมายเหตุถึง MySQL ตรงตามที่พิมพ์');
+      db.queries.forEach(x => {
+        const o = sqlLiterals(x).out;
+        assert.ok(!/;|--|\/\*/.test(o), 'มีส่วนที่หลุดออกนอกข้อความ: ' + x.slice(0, 200));
+        assert.ok(!x.includes(PW), 'ห้ามส่งรหัสผ่านใน SQL');
+      });
+      ['secret', 'pinHash'].forEach(k => assert.ok(!db.queries.some(x => x.includes(k)), k + ' ไม่ไป MySQL'));
+      assert.ok(!db.queries.some(x => Object.values(st.keys).some(k => x.includes("'" + k + "'"))), 'รหัส QR ไม่ไป MySQL');
+      await until(async () => (await s.call('GET', '/api/state')).json.mysql.state === 'ok', 5000);
+      const raw = (await s.call('GET', '/api/state')).text, m = JSON.parse(raw).mysql;
+      assert.equal(m.target, 'ov@127.0.0.1:' + port + '/ordervai');
+      assert.equal(m.shop, 'main');
+      assert.ok(!raw.includes(PW) && !raw.includes('ไทย\'\\'), 'หน้าจอไม่มีรหัสผ่าน');
+      // แคชเชียร์ไม่เห็นสถานะ (เจ้าของเท่านั้น) และสั่งส่งไม่ได้
+      await withStaff(s);
+      const c = await device(s, '520011');
+      assert.equal((await c.call('GET', '/api/state')).json.mysql, null);
+      assert.equal((await c.call('POST', '/api/mysql/sync', {})).status, 403);
+      await s.stop();
+      assert.ok(!allLogText(s.dir).includes(PW), 'log ไม่มีรหัสผ่าน');
+    } finally { await s.stop(); await db.close(); }
+  });
+
+  test('MySQL ล่ม: ร้านขายต่อได้ทันที สถานะบอกว่าส่งไม่ได้ กลับมาแล้วส่งที่ค้างครบ (ผู้ใช้ mysql_native_password)', async () => {
+    const port = await freePort(), db = fakeMysql({ ovn: { pw: 'nativepw', plugin: 'mysql_native_password' } });
+    const s = start(makeApp(), { MYSQL_URL: 'mysql://ovn:nativepw@127.0.0.1:' + port + '/ordervai', MYSQL_SYNC_SEC: '1' });
+    try {
+      await s.ready; await s.login();
+      await s.call('POST', '/api/settings', { modes: { table: true, kitchen: true, counter: true, buy: false, stock: false, docs: false } });
+      const item = (await s.call('GET', '/api/state')).json.menu.items[1], nos = [];
+      for (let i = 0; i < 3; i++) {
+        const t0 = Date.now();
+        const r = await s.call('POST', '/api/sale', { items: [{ id: item.id, qty: 1 }], expectedSub: item.price, method: 'transfer' });
+        assert.equal(r.status, 200);
+        assert.ok(Date.now() - t0 < 1500, 'ขายได้ทันทีแม้ MySQL ล่ม');
+        nos.push(r.json.sale.no);
+      }
+      await until(async () => { const m = (await s.call('GET', '/api/state')).json.mysql; return m.state === 'error' && /เชื่อมต่อ MySQL/.test(m.error); }, 8000);
+      await db.listen(port);
+      const r = await s.call('POST', '/api/mysql/sync', {});
+      assert.equal(r.status, 200);
+      assert.equal(r.json.mysql.state, 'ok', JSON.stringify(r.json.mysql));
+      assert.deepEqual(db.seen, ['native']);
+      const sent = db.queries.filter(q => q.startsWith('REPLACE INTO ov_sales')).join('\n');
+      nos.forEach(n => assert.ok(sent.includes(',' + n + ",'R"), 'บิล ' + n + ' ถูกส่งหลัง MySQL กลับมา'));
+    } finally { await s.stop(); await db.close(); }
+  });
+
+  test('รหัสผ่าน MySQL ผิด: สถานะบอกชัด ร้านขายได้ ไม่มีรหัสผ่านใน log', async () => {
+    const db = fakeMysql({ ov: { pw: 'right-one', plugin: 'caching_sha2_password' } }), port = await db.listen();
+    const s = start(makeApp(), { MYSQL_URL: 'mysql://ov:Wr0ngPassw0rd@127.0.0.1:' + port + '/ordervai', MYSQL_SYNC_SEC: '1' });
+    try {
+      await s.ready; await s.login();
+      await until(async () => { const m = (await s.call('GET', '/api/state')).json.mysql; return m.state === 'error' && m.error.includes('ชื่อผู้ใช้หรือรหัสผ่าน MySQL ไม่ถูกต้อง'); }, 8000);
+      assert.equal(db.queries.length, 0, 'เข้าไม่ได้ ไม่มีคำสั่งไหนไปถึง');
+      await s.stop();
+      const logs = allLogText(s.dir);
+      assert.ok(logs.includes('mysql_failed'), 'บันทึกว่าส่งไม่ได้');
+      assert.ok(!logs.includes('Wr0ngPassw0rd') && !s.output.includes('Wr0ngPassw0rd'), 'ไม่มีรหัสผ่านใน log/console');
+    } finally { await s.stop(); await db.close(); }
+  });
+});

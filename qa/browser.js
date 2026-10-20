@@ -1,7 +1,8 @@
 'use strict';
 /* ทดสอบหน้าเว็บด้วยเบราว์เซอร์จริง (Microsoft Edge ผ่าน playwright-core)
    ติดตั้งครั้งแรก:  cd qa && npm install
-   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, counter, docs, all
+   รัน:            node qa/browser.js <เคส>     เคส: pay-race, reqid-reload, xss, day, customer, theme, confirm, qrfiles, antiprank, themeretry, cover, shopinfo, payqr, waiter, sound, print, acceptance, counter, docs, mysql, all
+   เคส mysql: QA_MYSQL_URL=mysql://ผู้ใช้:รหัส@เครื่อง:พอร์ต/ฐานข้อมูล ทดสอบกับ MySQL จริงด้วย (ไม่ตั้ง = ทดสอบแค่ตอนยังไม่ตั้งและตอนส่งไม่ได้)
    QA_FROM=<โฟลเดอร์โค้ดเดิม> node qa/browser.js <เคส>   รันกับโค้ดก่อนแก้
    QA_BROWSER=chrome  ใช้ Google Chrome แทน Edge */
 const fs = require('node:fs');
@@ -1446,6 +1447,79 @@ const cases = {
     await p.context().close(); await cctx.close(); await s.stop(); rmrf(app.base);
     return ok.done();
   }
+};
+
+cases.mysql = async function (browser) {
+  /* สำเนาข้อมูลไป MySQL: แผงในตั้งค่า ป้ายเตือนเมื่อส่งไม่ได้ ปุ่มส่งตอนนี้/ส่งใหม่ทั้งหมด (หน้าต่างยืนยัน) เครื่องชนกัน */
+  const ok = checker('mysql'); const errors = [];
+  const net = require('node:net');
+  const freePort = () => new Promise(r => { const t = net.createServer(); t.listen(0, '127.0.0.1', () => { const p = t.address().port; t.close(() => r(p)); }); });
+  const panel = p => p.textContent('#mysql');
+  // 1) ยังไม่ตั้ง MYSQL_URL
+  let app = makeApp(), s = start(app.code); await s.ready;
+  let p = await staffPage(browser, s, {}, errors);
+  await tab(p, 'settings'); await p.waitForSelector('#mysql');
+  ok((await panel(p)).includes('MYSQL_URL'), 'ยังไม่ตั้ง: แผง MySQL บอกวิธีเปิดใช้');
+  await p.context().close(); await s.stop(); rmrf(app.base);
+  // 2) ส่งไม่ได้ (พอร์ตปิด): ป้ายเตือน ข้อความชัด ปุ่มส่งใหม่ต้องผ่านหน้าต่างยืนยัน
+  app = makeApp(); s = start(app.code, { MYSQL_URL: 'mysql://ov:pw@127.0.0.1:' + (await freePort()) + '/ordervai', MYSQL_SYNC_SEC: '1' }); await s.ready; await s.login();
+  await until(async () => (await s.call('GET', '/api/state')).json.mysql.alert, 20000, 'ป้ายเตือน MySQL');
+  p = await staffPage(browser, s, {}, errors);
+  await p.waitForSelector('#health .banner');
+  ok(/สำเนาข้อมูลไป MySQL ส่งไม่สำเร็จ/.test(await p.textContent('#health')), 'ส่งไม่ได้หลายครั้ง: ป้ายเตือนขึ้นที่แท็บอื่น บอกว่าร้านขายต่อได้');
+  await tab(p, 'settings'); await p.waitForSelector('#mysql .pill');
+  ok(!/MySQL/.test(await p.textContent('#health')), 'อยู่ในแท็บตั้งค่า ไม่มีป้ายซ้ำด้านบน');
+  ok(/ส่งไม่สำเร็จ/.test(await panel(p)) && /เชื่อมต่อ MySQL ที่ 127\.0\.0\.1/.test(await panel(p)), 'แผง MySQL บอกสถานะและสาเหตุเป็นภาษาไทย');
+  ok(!(await panel(p)).includes(':pw@') && !(await p.content()).includes('ov:pw'), 'หน้าจอไม่มีรหัสผ่าน');
+  await p.click('[data-a="mysqlsync"]');
+  await until(async () => /ส่งไม่สำเร็จ/.test(await toastText(p)), 25000, 'toast');
+  ok(true, 'กด "ส่งตอนนี้" แล้วบอกผลทันที');
+  await p.click('[data-a="mysqlresync"]');
+  ok(await p.isVisible('#confirm-dlg') && (await p.evaluate(() => document.activeElement.id)) === 'cf-no' && /แทนที่/.test(await p.textContent('#confirm-dlg')), 'ส่งใหม่ทั้งหมด: หน้าต่างยืนยัน บอกว่าแทนที่อะไร โฟกัสที่ยกเลิก');
+  await p.click('#cf-no');
+  const m = await (await browser.newContext(Object.assign({ baseURL: s.B }, MOBILE))).newPage(); watch(m, errors, 'mobile');
+  await m.goto('/staff'); await m.fill('#pin', PIN); await m.press('#pin', 'Enter'); await m.waitForSelector('#tabs .tab');
+  await tab(m, 'settings'); await m.waitForSelector('#mysql .pill');
+  await m.locator('#mysql').scrollIntoViewIfNeeded();
+  ok(!(await overflow(m)), 'มือถือ: แผง MySQL ไม่ล้นจอ', await overflow(m));
+  await m.screenshot({ path: path.join(__dirname, 'out', 'mysql-error-mobile.png'), fullPage: false });
+  await m.context().close(); await p.context().close(); await s.stop(); rmrf(app.base);
+  // 3) MySQL จริง (ถ้าตั้ง QA_MYSQL_URL): ส่งแล้ว จำนวนแถว ส่งใหม่ทั้งหมด เครื่องชนกัน แล้วกดใช้กับเครื่องนี้
+  if (process.env.QA_MYSQL_URL) {
+    const env = { MYSQL_URL: process.env.QA_MYSQL_URL, MYSQL_SHOP: 'ui' + Date.now().toString(36).slice(-5), MYSQL_SYNC_SEC: '2' };
+    app = makeApp(); s = start(app.code, env); await s.ready; await s.login();
+    await s.call('POST', '/api/settings', { modes: { table: true, kitchen: true, counter: true, buy: false, stock: false, docs: false } });
+    const it = (await s.call('GET', '/api/state')).json.menu.items[0];
+    await s.call('POST', '/api/sale', { items: [{ id: it.id, qty: 1 }], expectedSub: it.price, method: 'cash' });
+    p = await staffPage(browser, s, {}, errors);
+    await tab(p, 'settings');
+    await p.click('[data-a="mysqlsync"]');
+    await until(async () => /ส่งสำเนาไป MySQL แล้ว/.test(await toastText(p)), 25000, 'toast ok');
+    await until(async () => /ส่งแล้ว/.test(await panel(p)) && /บิล 1 /.test(await panel(p)), 10000, 'แผง ok');
+    ok(true, 'MySQL จริง: แผงบอกว่าส่งแล้ว เวลาล่าสุด และจำนวนบิลใน MySQL');
+    await p.screenshot({ path: path.join(__dirname, 'out', 'mysql-ok.png'), fullPage: false, clip: await p.locator('#mysql').boundingBox() });
+    await p.click('[data-a="mysqlresync"]'); await p.click('#cf-ok');
+    await until(async () => /ส่งข้อมูลใหม่ทั้งหมดแล้ว/.test(await toastText(p)), 25000, 'resync');
+    ok(true, 'ส่งใหม่ทั้งหมด: ยืนยันแล้วส่งสำเร็จ');
+    const s2app = makeApp(), s2 = start(s2app.code, env); await s2.ready; await s2.login();
+    await until(async () => (await s2.call('GET', '/api/state')).json.mysql.state === 'conflict', 20000, 'conflict');
+    const p2 = await staffPage(browser, s2, {}, errors);
+    await p2.waitForSelector('#health .banner');
+    ok(/หยุดส่ง/.test(await p2.textContent('#health')), 'เครื่องที่สองใช้สาขาเดียวกัน: ป้ายเตือนหยุดส่ง');
+    await tab(p2, 'settings'); await p2.waitForSelector('[data-a="mysqltake"]');
+    await p2.click('[data-a="mysqltake"]');
+    ok(/เครื่องเดิมจะหยุดส่ง/.test(await p2.textContent('#confirm-dlg')), 'ปุ่มใช้กับเครื่องนี้มีหน้าต่างยืนยันบอกผล');
+    await p2.click('#cf-ok');
+    await until(async () => /เครื่องนี้ส่งสาขานี้แล้ว/.test(await toastText(p2)), 25000, 'takeover');
+    ok(/ส่งแล้ว/.test(await panel(p2)), 'กดใช้กับเครื่องนี้แล้ว ส่งได้');
+    const au = (await s.call('GET', '/api/audit?date=' + new Date().toISOString().slice(0, 10))).json;
+    ok(JSON.stringify(au).includes('mysql.resync'), 'ส่งใหม่ทั้งหมดอยู่ใน audit log');
+    await p2.context().close(); await s2.stop(); rmrf(s2app.base);
+    await p.context().close(); await s.stop(); rmrf(app.base);
+  } else console.log('  (ข้ามส่วน MySQL จริง: ไม่ได้ตั้ง QA_MYSQL_URL)');
+  const real = errors.filter(e => !/Failed to load resource|net::ERR/.test(e));
+  ok(real.length === 0, 'console ไม่มี error', real);
+  return ok.done();
 };
 
 async function main() {
